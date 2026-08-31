@@ -1,88 +1,22 @@
 --[[
-    ROUBE UM OVO - FLUENT STEALTH HUB v3.4 (DEEP SPY & AUTO DISK LOG SAVER)
+    ROUBE UM OVO - HUB DE DIAGNÓSTICO v3.6
     -----------------------------------------------------------------------
-    - Design 100% Nativo no Estilo Fluent UI (Abas, Toggles com chaves animadas, Sliders).
-    - Deep Spy & Disk Saver: Grava logs ultra-detalhados de todas as ações no disco (writefile/appendfile).
+    - Interface no estilo Fluent UI (abas, botões, toggles e sliders).
+    - Registros locais: grava apenas ações e observações feitas por este script.
     - Serialização Avançada de Argumentos (Tabelas, Vector3, CFrame, Instances, Types).
-    - Motor Real de Raridade (Inspeciona Atributos, Values, TextLabels, Billboards e Nomes).
+    - Radar observacional: diferencia dados exibidos de informações não confirmadas.
     - Auto Fly Steal com Voo Suave e Retorno DIRETO à Base.
-    - ZERO Metamétodos hookmetamethod (100% Imune a mensagens de Anti-Bypass).
+    - Sem interceptação de metamétodos ou alegações de bypass invisível.
 ]]
 
-print("========== CARREGANDO SCRIPT ÚNICO: ROUBE UM OVO HUB v3.4 ==========")
-
---================================================================--
--- BFLOADER SPY: CAPTURA FUNÇÕES E AMBIENTE DO SCRIPT EXTERNO
--- Roda ANTES de tudo. Você só precisa executar este arquivo.
---================================================================--
-
-local BFLoader_Capturado = {}
-local BFLoader_Carregado = false
-
-local function snapshotGlobais()
-    local snap = {}
-    pcall(function()
-        for k, v in pairs(_G) do snap[k] = v end
-    end)
-    pcall(function()
-        if getgenv then
-            for k, v in pairs(getgenv()) do snap[k] = v end
-        end
-    end)
-    return snap
-end
-
-local function capturarNovas(antes, depois)
-    local novasFuncs = {}
-    for k, v in pairs(depois) do
-        if antes[k] == nil then
-            BFLoader_Capturado[k] = v
-            table.insert(novasFuncs, string.format("  -> %s [%s]", tostring(k), type(v)))
-        end
-    end
-    if #novasFuncs > 0 then
-        local log = "[BFLoader] " .. #novasFuncs .. " globals capturadas:\n" .. table.concat(novasFuncs, "\n")
-        print("\n========================================")
-        print(log)
-        print("========================================\n")
-        _G.BFLoader_LogText = log
-        pcall(function()
-            if writefile then writefile("bfloader_capturado.txt", log) end
-        end)
-    else
-        local msg = "[BFLoader] Nenhuma nova global detectada no ambiente."
-        print(msg)
-        _G.BFLoader_LogText = msg
-    end
-end
-
-local function chamarBFLoader(nomeFuncao, ...)
-    local fn = BFLoader_Capturado[nomeFuncao]
-    if type(fn) == "function" then
-        local ok, res = pcall(fn, ...)
-        if not ok then
-            print("[BFLoader] Erro ao chamar '" .. nomeFuncao .. "': " .. tostring(res))
-        end
-        return res
-    else
-        print("[BFLoader] Função '" .. nomeFuncao .. "' não encontrada.")
-        return nil
-    end
-end
-
-_G.BFLoader_Capturado = BFLoader_Capturado
-_G.chamarBFLoader = chamarBFLoader
+print("========== CARREGANDO SCRIPT ÚNICO: ROUBE UM OVO HUB v3.6 ==========")
 
 -- Configurações e Flags Globais
 local Flags = {
-    LoadExternalBFLoader = false, -- Define se deve carregar o BFLoader externo
     AutoSteal = false,
-    FlySteal = true,
-    InstantReturn = false, -- Retorno voando por física (sem TP para evitar kick)
     FlySpeed = 500, -- Velocidade ultra rápida (ajustável até 1000)
     StealRadius = 2500,
     StealDelay = 0.15,
-    InstantPrompt = true,
     PrioritizeRare = true,
     CustomBasePos = nil,
     SavedBasePos = nil,
@@ -106,57 +40,17 @@ local Flags = {
 
     -- Filtros & Radar de Ovos
     MinRarityScore = 0,
+    ManualMinRarityScore = 0,
+    FilterHighTier = false,
+    FilterTopTier = false,
     FilterIgnoreCommons = false,
     DiscoveredEggs = {},
 
     -- Utils & Logger
     AntiAFK = true,
     AutoLogger = false,
-    SaveToDisk = false -- Desativado por padrão para 0% de lag de disco
+    SaveToDisk = false -- Desativado por padrão para evitar escrita contínua no disco
 }
-
--- ▼▼▼ BFLoader (Opcional - Ative apenas se quiser capturar o script externo) ▼▼▼
-if Flags.LoadExternalBFLoader then
-    local _antes = snapshotGlobais()
-
-    task.spawn(function()
-        print("[BFLoader] [1/4] Iniciando download do script externo...")
-
-        local source
-        local ok1, err1 = pcall(function()
-            source = game:HttpGet("https://raw.githubusercontent.com/hanniii1/Loader/refs/heads/main/BFLoader.lua")
-        end)
-
-        if not ok1 or not source then
-            warn("[BFLoader] ERRO no HttpGet: " .. tostring(err1))
-            return
-        end
-        print("[BFLoader] [2/4] Download OK (" .. #source .. " bytes). Compilando...")
-
-        local fn, compileErr = loadstring(source)
-        if not fn then
-            warn("[BFLoader] ERRO ao compilar: " .. tostring(compileErr))
-            return
-        end
-        print("[BFLoader] [3/4] Compilado OK. Executando em thread dedicada...")
-
-        task.spawn(function()
-            local ok2, runErr = pcall(fn)
-            if not ok2 then
-                warn("[BFLoader] ERRO na execução do script externo: " .. tostring(runErr))
-            end
-        end)
-
-        print("[BFLoader] [4/4] Script iniciado! Aguardando 5s para tirar snapshot das globals...")
-        task.wait(5)
-
-        local _depois = snapshotGlobais()
-        capturarNovas(_antes, _depois)
-        BFLoader_Carregado = true
-        print("[BFLoader] ✅ Captura concluída!")
-    end)
-end
--- ▲▲▲ O resto do script carrega normalmente em paralelo ▲▲▲
 
 --================================================================--
 
@@ -171,11 +65,14 @@ local Services = {
     HttpService = safeService("HttpService"),
     RunService = safeService("RunService"),
     UserInputService = safeService("UserInputService"),
+    ProximityPromptService = safeService("ProximityPromptService"),
     ReplicatedStorage = safeService("ReplicatedStorage"),
-    TweenService = safeService("TweenService")
+    TweenService = safeService("TweenService"),
+    VirtualUser = safeService("VirtualUser")
 }
 
 local LocalPlayer = Services.Players.LocalPlayer
+local scriptActive = true
 
 --================================================================--
 -- MOTOR DE SERIALIZAÇÃO DE ARGUMENTOS E GRAVAÇÃO DE LOGS NO DISCO
@@ -245,7 +142,7 @@ local function addLog(category, text, extraArgs)
     end
 end
 
-addLog("SISTEMA", "Fluent Stealth Hub v3.4 (Deep Log Engine) ativado.")
+addLog("SISTEMA", "Hub v3.6 iniciado. O console registra apenas ações locais e mudanças observáveis; ele não intercepta chamadas remotas.")
 
 -- Utilitários de Segurança
 local function getRandomName()
@@ -303,6 +200,116 @@ local function isEgg(obj)
         or name:find("brainrot") or name:find("parasite") or name:find("admin")
 end
 
+local function plainText(value)
+    return tostring(value or ""):gsub("<[^>]->", ""):lower()
+end
+
+-- Os dumps reais mostram que o alvo válido usa ActionText="Steal" e ObjectText="Egg".
+-- Esta verificação estrita evita tratar Hatch, monstros e outros prompts como ovos roubáveis.
+local function isStealPrompt(prompt)
+    if not prompt or not prompt:IsA("ProximityPrompt") or not prompt.Enabled then
+        return false
+    end
+    local action = plainText(prompt.ActionText)
+    local object = plainText(prompt.ObjectText)
+    local actionIsSteal = action:find("steal", 1, true) or action:find("roubar", 1, true)
+    local objectIsEgg = object:find("egg", 1, true) or object:find("ovo", 1, true)
+    return actionIsSteal ~= nil and objectIsEgg ~= nil
+end
+
+local function isEggInteractionPrompt(prompt)
+    if not prompt or not prompt:IsA("ProximityPrompt") or not prompt.Enabled then
+        return false
+    end
+    local action = plainText(prompt.ActionText)
+    local object = plainText(prompt.ObjectText)
+    local objectIsEgg = object:find("egg", 1, true) or object:find("ovo", 1, true)
+    local actionMatches = action:find("steal", 1, true)
+        or action:find("roubar", 1, true)
+        or action:find("pick", 1, true)
+        or action:find("grab", 1, true)
+        or action:find("take", 1, true)
+        or action:find("pegar", 1, true)
+        or action:find("collect", 1, true)
+        or action:find("coletar", 1, true)
+    return objectIsEgg ~= nil and actionMatches ~= nil
+end
+
+local function getPromptPosition(prompt)
+    if not prompt or not prompt.Parent then return nil end
+    local holder = prompt.Parent
+    if holder:IsA("Attachment") then
+        holder = holder.Parent
+    end
+    if not holder then return nil end
+    if holder:IsA("BasePart") then
+        return holder.Position
+    end
+    if holder:IsA("Model") then
+        return holder:GetPivot().Position
+    end
+    local part = holder:FindFirstChildWhichIsA("BasePart", true)
+    return part and part.Position or nil
+end
+
+-- Índice mantido por eventos: inclui SmartPromptPart na raiz do Workspace sem
+-- refazer GetDescendants a cada ciclo do Auto Steal.
+local stealPromptRegistry = setmetatable({}, { __mode = "k" })
+local eggInteractionPromptRegistry = setmetatable({}, { __mode = "k" })
+local function updateStealPrompt(prompt)
+    if prompt and prompt:IsA("ProximityPrompt") then
+        if isStealPrompt(prompt) then
+            stealPromptRegistry[prompt] = true
+        else
+            stealPromptRegistry[prompt] = nil
+        end
+        if isEggInteractionPrompt(prompt) then
+            eggInteractionPromptRegistry[prompt] = true
+        else
+            eggInteractionPromptRegistry[prompt] = nil
+        end
+    end
+end
+
+for _, descendant in ipairs(Services.Workspace:GetDescendants()) do
+    if descendant:IsA("ProximityPrompt") then
+        updateStealPrompt(descendant)
+        descendant:GetPropertyChangedSignal("Enabled"):Connect(function()
+            updateStealPrompt(descendant)
+        end)
+        descendant:GetPropertyChangedSignal("ActionText"):Connect(function()
+            updateStealPrompt(descendant)
+        end)
+        descendant:GetPropertyChangedSignal("ObjectText"):Connect(function()
+            updateStealPrompt(descendant)
+        end)
+    end
+end
+
+Services.Workspace.DescendantAdded:Connect(function(descendant)
+    if not scriptActive then return end
+    if descendant:IsA("ProximityPrompt") then
+        updateStealPrompt(descendant)
+        descendant:GetPropertyChangedSignal("Enabled"):Connect(function()
+            updateStealPrompt(descendant)
+        end)
+        descendant:GetPropertyChangedSignal("ActionText"):Connect(function()
+            updateStealPrompt(descendant)
+        end)
+        descendant:GetPropertyChangedSignal("ObjectText"):Connect(function()
+            updateStealPrompt(descendant)
+        end)
+    end
+end)
+
+Services.Workspace.DescendantRemoving:Connect(function(descendant)
+    if not scriptActive then return end
+    if descendant:IsA("ProximityPrompt") then
+        stealPromptRegistry[descendant] = nil
+        eggInteractionPromptRegistry[descendant] = nil
+    end
+end)
+
 local function getCharacter()
     return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 end
@@ -347,7 +354,7 @@ local function getBasePosition()
 end
 
 --================================================================--
--- MOTOR REAL DE RARIDADE E ÁREAS (BASEADO NOS DADOS DO JOGO)
+-- LEITURA OBSERVACIONAL DE VALORES, RARIDADE E ÁREAS
 --================================================================--
 
 local RarityWeights = {
@@ -410,39 +417,27 @@ local function parseIncomeRate(str)
     if not str then return 0, nil end
     local s = tostring(str):lower()
 
-    -- 1. Capturar valores de renda por segundo: $147.71M/s, $53.57M/s, $500k/s, $1.2B/s, $50T/s
-    local num, suffix = s:match("%$?%s*([%d%,%.]+)%s*([kmbtq]a?i?)/s")
-    if not num then
-        num, suffix = s:match("%$%s*([%d%,%.]+)%s*([kmbtq]a?i?)")
-    end
+    -- Só aceita renda explicitamente exibida como moeda por segundo.
+    local num, suffix = s:match("%$%s*([%d][%d%,%.]*)%s*(%a*)%s*/%s*s")
 
     if num then
         num = num:gsub(",", "")
         local n = tonumber(num)
         if n and n > 0 then
-            local mult = 1
-            if suffix then
-                if suffix:find("qi") then mult = 1e18
-                elseif suffix:find("qa") then mult = 1e15
-                elseif suffix:find("t") then mult = 1e12
-                elseif suffix:find("b") then mult = 1e9
-                elseif suffix:find("m") then mult = 1e6
-                elseif suffix:find("k") then mult = 1e3
-                end
-            end
+            local multipliers = {
+                [""] = 1,
+                k = 1e3,
+                m = 1e6,
+                b = 1e9,
+                t = 1e12,
+                qa = 1e15,
+                qi = 1e18
+            }
+            local mult = multipliers[suffix]
+            if not mult then return 0, nil end
             local finalVal = n * mult
-            local formatted = "$" .. string.format("%.2f", n) .. (suffix and suffix:upper() or "") .. "/s"
+            local formatted = "$" .. string.format("%.2f", n) .. suffix:upper() .. "/s"
             return finalVal, formatted
-        end
-    end
-
-    -- 2. Padrão simples de $/s sem sufixo (ex: $500/s, $1200/s)
-    local simpleCash = s:match("%$?%s*([%d%,%.]+)/s")
-    if simpleCash then
-        simpleCash = simpleCash:gsub(",", "")
-        local n = tonumber(simpleCash)
-        if n and n > 0 then
-            return n, "$" .. tostring(n) .. "/s"
         end
     end
 
@@ -450,98 +445,89 @@ local function parseIncomeRate(str)
 end
 
 local function evaluateEggRarity(eggObj, prompt)
-    if not eggObj then return 300, "Comum" end
+    if not eggObj then return 0, "Sem dados confirmados", "nenhuma" end
     local maxScore = 0
-    local detectedRarity = "Comum"
+    local detectedRarity = "Sem dados confirmados"
+    local detectedSource = "nenhuma"
     local highestIncome = 0
     local highestIncomeLabel = nil
+    local highestIncomeSource = nil
 
-    local function checkText(str)
+    local function checkText(str, source)
         if not str or str == "" then return end
         local s = tostring(str):lower()
 
-        -- 1. Checar se tem valor direto de Renda ($/s) - Prioridade Máxima
         local incomeVal, incomeFmt = parseIncomeRate(s)
         if incomeVal > highestIncome then
             highestIncome = incomeVal
             highestIncomeLabel = incomeFmt
+            highestIncomeSource = source
         end
 
-        -- 2. Checar palavras-chave da tabela de áreas/eventos
         for kw, weight in pairs(RarityWeights) do
-            if s:find(kw) then
+            if s:find(kw, 1, true) then
                 if weight > maxScore then
                     maxScore = weight
                     detectedRarity = kw:upper()
+                    detectedSource = source
                 end
             end
         end
 
-        -- 3. Checar peso em Kg do ovo
         local kg = parseEggWeightKg(s)
         if kg > 0 then
             local kgScore = kg * 2
             if kgScore > maxScore then
                 maxScore = kgScore
-                detectedRarity = string.format("PESO (%s Kg)", tostring(kg))
+                detectedRarity = string.format("PESO EXIBIDO (%s Kg)", tostring(kg))
+                detectedSource = source
             end
         end
     end
 
-    -- 1. Inspecionar Prompt ObjectText e ActionText
     if prompt then
-        checkText(prompt.ObjectText)
-        checkText(prompt.ActionText)
+        checkText(prompt.ObjectText, "ObjectText do prompt")
+        checkText(prompt.ActionText, "ActionText do prompt")
     end
 
-    -- 2. Inspecionar Objeto e seu Pedestal/Esteira/Pai
-    local targetsToInspect = { eggObj }
-    if eggObj.Parent and eggObj.Parent ~= Services.Workspace then
-        table.insert(targetsToInspect, eggObj.Parent)
-        if eggObj.Parent.Parent and eggObj.Parent.Parent ~= Services.Workspace then
-            table.insert(targetsToInspect, eggObj.Parent.Parent)
+    pcall(function()
+        for key, val in pairs(eggObj:GetAttributes()) do
+            checkText(key, "atributo " .. tostring(key))
+            checkText(val, "atributo " .. tostring(key))
         end
-    end
+    end)
 
-    for _, target in ipairs(targetsToInspect) do
-        -- Atributos
-        pcall(function()
-            for key, val in pairs(target:GetAttributes()) do
-                checkText(key)
-                checkText(val)
+    pcall(function()
+        for _, child in ipairs(eggObj:GetChildren()) do
+            if child:IsA("ValueBase") then
+                checkText(child.Name, "Value " .. child.Name)
+                checkText(child.Value, "Value " .. child.Name)
             end
-        end)
+        end
+    end)
 
-        -- Value Objects
-        pcall(function()
-            for _, child in ipairs(target:GetChildren()) do
-                if child:IsA("ValueBase") then
-                    checkText(child.Name)
-                    checkText(child.Value)
-                end
+    -- Textos anexados ao SmartPromptPart são observáveis; a fonte acompanha
+    -- o valor para não apresentá-lo como dado interno confirmado.
+    pcall(function()
+        local inspected = 0
+        for _, desc in ipairs(eggObj:GetDescendants()) do
+            if inspected >= 40 then break end
+            if desc:IsA("TextLabel") or desc:IsA("TextButton") then
+                inspected = inspected + 1
+                checkText(desc.Text, "texto visual " .. desc.Name)
             end
-        end)
+        end
+    end)
 
-        -- TextLabels / BillboardGuis / SurfaceGuis
-        pcall(function()
-            for _, desc in ipairs(target:GetDescendants()) do
-                if desc:IsA("TextLabel") or desc:IsA("TextButton") then
-                    checkText(desc.Text)
-                end
-            end
-        end)
+    checkText(eggObj.Name, "nome do objeto")
 
-        -- Nome e Caminho
-        checkText(target.Name)
-        checkText(target:GetFullName())
-    end
-
-    -- Se tiver valor monetário direto ($/s), ele se torna a pontuação dominante absoluta!
     if highestIncome > 0 then
-        return highestIncome, (highestIncomeLabel or ("$" .. tostring(highestIncome) .. "/s"))
+        return highestIncome,
+            "Valor exibido " .. (highestIncomeLabel or ("$" .. tostring(highestIncome) .. "/s")),
+            (highestIncomeSource or "texto visual")
     end
 
-    return (maxScore > 0 and maxScore or 300), detectedRarity
+    return maxScore, detectedRarity, detectedSource
 end
 
 -- Detecção de Ilha, Zona, Base ou Plot do Ovo
@@ -581,44 +567,39 @@ local function scanAllEggsInMap()
     local rarityCounts = {}
     local zoneCounts = {}
 
-    for _, obj in ipairs(Services.Workspace:GetDescendants()) do
-        if obj:IsA("ProximityPrompt") and obj.Enabled then
+    local hrp = getHRP()
+    for obj in pairs(stealPromptRegistry) do
+        if isStealPrompt(obj) and obj:IsDescendantOf(Services.Workspace) then
             local parent = obj.Parent
-            if parent then
+            local pos = getPromptPosition(obj)
+            if parent and pos then
                 local fullName = parent:GetFullName():lower()
-                local isMyBase = fullName:find(myPlayerName)
-                local isEligible = isEgg(parent) or isEgg(obj)
+                local isMyBase = fullName:find(myPlayerName) ~= nil
+                local dist = hrp and (hrp.Position - pos).Magnitude or 0
+                local rarityScore, rarityName, evidenceSource = evaluateEggRarity(parent, obj)
+                local zoneName, plotOwner = getEggLocationZone(parent, obj)
+                local displayName = (obj.ObjectText ~= "" and obj.ObjectText) or parent.Name
 
-                if isEligible then
-                    local pos = parent:IsA("BasePart") and parent.Position 
-                             or (parent:IsA("Model") and parent:GetPivot().Position)
-                             or (parent:FindFirstChildWhichIsA("BasePart") and parent:FindFirstChildWhichIsA("BasePart").Position)
-                    
-                    if pos then
-                        local hrp = getHRP()
-                        local dist = hrp and (hrp.Position - pos).Magnitude or 0
-                        local rarityScore, rarityName = evaluateEggRarity(parent, obj)
-                        local zoneName, plotOwner = getEggLocationZone(parent, obj)
-                        local displayName = (obj.ObjectText ~= "" and obj.ObjectText) or parent.Name
+                rarityCounts[rarityName] = (rarityCounts[rarityName] or 0) + 1
+                zoneCounts[zoneName] = (zoneCounts[zoneName] or 0) + 1
 
-                        rarityCounts[rarityName] = (rarityCounts[rarityName] or 0) + 1
-                        zoneCounts[zoneName] = (zoneCounts[zoneName] or 0) + 1
-
-                        table.insert(discovered, {
-                            Prompt = obj,
-                            Parent = parent,
-                            Name = displayName,
-                            Rarity = rarityName,
-                            RarityScore = rarityScore,
-                            Zone = zoneName,
-                            IsMyBase = isMyBase,
-                            PlotOwner = plotOwner,
-                            Position = pos,
-                            Distance = dist,
-                            Path = parent:GetFullName()
-                        })
-                    end
-                end
+                table.insert(discovered, {
+                    Prompt = obj,
+                    Parent = parent,
+                    Name = displayName,
+                    Rarity = rarityName,
+                    RarityScore = rarityScore,
+                    EvidenceSource = evidenceSource,
+                    Zone = zoneName,
+                    IsMyBase = isMyBase,
+                    PlotOwner = plotOwner,
+                    Position = pos,
+                    Distance = dist,
+                    Path = parent:GetFullName(),
+                    ActionText = obj.ActionText,
+                    HoldDuration = obj.HoldDuration,
+                    MaxActivationDistance = obj.MaxActivationDistance
+                })
             end
         end
     end
@@ -637,14 +618,14 @@ local function scanAllEggsInMap()
     -- Gerar Relatório Formatado para Visualização e Cópia
     local lines = {}
     table.insert(lines, "================================================================================")
-    table.insert(lines, string.format("🎯 RADAR & SCANNER DE OVOS (%s) — %d OVOS ENCONTRADOS", os.date("%H:%M:%S"), #discovered))
+    table.insert(lines, string.format("🎯 RADAR DE PROMPTS STEAL/EGG (%s) — %d ALVOS CONFIRMADOS", os.date("%H:%M:%S"), #discovered))
     table.insert(lines, "================================================================================")
     
     local rSummary = {}
     for rName, count in pairs(rarityCounts) do
         table.insert(rSummary, string.format("%s: %d", rName, count))
     end
-    table.insert(lines, "⭐ RARIDADES NO SERVIDOR: " .. (#rSummary > 0 and table.concat(rSummary, " | ") or "Nenhuma"))
+    table.insert(lines, "🔎 DADOS OBSERVADOS: " .. (#rSummary > 0 and table.concat(rSummary, " | ") or "Nenhum"))
 
     local zSummary = {}
     for zName, count in pairs(zoneCounts) do
@@ -655,8 +636,9 @@ local function scanAllEggsInMap()
 
     for i, egg in ipairs(discovered) do
         local tag = egg.IsMyBase and "[SUA BASE]" or "[ALVO]"
-        table.insert(lines, string.format("#%02d %s [%s] %s | 📍 %s | 📏 %dm | 🏆 %d pts",
-            i, tag, egg.Rarity, egg.Name, egg.Zone, math.floor(egg.Distance), egg.RarityScore
+        table.insert(lines, string.format("#%02d %s [%s] %s | 📍 %s | 📏 %dm | score interno: %d | fonte: %s | hold: %.2fs | alcance: %.1f | caminho: %s",
+            i, tag, egg.Rarity, egg.Name, egg.Zone, math.floor(egg.Distance), egg.RarityScore,
+            egg.EvidenceSource, egg.HoldDuration, egg.MaxActivationDistance, egg.Path
         ))
     end
     table.insert(lines, "================================================================================")
@@ -669,7 +651,7 @@ end
 
 _G.scanAllEggsInMap = scanAllEggsInMap
 
--- Mega Varredura Completa do Jogo (Introspecção & Dump de Arquitetura Real)
+-- Inventário de instâncias visíveis ao cliente (não intercepta remotes)
 local function dumpGameStructure()
     local output = {}
     local function logLine(str)
@@ -677,7 +659,8 @@ local function dumpGameStructure()
     end
 
     logLine("================================================================================")
-    logLine("🧬 MEGA VARREDURA DE ESTRUTURA REAL DO JOGO — " .. os.date("%Y-%m-%d %H:%M:%S"))
+    logLine("🧬 INVENTÁRIO DE INSTÂNCIAS VISÍVEIS AO CLIENTE — " .. os.date("%Y-%m-%d %H:%M:%S"))
+    logLine("AVISO: este relatório não prova chamadas remotas nem dados internos do servidor.")
     logLine("Game: Roube um Ovo | PlaceId: " .. tostring(game.PlaceId) .. " | JobId: " .. tostring(game.JobId))
     logLine("================================================================================\n")
 
@@ -697,6 +680,18 @@ local function dumpGameStructure()
         end
     end)
     logLine(#rsItems > 0 and table.concat(rsItems, "\n") or "  (Vazio)")
+    local remoteItems = {}
+    pcall(function()
+        for _, descendant in ipairs(Services.ReplicatedStorage:GetDescendants()) do
+            if descendant:IsA("RemoteEvent") or descendant:IsA("RemoteFunction")
+                or descendant:IsA("UnreliableRemoteEvent") then
+                table.insert(remoteItems, string.format("  • %s [%s]", descendant:GetFullName(), descendant.ClassName))
+                if #remoteItems >= 250 then break end
+            end
+        end
+    end)
+    logLine("\n📡 REMOTOS VISÍVEIS (existência apenas; chamadas não são interceptadas):")
+    logLine(#remoteItems > 0 and table.concat(remoteItems, "\n") or "  (Nenhum remoto visível encontrado)")
     logLine("\n")
 
     -- 2. Inspecionar Workspace (Zonas, Ilhas, Plots, Spawns, Pedestais)
@@ -770,7 +765,7 @@ local function dumpGameStructure()
     end)
     logLine(#guiItems > 0 and table.concat(guiItems, "\n") or "  (Nenhum texto relevante no PlayerGui)")
     logLine("\n================================================================================")
-    logLine("✅ FIM DA MEGA VARREDURA (Salvo em ROUBE_UM_OVO_MEGA_DUMP.txt e Copiado)")
+    logLine("✅ FIM DO INVENTÁRIO (salvo em ROUBE_UM_OVO_MEGA_DUMP.txt e copiado)")
     logLine("================================================================================")
 
     local fullText = table.concat(output, "\n")
@@ -790,15 +785,22 @@ end
 
 _G.dumpGameStructure = dumpGameStructure
 
--- Cache Inteligente de Ovos para 0% Lag / 0% Travamento na Corrida
+-- Cache de alvos para reduzir varreduras e travamentos na corrida
 local cachedBestCandidate = nil
 local lastCandidateScanTime = 0
 local lastScanHadNoCandidate = false
 local eggMetadataCache = setmetatable({}, { __mode = "k" })
 local promptCooldown = setmetatable({}, { __mode = "k" })
 
+local function invalidateTargetCache()
+    cachedBestCandidate = nil
+    lastCandidateScanTime = 0
+    lastScanHadNoCandidate = false
+end
+
 -- Um novo prompt invalida imediatamente o cache negativo, sem varredura contínua.
 Services.Workspace.DescendantAdded:Connect(function(obj)
+    if not scriptActive then return end
     if obj:IsA("ProximityPrompt") then
         lastCandidateScanTime = 0
         lastScanHadNoCandidate = false
@@ -825,48 +827,30 @@ local function getBestEggPrompt()
     local myPlayerName = LocalPlayer.Name:lower()
     local best = nil
 
-    -- Varredura direcionada apenas nas pastas relevantes do jogo (evita varrer 10.000 partes inúteis)
-    local searchRoots = {}
-    if Services.Workspace:FindFirstChild("AreaEggSlotsClient") then
-        table.insert(searchRoots, Services.Workspace.AreaEggSlotsClient)
-    end
-    if Services.Workspace:FindFirstChild("ClientRenderedAssets") then
-        table.insert(searchRoots, Services.Workspace.ClientRenderedAssets)
-    end
-    if Services.Workspace:FindFirstChild("Plots") then
-        table.insert(searchRoots, Services.Workspace.Plots)
-    end
-    if #searchRoots == 0 then
-        table.insert(searchRoots, Services.Workspace)
-    end
-
-    for _, root in ipairs(searchRoots) do
-        for _, obj in ipairs(root:GetDescendants()) do
-            if obj:IsA("ProximityPrompt") and obj.Enabled then
-                local parent = obj.Parent
-                if parent and (not promptCooldown[obj] or promptCooldown[obj] <= now) then
+    for obj in pairs(stealPromptRegistry) do
+        if isStealPrompt(obj) and obj:IsDescendantOf(Services.Workspace) then
+            local parent = obj.Parent
+            if parent and (not promptCooldown[obj] or promptCooldown[obj] <= now) then
                     local fullName = parent:GetFullName():lower()
                     local isMyBase = fullName:find(myPlayerName)
 
                     -- Não roubar da própria base
                     if not isMyBase then
-                        local isEligible = isEgg(parent) or isEgg(obj)
-                        if isEligible then
-                            local pos = parent:IsA("BasePart") and parent.Position
-                                     or (parent:IsA("Model") and parent:GetPivot().Position)
-                                     or (parent:FindFirstChildWhichIsA("BasePart") and parent:FindFirstChildWhichIsA("BasePart").Position)
-
+                            local pos = getPromptPosition(obj)
                             if pos then
-                                local dist = (basePos - pos).Magnitude
+                                local currentHRP = getHRP()
+                                local referencePos = currentHRP and currentHRP.Position or basePos
+                                local dist = (referencePos - pos).Magnitude
                                 if dist <= Flags.StealRadius then
                                     local metadata = eggMetadataCache[obj]
                                     if not metadata or metadata.Parent ~= parent or (now - metadata.Time) > 12 then
-                                        local rarityScore, rarityName = evaluateEggRarity(parent, obj)
+                                        local rarityScore, rarityName, evidenceSource = evaluateEggRarity(parent, obj)
                                         metadata = {
                                             Parent = parent,
                                             Time = now,
                                             RarityScore = rarityScore,
                                             RarityName = rarityName,
+                                            EvidenceSource = evidenceSource,
                                             Zone = getEggLocationZone(parent, obj),
                                             DisplayName = (obj.ObjectText ~= "" and obj.ObjectText) or parent.Name
                                         }
@@ -888,6 +872,7 @@ local function getBestEggPrompt()
                                             RarityScore = metadata.RarityScore,
                                             Name = metadata.DisplayName,
                                             Rarity = metadata.RarityName,
+                                            EvidenceSource = metadata.EvidenceSource,
                                             Zone = metadata.Zone,
                                             Distance = dist
                                         }
@@ -900,10 +885,8 @@ local function getBestEggPrompt()
                                     end
                                 end
                             end
-                        end
                     end
                 end
-            end
         end
     end
 
@@ -915,6 +898,7 @@ local function getBestEggPrompt()
     end
 
     local info = best.Rarity .. " [" .. best.Name .. "] @ " .. (best.Zone or "Mapa")
+        .. " | fonte: " .. tostring(best.EvidenceSource or "nenhuma")
     cachedBestCandidate = {
         Prompt = best.Prompt,
         Position = best.Position,
@@ -925,7 +909,7 @@ local function getBestEggPrompt()
     return best.Prompt, best.Position, info
 end
 
--- Voo ultra-rápido e 100% estável via física (Personagem fica em pé sem animação de queda)
+-- Voo via física com verificação da distância realmente percorrida
 local function flyToPosition(targetPos, speed, onApproach)
     local hrp = getHRP()
     local char = LocalPlayer.Character
@@ -936,7 +920,10 @@ local function flyToPosition(targetPos, speed, onApproach)
     speed = speed or Flags.FlySpeed or 500
     local startPos = hrp.Position
     local totalDist = (targetPos - startPos).Magnitude
-    if totalDist < 3.5 then return true end
+    if totalDist < 3.5 then
+        if onApproach then onApproach(totalDist) end
+        return true
+    end
 
     -- Evita colisões com a linha de corrida/esteira durante o voo.
     for _, part in ipairs(char:GetDescendants()) do
@@ -966,7 +953,7 @@ local function flyToPosition(targetPos, speed, onApproach)
     local startTime = os.clock()
     local lastPhysicsUpdate = 0
 
-    while (os.clock() - startTime) < (travelTime + 1.5) do
+    while (os.clock() - startTime) < (travelTime + 2) do
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / travelTime, 0, 1)
         if elapsed - lastPhysicsUpdate >= (1 / 30) then
@@ -984,14 +971,19 @@ local function flyToPosition(targetPos, speed, onApproach)
             hum.PlatformStand = false
         end
 
-        if remainingDistance < 3.5 or alpha >= 1 then
+        if remainingDistance < 3.5 then
             break
         end
         Services.RunService.Heartbeat:Wait()
     end
 
     bp.Position = targetPos
-    task.wait(0.02)
+    local settleDeadline = os.clock() + 0.3
+    while hrp.Parent and (targetPos - hrp.Position).Magnitude >= 4 and os.clock() < settleDeadline do
+        Services.RunService.Heartbeat:Wait()
+    end
+
+    local finalDistance = hrp.Parent and (targetPos - hrp.Position).Magnitude or math.huge
 
     pcall(function() bp:Destroy() end)
     pcall(function() bg:Destroy() end)
@@ -1001,10 +993,12 @@ local function flyToPosition(targetPos, speed, onApproach)
         end
     end
 
-    return true
+    return finalDistance < 8, finalDistance
 end
 
--- Roubo 100% Instantâneo (Bypass de Hold / 0ms Delay)
+-- Aciona o prompt sem afirmar que o servidor aceitou o roubo.
+local lastEggInteractionTime = 0
+local lastInteractedPrompt = nil
 local function stealEgg(prompt)
     if not prompt or not prompt.Parent then return false end
     local success = false
@@ -1012,7 +1006,7 @@ local function stealEgg(prompt)
         prompt.HoldDuration = 0
         prompt.RequiresLineOfSight = false
         if fireproximityprompt then
-            fireproximityprompt(prompt, 0)
+            fireproximityprompt(prompt)
             success = true
         else
             prompt:InputHoldBegin()
@@ -1020,68 +1014,129 @@ local function stealEgg(prompt)
             success = true
         end
     end)
+    if success then
+        lastEggInteractionTime = os.clock()
+        lastInteractedPrompt = prompt
+    end
     return success
+end
+
+local function recordEggPromptInteraction(prompt, player)
+    if (not player or player == LocalPlayer) and isEggInteractionPrompt(prompt) then
+        lastEggInteractionTime = os.clock()
+        lastInteractedPrompt = prompt
+    end
+end
+
+Services.ProximityPromptService.PromptButtonHoldBegan:Connect(function(prompt, player)
+    recordEggPromptInteraction(prompt, player)
+end)
+
+Services.ProximityPromptService.PromptTriggered:Connect(function(prompt, player)
+    recordEggPromptInteraction(prompt, player)
+end)
+
+local function waitForStealConfirmation(prompt, timeout)
+    local deadline = os.clock() + (timeout or 0.8)
+    while os.clock() < deadline do
+        if not prompt or not prompt.Parent or not prompt:IsDescendantOf(Services.Workspace) then
+            return true, "o prompt saiu do mapa"
+        end
+        if not prompt.Enabled then
+            return true, "o prompt foi desativado"
+        end
+        if not isEggInteractionPrompt(prompt) then
+            return true, "o texto/estado do prompt mudou"
+        end
+        task.wait(0.05)
+    end
+    return false, "nenhuma mudança observável no prompt"
 end
 
 -- Loop Principal de Fly-Steal e Retorno à Base
 local isStealing = false
+local autoStealRunId = 0
 local function flyStealLoop()
     if isStealing then return end
     isStealing = true
 
-    pcall(function()
+    local ok, runError = pcall(function()
         local hrp = getHRP()
-        if not hrp then return end
+        if not hrp then
+            addLog("ROUBO", "Ciclo cancelado: HumanoidRootPart não encontrado.")
+            return
+        end
 
         local basePos = getBasePosition()
-        if not basePos then return end
+        if not basePos then
+            addLog("ROUBO", "Ciclo cancelado: posição da base não registrada.")
+            return
+        end
 
         -- 1. Identificar o Melhor Ovo por Renda e Peso Real
         local prompt, eggPos, eggInfo = getBestEggPrompt()
         if not prompt or not eggPos then
             if Flags.AutoLogger then
-                addLog("FLY-STEAL", "Nenhum ovo elegível encontrado no raio de busca.")
+                addLog("ROUBO", "Nenhum prompt Steal/Egg elegível encontrado no raio configurado.")
             end
             return
         end
 
         if Flags.AutoLogger then
-            addLog("RARIDADE-ENGINE", "Alvo selecionado: " .. eggInfo .. " | Voando a " .. tostring(Flags.FlySpeed) .. " studs/s...", { eggPos, prompt })
+            addLog("ROUBO", "Alvo observado: " .. eggInfo .. " | velocidade configurada: " .. tostring(Flags.FlySpeed) .. " blocos/s.", { eggPos, prompt })
         end
 
         -- 2. Voar até a exata posição do ovo
         local targetFlightPos = eggPos + Vector3.new(0, 0.8, 0)
         local promptTriggered = false
         local activationDistance = math.max(4, (prompt.MaxActivationDistance or 10) - 1)
-        local arrived = flyToPosition(targetFlightPos, Flags.FlySpeed, function(distance)
+        local arrived, finalDistance = flyToPosition(targetFlightPos, Flags.FlySpeed, function(distance)
             if not promptTriggered and distance <= activationDistance then
                 promptTriggered = stealEgg(prompt)
             end
         end)
-        if not arrived or not Flags.AutoSteal then return end
+        if not Flags.AutoSteal then return end
+        if not arrived then
+            addLog("ROUBO", "Falha de voo: o personagem terminou a " .. string.format("%.1f", finalDistance or -1) .. " blocos do alvo.")
+            return
+        end
 
-        -- 3. Disparar sem espera assim que entrar no alcance do prompt.
+        -- 3. Disparar assim que entrar no alcance e observar o resultado real.
         if not promptTriggered then
             promptTriggered = stealEgg(prompt)
         end
-        promptCooldown[prompt] = os.clock() + 2
+        if not promptTriggered then
+            addLog("ROUBO", "Falha: o executor não conseguiu acionar o prompt Steal/Egg.")
+            promptCooldown[prompt] = os.clock() + 0.5
+            return
+        end
+
+        local confirmed, confirmationEvidence = waitForStealConfirmation(prompt, 0.8)
+        promptCooldown[prompt] = os.clock() + (confirmed and 3 or 0.75)
         cachedBestCandidate = nil
         lastCandidateScanTime = 0
 
-        -- 4. RETORNAR VOANDO DIRETO PARA A BASE
-        if Flags.AutoLogger then
-            addLog("FLY-STEAL", "Ovo coletado! Retornando para a Base...", { basePos })
+        if confirmed then
+            addLog("ROUBO", "Mudança compatível com coleta observada: " .. confirmationEvidence .. ". Retornando à base.")
+        else
+            addLog("ROUBO", "Prompt acionado, mas o roubo NÃO foi confirmado: " .. confirmationEvidence .. ". Retornando à base para não ficar exposto.")
         end
 
-        flyToPosition(basePos + Vector3.new(0, 3, 0), Flags.FlySpeed)
+        local returned, returnDistance = flyToPosition(basePos + Vector3.new(0, 3, 0), Flags.FlySpeed)
+        if Flags.AutoLogger and not returned then
+            addLog("ROUBO", "Retorno incompleto: distância final da base = " .. string.format("%.1f", returnDistance or -1) .. " blocos.")
+        end
         task.wait(Flags.StealDelay)
     end)
 
     isStealing = false
+    if not ok then
+        addLog("ERRO", "Falha interna no ciclo de roubo: " .. tostring(runError))
+    end
 end
 
 --================================================================--
--- SISTEMA DE ESP ULTRA LEVE & ANTI-FREEZE (0% LAG / 0% CRASH)
+-- SISTEMA DE ESP COM LIMITE DE ALVOS
 --================================================================--
 
 local activeESPs = {}
@@ -1155,21 +1210,23 @@ local function refreshESP()
                 isESPUpdating = false
                 return
             end
+            local seenTargets = {}
 
-            -- 1. Egg ESP (Limita a 25 alvos mais próximos para 0% lag)
+            -- 1. ESP de ovos limitado a 25 alvos
             if Flags.EggESP then
                 local myPlayerName = LocalPlayer.Name:lower()
                 local count = 0
-                for _, obj in ipairs(Services.Workspace:GetDescendants()) do
+                for obj in pairs(stealPromptRegistry) do
                     if count >= 25 then break end
-                    if obj:IsA("ProximityPrompt") and obj.Enabled then
+                    if isStealPrompt(obj) and obj:IsDescendantOf(Services.Workspace) then
                         local parent = obj.Parent
-                        if parent and isEgg(parent) then
+                        if parent then
                             local fullName = parent:GetFullName():lower()
                             if not fullName:find(myPlayerName) then
                                 count = count + 1
-                                local score, rName = evaluateEggRarity(parent, obj)
+                                local _, rName = evaluateEggRarity(parent, obj)
                                 local dName = (obj.ObjectText ~= "" and obj.ObjectText) or parent.Name
+                                seenTargets[parent] = true
                                 applyLightweightESP(parent, dName .. " [" .. rName .. "]", Flags.ESPColor)
                             end
                         end
@@ -1183,9 +1240,19 @@ local function refreshESP()
                     if pl ~= LocalPlayer and pl.Character then
                         local hrp = pl.Character:FindFirstChild("HumanoidRootPart")
                         if hrp then
+                            seenTargets[pl.Character] = true
                             applyLightweightESP(pl.Character, pl.DisplayName .. " (@" .. pl.Name .. ")", Flags.PlayerESPColor)
                         end
                     end
+                end
+            end
+
+            for target, espItem in pairs(activeESPs) do
+                if not seenTargets[target] then
+                    pcall(function()
+                        if espItem and espItem.Parent then espItem:Destroy() end
+                    end)
+                    activeESPs[target] = nil
                 end
             end
         end)
@@ -1203,7 +1270,7 @@ end
 
 -- Throttled Background Loop
 task.spawn(function()
-    while true do
+    while scriptActive do
         task.wait(2.5)
         if Flags.EggESP or Flags.PlayerESP then
             refreshESP()
@@ -1211,8 +1278,220 @@ task.spawn(function()
     end
 end)
 
--- Player Mods Loop (Ultra-otimizado para 0% de queda de FPS)
+local humanoidDefaults = setmetatable({}, { __mode = "k" })
+local noclipOriginal = setmetatable({}, { __mode = "k" })
+local ragdollConstraintOriginal = setmetatable({}, { __mode = "k" })
+local animationConstraintOriginal = setmetatable({}, { __mode = "k" })
+local motorJointOriginal = setmetatable({}, { __mode = "k" })
+local lastHeldEggTool = nil
+local lastEggRecoveryAttempt = 0
+
+local ragdollStates = {
+    Enum.HumanoidStateType.Ragdoll,
+    Enum.HumanoidStateType.FallingDown,
+    Enum.HumanoidStateType.PlatformStanding,
+    Enum.HumanoidStateType.Physics
+}
+
+local function isEggTool(item)
+    if not item or not item:IsA("Tool") then return false end
+    local text = plainText(item.Name)
+    if text:find("egg", 1, true) or text:find("ovo", 1, true) then
+        return true
+    end
+    for key, value in pairs(item:GetAttributes()) do
+        local combined = plainText(key .. " " .. tostring(value))
+        if combined:find("egg", 1, true) or combined:find("ovo", 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function restoreNoclip()
+    for part, original in pairs(noclipOriginal) do
+        if part and part.Parent then
+            part.CanCollide = original
+        end
+        noclipOriginal[part] = nil
+    end
+end
+
+local function setRagdollStatesEnabled(humanoid, enabled)
+    if not humanoid then return end
+    for _, state in ipairs(ragdollStates) do
+        pcall(function()
+            humanoid:SetStateEnabled(state, enabled)
+        end)
+    end
+end
+
+local function restoreRagdollConstraints()
+    for constraint, original in pairs(ragdollConstraintOriginal) do
+        if constraint and constraint.Parent then
+            constraint.Enabled = original
+        end
+        ragdollConstraintOriginal[constraint] = nil
+    end
+    for constraint, original in pairs(animationConstraintOriginal) do
+        if constraint and constraint.Parent then
+            constraint.Enabled = original.Enabled
+            constraint.IsKinematic = original.IsKinematic
+        end
+        animationConstraintOriginal[constraint] = nil
+    end
+end
+
+local function enforceAntiRagdoll(char, humanoid)
+    if not Flags.AntiRagdoll or not char or not humanoid or humanoid.Health <= 0 then return end
+    local recoveringJoints = humanoid.PlatformStand or humanoid.Sit
+    humanoid.PlatformStand = false
+    humanoid.Sit = false
+    humanoid.AutoRotate = true
+
+    local currentState = humanoid:GetState()
+    for _, state in ipairs(ragdollStates) do
+        if currentState == state then
+            recoveringJoints = true
+            humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+            break
+        end
+    end
+
+    -- Muitos sistemas de ragdoll usam atributos em vez do estado do Humanoid.
+    for _, target in ipairs({ char, humanoid }) do
+        for attributeName, value in pairs(target:GetAttributes()) do
+            local name = plainText(attributeName)
+            if value == true and (name:find("ragdoll", 1, true)
+                or name:find("stun", 1, true)
+                or name:find("knock", 1, true)) then
+                recoveringJoints = true
+                pcall(function() target:SetAttribute(attributeName, false) end)
+            end
+        end
+    end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        hrp.AssemblyAngularVelocity = Vector3.zero
+    end
+
+    if recoveringJoints then
+        for _, descendant in ipairs(char:GetDescendants()) do
+            if descendant:IsA("Motor6D") then
+                local original = motorJointOriginal[descendant]
+                if original then
+                    pcall(function()
+                        if not descendant.Part0 then descendant.Part0 = original.Part0 end
+                        if not descendant.Part1 then descendant.Part1 = original.Part1 end
+                    end)
+                end
+            elseif descendant:IsA("AnimationConstraint") then
+                if not animationConstraintOriginal[descendant] then
+                    animationConstraintOriginal[descendant] = {
+                        Enabled = descendant.Enabled,
+                        IsKinematic = descendant.IsKinematic
+                    }
+                end
+                descendant.Enabled = true
+                descendant.IsKinematic = true
+            elseif descendant:IsA("BallSocketConstraint") and descendant.Enabled then
+                ragdollConstraintOriginal[descendant] = true
+                descendant.Enabled = false
+            end
+        end
+    end
+    return recoveringJoints
+end
+
+local function equipKnownEggTool(char, humanoid)
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack or not char or not humanoid then return false end
+
+    local item = lastHeldEggTool
+    if not item or item.Parent ~= backpack then
+        for _, candidate in ipairs(backpack:GetChildren()) do
+            if isEggTool(candidate) then
+                item = candidate
+                break
+            end
+        end
+    end
+
+    if item and item.Parent == backpack then
+        humanoid:EquipTool(item)
+        lastHeldEggTool = item
+        return item.Parent == char
+    end
+    return false
+end
+
+local function findClosestStealPrompt(position, radius)
+    local closest, closestDistance = nil, radius or 20
+    if lastInteractedPrompt and isEggInteractionPrompt(lastInteractedPrompt)
+        and lastInteractedPrompt:IsDescendantOf(Services.Workspace) then
+        local lastPosition = getPromptPosition(lastInteractedPrompt)
+        local lastDistance = lastPosition and (position - lastPosition).Magnitude or math.huge
+        if lastDistance <= closestDistance then
+            return lastInteractedPrompt, lastDistance
+        end
+    end
+    for prompt in pairs(eggInteractionPromptRegistry) do
+        if isEggInteractionPrompt(prompt) and prompt:IsDescendantOf(Services.Workspace) then
+            local promptPosition = getPromptPosition(prompt)
+            if promptPosition then
+                local distance = (position - promptPosition).Magnitude
+                if distance <= closestDistance then
+                    closest = prompt
+                    closestDistance = distance
+                end
+            end
+        end
+    end
+    return closest, closestDistance
+end
+
+local function recoverDroppedEgg(reason)
+    if not Flags.NeverDropEgg or (os.clock() - lastEggInteractionTime) > 45 then return end
+    if (os.clock() - lastEggRecoveryAttempt) < 0.75 then return end
+    lastEggRecoveryAttempt = os.clock()
+
+    task.spawn(function()
+        for attempt = 1, 8 do
+            if not Flags.NeverDropEgg then return end
+            local char = LocalPlayer.Character
+            local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if not char or not humanoid or not hrp then return end
+
+            if equipKnownEggTool(char, humanoid) then
+                if Flags.AutoLogger then
+                    addLog("OVO", "Ferramenta de ovo reequipada após " .. tostring(reason) .. ".")
+                end
+                return
+            end
+
+            local prompt, distance = findClosestStealPrompt(hrp.Position, 18)
+            if prompt and stealEgg(prompt) then
+                if Flags.AutoLogger then
+                    addLog("OVO", "Prompt próximo acionado para tentar recuperar o ovo derrubado (distância "
+                        .. string.format("%.1f", distance) .. ", tentativa " .. tostring(attempt) .. ").")
+                end
+                local confirmed = waitForStealConfirmation(prompt, 0.35)
+                if confirmed then return end
+            end
+            task.wait(0.1)
+        end
+        if Flags.AutoLogger then
+            addLog("OVO", "Recuperação encerrada sem confirmação observável do servidor.")
+        end
+    end)
+end
+
+-- Mods e proteções locais. Recursos autoritativos do servidor são registrados
+-- como tentativa, nunca como garantia.
 Services.RunService.RenderStepped:Connect(function()
+    if not scriptActive then return end
     pcall(function()
         local char = LocalPlayer.Character
         if not char then return end
@@ -1221,11 +1500,20 @@ Services.RunService.RenderStepped:Connect(function()
         if hum then
             if Flags.SpeedHack then hum.WalkSpeed = Flags.WalkSpeed end
             if Flags.JumpPowerHack then hum.JumpPower = Flags.JumpPower end
+            if Flags.GodMode and hum.Health > 0 and hum.Health < hum.MaxHealth then
+                hum.Health = hum.MaxHealth
+            end
+            if enforceAntiRagdoll(char, hum) then
+                recoverDroppedEgg("sinal local de ragdoll/stun")
+            end
         end
 
         if Flags.Noclip then
-            for _, part in ipairs(char:GetChildren()) do
+            for _, part in ipairs(char:GetDescendants()) do
                 if part:IsA("BasePart") then
+                    if noclipOriginal[part] == nil then
+                        noclipOriginal[part] = part.CanCollide
+                    end
                     part.CanCollide = false
                 end
             end
@@ -1233,45 +1521,79 @@ Services.RunService.RenderStepped:Connect(function()
     end)
 end)
 
--- Sistema de Proteção 100% Baseado em Eventos (0% de uso de CPU e 0% de queda de FPS)
 local function applyCharacterProtections(char)
     if not char then return end
     local hum = char:WaitForChild("Humanoid", 3)
     if not hum then return end
-
-    -- 1. Anti-Ragdoll via Evento StateChanged
-    hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-    hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-    hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, false)
+    humanoidDefaults[hum] = {
+        WalkSpeed = hum.WalkSpeed,
+        JumpPower = hum.JumpPower
+    }
+    for _, descendant in ipairs(char:GetDescendants()) do
+        if descendant:IsA("Motor6D") then
+            motorJointOriginal[descendant] = {
+                Part0 = descendant.Part0,
+                Part1 = descendant.Part1
+            }
+        elseif descendant:IsA("AnimationConstraint") then
+            animationConstraintOriginal[descendant] = {
+                Enabled = descendant.Enabled,
+                IsKinematic = descendant.IsKinematic
+            }
+        end
+    end
+    setRagdollStatesEnabled(hum, not Flags.AntiRagdoll)
 
     hum.StateChanged:Connect(function(_, newState)
         if Flags.AntiRagdoll then
-            if newState == Enum.HumanoidStateType.Ragdoll or newState == Enum.HumanoidStateType.FallingDown or newState == Enum.HumanoidStateType.PlatformStanding then
-                hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+            for _, ragdollState in ipairs(ragdollStates) do
+                if newState == ragdollState then
+                    enforceAntiRagdoll(char, hum)
+                    recoverDroppedEgg("mudança para estado " .. tostring(newState))
+                    break
+                end
             end
         end
     end)
 
-    -- 2. GodMode via Evento HealthChanged
-    hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
-    hum.HealthChanged:Connect(function(currentHealth)
-        if Flags.GodMode and currentHealth < hum.MaxHealth and currentHealth > 0 then
-            hum.Health = hum.MaxHealth
+    hum:GetPropertyChangedSignal("PlatformStand"):Connect(function()
+        if Flags.AntiRagdoll and hum.PlatformStand then
+            enforceAntiRagdoll(char, hum)
+            recoverDroppedEgg("PlatformStand")
         end
     end)
 
-    -- 3. Never Drop Egg (Só reequipa se a mão estiver vazia, sem ficar trocando itens)
+    hum:GetPropertyChangedSignal("Sit"):Connect(function()
+        if Flags.AntiRagdoll and hum.Sit then
+            enforceAntiRagdoll(char, hum)
+            recoverDroppedEgg("queda/sentado")
+        end
+    end)
+
+    char.ChildAdded:Connect(function(item)
+        if isEggTool(item) then
+            lastHeldEggTool = item
+            lastEggInteractionTime = os.clock()
+        end
+    end)
+
+    char.ChildRemoved:Connect(function(item)
+        if Flags.NeverDropEgg and (item == lastHeldEggTool or isEggTool(item)) then
+            lastHeldEggTool = item
+            task.defer(function()
+                equipKnownEggTool(char, hum)
+            end)
+        end
+    end)
+
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if backpack then
         backpack.ChildAdded:Connect(function(item)
-            if Flags.NeverDropEgg and (isEgg(item) or item:IsA("Tool")) then
-                task.wait(0.1)
-                if item.Parent == backpack and char and char:FindFirstChildOfClass("Humanoid") then
-                    local currentlyHeld = char:FindFirstChildOfClass("Tool")
-                    if not currentlyHeld then
-                        char:FindFirstChildOfClass("Humanoid"):EquipTool(item)
-                    end
-                end
+            if Flags.NeverDropEgg and (item == lastHeldEggTool or isEggTool(item)) then
+                lastHeldEggTool = item
+                task.defer(function()
+                    equipKnownEggTool(char, hum)
+                end)
             end
         end)
     end
@@ -1282,11 +1604,13 @@ if LocalPlayer.Character then
     task.spawn(function() applyCharacterProtections(LocalPlayer.Character) end)
 end
 LocalPlayer.CharacterAdded:Connect(function(char)
-    task.spawn(function() applyCharacterProtections(char) end)
+    if scriptActive then
+        task.spawn(function() applyCharacterProtections(char) end)
+    end
 end)
 
 Services.UserInputService.JumpRequest:Connect(function()
-    if Flags.InfJump then
+    if scriptActive and Flags.InfJump then
         pcall(function()
             local char = LocalPlayer.Character
             if char and char:FindFirstChildOfClass("Humanoid") then
@@ -1296,19 +1620,13 @@ Services.UserInputService.JumpRequest:Connect(function()
     end
 end)
 
--- Anti-AFK seguro: reseta o idle timer sem usar serviços protegidos
+-- Anti-AFK por entrada virtual; Humanoid:Move(Vector3.zero) não reinicia o idle.
 pcall(function()
     LocalPlayer.Idled:Connect(function()
-        if Flags.AntiAFK then
+        if scriptActive and Flags.AntiAFK then
             pcall(function()
-                -- Simular movimento suave via Humanoid para enganar o idle timer
-                local char = LocalPlayer.Character
-                if char then
-                    local hum = char:FindFirstChildOfClass("Humanoid")
-                    if hum then
-                        hum:Move(Vector3.new(0, 0, 0), false)
-                    end
-                end
+                Services.VirtualUser:CaptureController()
+                Services.VirtualUser:ClickButton2(Vector2.new(0, 0))
             end)
         end
     end)
@@ -1414,7 +1732,7 @@ CloseStroke.Thickness = 1
 CloseStroke.Parent = CloseBtn
 
 CloseBtn.MouseButton1Click:Connect(function()
-    ScreenGui:Destroy()
+    ScreenGui.Enabled = false
 end)
 
 -- Sidebar Vertical
@@ -1510,7 +1828,7 @@ local MainTab = createTab("Roubo e Base")
 local RadarTab = createTab("Radar e Filtros")
 local PlayerTab = createTab("Modificações")
 local VisualsTab = createTab("Visuais (ESP)")
-local LoggerTab = createTab("Console de Registros")
+local LoggerTab = createTab("Diagnóstico")
 local SettingsTab = createTab("Configurações")
 
 TabFrames[1].Visible = true
@@ -1693,6 +2011,8 @@ end
 
 -- População da Aba 1: Roubo e Base
 addToggle(MainTab, "Roubo automático e retorno à base", Flags.AutoSteal, function(state)
+    autoStealRunId = autoStealRunId + 1
+    local thisRunId = autoStealRunId
     Flags.AutoSteal = state
     if state then
         local hrp = getHRP()
@@ -1701,7 +2021,7 @@ addToggle(MainTab, "Roubo automático e retorno à base", Flags.AutoSteal, funct
         end
         addLog("ROUBO", "Roubo automático ativado. Posição da base registrada.")
         task.spawn(function()
-            while Flags.AutoSteal do
+            while scriptActive and Flags.AutoSteal and autoStealRunId == thisRunId do
                 flyStealLoop()
                 task.wait(Flags.StealDelay)
             end
@@ -1713,6 +2033,7 @@ end)
 
 addToggle(MainTab, "Priorizar maior valor ($/s e raridade)", Flags.PrioritizeRare, function(state)
     Flags.PrioritizeRare = state
+    invalidateTargetCache()
 end)
 
 addSlider(MainTab, "Velocidade de voo (blocos/s)", 50, 1000, Flags.FlySpeed, function(val)
@@ -1721,6 +2042,7 @@ end)
 
 addSlider(MainTab, "Raio de busca (blocos)", 100, 4000, Flags.StealRadius, function(val)
     Flags.StealRadius = val
+    invalidateTargetCache()
 end)
 
 addButton(MainTab, "Registrar posição atual como base", function()
@@ -1728,7 +2050,7 @@ addButton(MainTab, "Registrar posição atual como base", function()
     if hrp then
         Flags.CustomBasePos = hrp.Position
         Flags.SavedBasePos = hrp.Position
-        addLog("BASE", "Base position updated: " .. tostring(math.floor(hrp.Position.X)) .. ", " .. tostring(math.floor(hrp.Position.Z)))
+        addLog("BASE", "Posição da base atualizada: " .. tostring(math.floor(hrp.Position.X)) .. ", " .. tostring(math.floor(hrp.Position.Z)))
     end
 end)
 
@@ -1744,13 +2066,13 @@ end)
 -- População da Aba 2: Radar & Filters
 addButton(RadarTab, "Escanear ovos do mapa (radar ao vivo)", function()
     local discovered, dumpText = scanAllEggsInMap()
-    addLog("RADAR", dumpText)
+    addLog("RADAR", tostring(#discovered) .. " prompts compatíveis com Steal/Egg encontrados. O relatório completo foi enviado ao console do executor.")
     print("\n" .. dumpText .. "\n")
 end)
 
 addButton(RadarTab, "Gerar relatório completo do jogo (TXT)", function()
     local dump = dumpGameStructure()
-    addLog("MEGA-DUMP", "Architecture dump generated and copied to clipboard.")
+    addLog("DIAGNÓSTICO", "Inventário estrutural gerado. Ele mostra objetos presentes, não chamadas remotas nem dados internos do servidor.")
     print("\n" .. dump .. "\n")
 end)
 
@@ -1761,7 +2083,7 @@ addButton(RadarTab, "Copiar relatório do radar", function()
     pcall(function()
         if setclipboard then
             setclipboard(_G.EggRadarText)
-            addLog("RADAR", "Radar report copied to clipboard.")
+            addLog("RADAR", "Relatório do radar copiado.")
         end
     end)
 end)
@@ -1777,41 +2099,77 @@ end)
 
 addToggle(RadarTab, "Filtro: ignorar comuns e baixo nível", Flags.FilterIgnoreCommons, function(state)
     Flags.FilterIgnoreCommons = state
+    invalidateTargetCache()
     addLog("FILTROS", "Ignorar comuns: " .. (state and "ATIVADO" or "DESATIVADO"))
 end)
 
-addToggle(RadarTab, "Filtro: nível alto / mítico+ (>= 5.000 pts)", false, function(state)
-    Flags.MinRarityScore = state and 5000 or 0
-    addLog("FILTROS", "Filtro mítico+: " .. (state and "ATIVADO (>= 5.000 pts)" or "DESATIVADO"))
+local function updateMinimumRarityFilter()
+    Flags.MinRarityScore = math.max(
+        Flags.ManualMinRarityScore,
+        Flags.FilterHighTier and 5000 or 0,
+        Flags.FilterTopTier and 30000 or 0
+    )
+    invalidateTargetCache()
+end
+
+addToggle(RadarTab, "Filtro: nível alto (>= 5.000 pts)", false, function(state)
+    Flags.FilterHighTier = state
+    updateMinimumRarityFilter()
+    addLog("FILTROS", "Filtro de nível alto: " .. (state and "ATIVADO (>= 5.000 pts)" or "DESATIVADO"))
 end)
 
 addToggle(RadarTab, "Filtro: somente nível máximo (>= 30.000 pts)", false, function(state)
-    Flags.MinRarityScore = state and 30000 or 0
+    Flags.FilterTopTier = state
+    updateMinimumRarityFilter()
     addLog("FILTROS", "Filtro de nível máximo: " .. (state and "ATIVADO (>= 30.000 pts)" or "DESATIVADO"))
 end)
 
 addSlider(RadarTab, "Pontuação mínima", 0, 40000, Flags.MinRarityScore, function(val)
-    Flags.MinRarityScore = val
+    Flags.ManualMinRarityScore = val
+    updateMinimumRarityFilter()
 end)
 
 -- População da Aba 3: Player Mods
-addToggle(PlayerTab, "Proteção de invencibilidade", Flags.GodMode, function(state)
+addToggle(PlayerTab, "Recuperar vida local (experimental)", Flags.GodMode, function(state)
     Flags.GodMode = state
-    if state then addLog("JOGADOR", "Invencibilidade ativada.") end
+    addLog("JOGADOR", "Recuperação local de vida " .. (state and "ativada" or "desativada")
+        .. ". O servidor pode sobrescrever esse efeito.")
 end)
 
-addToggle(PlayerTab, "Anti-queda", Flags.AntiRagdoll, function(state)
+addToggle(PlayerTab, "Bloqueio local de ragdoll", Flags.AntiRagdoll, function(state)
     Flags.AntiRagdoll = state
-    if state then addLog("JOGADOR", "Anti-queda ativado.") end
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if state and char then
+        for _, descendant in ipairs(char:GetDescendants()) do
+            if descendant:IsA("AnimationConstraint") and not animationConstraintOriginal[descendant] then
+                animationConstraintOriginal[descendant] = {
+                    Enabled = descendant.Enabled,
+                    IsKinematic = descendant.IsKinematic
+                }
+            end
+        end
+    end
+    setRagdollStatesEnabled(hum, not state)
+    if state and char and hum then enforceAntiRagdoll(char, hum) end
+    if not state then restoreRagdollConstraints() end
+    addLog("JOGADOR", "Bloqueio local de ragdoll " .. (state and "ativado" or "desativado")
+        .. ". A recuperação do ovo será tentada após impactos detectados.")
 end)
 
-addToggle(PlayerTab, "Segurar ovo (nunca soltar)", Flags.NeverDropEgg, function(state)
+addToggle(PlayerTab, "Recuperar ovo derrubado", Flags.NeverDropEgg, function(state)
     Flags.NeverDropEgg = state
-    if state then addLog("JOGADOR", "Proteção para nunca soltar o ovo ativada.") end
+    addLog("JOGADOR", "Recuperação de ovo derrubado " .. (state and "ativada" or "desativada")
+        .. ". O script tentará reequipar ou reacionar um prompt próximo.")
 end)
 
 addToggle(PlayerTab, "Aumento de velocidade", Flags.SpeedHack, function(state)
     Flags.SpeedHack = state
+    if not state then
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        local defaults = hum and humanoidDefaults[hum]
+        if hum and defaults then hum.WalkSpeed = defaults.WalkSpeed end
+    end
 end)
 
 addSlider(PlayerTab, "Velocidade de caminhada", 16, 250, Flags.WalkSpeed, function(val)
@@ -1820,6 +2178,11 @@ end)
 
 addToggle(PlayerTab, "Aumento de força do pulo", Flags.JumpPowerHack, function(state)
     Flags.JumpPowerHack = state
+    if not state then
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        local defaults = hum and humanoidDefaults[hum]
+        if hum and defaults then hum.JumpPower = defaults.JumpPower end
+    end
 end)
 
 addSlider(PlayerTab, "Força do pulo", 50, 300, Flags.JumpPower, function(val)
@@ -1828,6 +2191,7 @@ end)
 
 addToggle(PlayerTab, "Atravessar paredes", Flags.Noclip, function(state)
     Flags.Noclip = state
+    if not state then restoreNoclip() end
 end)
 
 addToggle(PlayerTab, "Pulo infinito", Flags.InfJump, function(state)
@@ -1875,7 +2239,7 @@ ConsoleText.TextSize = 11
 ConsoleText.Font = Enum.Font.Code
 ConsoleText.TextXAlignment = Enum.TextXAlignment.Left
 ConsoleText.TextYAlignment = Enum.TextYAlignment.Top
-ConsoleText.Text = "=== CONSOLE DO SISTEMA E EVENTOS REMOTOS ==="
+ConsoleText.Text = "=== CONSOLE DE DIAGNÓSTICO LOCAL ==="
 ConsoleText.Parent = ConsoleFrame
 
 local function updateLogConsole()
@@ -1884,6 +2248,7 @@ local function updateLogConsole()
     ConsoleFrame.CanvasSize = UDim2.new(0, 0, 0, #LogHistory * 20 + 30)
 end
 _G.UpdateLogConsole = updateLogConsole
+updateLogConsole()
 
 addToggle(LoggerTab, "Salvar registros automaticamente no disco", Flags.SaveToDisk, function(state)
     Flags.SaveToDisk = state
@@ -1910,7 +2275,7 @@ addToggle(SettingsTab, "Proteção anti-inatividade", Flags.AntiAFK, function(st
     Flags.AntiAFK = state
 end)
 
-addToggle(SettingsTab, "Registro detalhado de atividades", Flags.AutoLogger, function(state)
+addToggle(SettingsTab, "Diagnóstico detalhado do Auto Steal", Flags.AutoLogger, function(state)
     Flags.AutoLogger = state
 end)
 
@@ -1919,13 +2284,32 @@ addButton(SettingsTab, "Mostrar/ocultar interface (Control esquerdo)", function(
 end)
 
 addButton(SettingsTab, "Descarregar e encerrar script", function()
+    scriptActive = false
+    Flags.AutoSteal = false
+    Flags.Noclip = false
+    Flags.AntiRagdoll = false
+    Flags.NeverDropEgg = false
+    Flags.GodMode = false
+    Flags.SpeedHack = false
+    Flags.JumpPowerHack = false
+    restoreNoclip()
+    restoreRagdollConstraints()
+    local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    local defaults = hum and humanoidDefaults[hum]
+    if hum then
+        setRagdollStatesEnabled(hum, true)
+        if defaults then
+            hum.WalkSpeed = defaults.WalkSpeed
+            hum.JumpPower = defaults.JumpPower
+        end
+    end
     clearAllESP()
     ScreenGui:Destroy()
 end)
 
 -- Tecla de Atalho (LeftControl)
 Services.UserInputService.InputBegan:Connect(function(input, gpe)
-    if not gpe and input.KeyCode == Enum.KeyCode.LeftControl then
+    if scriptActive and not gpe and input.KeyCode == Enum.KeyCode.LeftControl then
         ScreenGui.Enabled = not ScreenGui.Enabled
     end
 end)
@@ -1933,4 +2317,4 @@ end)
 -- Iniciar GUI com proteção contra detecção de ChildAdded
 protectGui(ScreenGui)
 ScreenGui.Parent = getGuiContainer()
-print("========== ROUBE UM OVO PRO v3.5 (GLASS EDITION) CARREGADO ==========")
+print("========== ROUBE UM OVO PRO v3.6 CARREGADO ==========")

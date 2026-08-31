@@ -14,10 +14,11 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/talespxk/Roube-um-ovo
 
 ## ✨ Funcionalidades
 
-- **🚀 Auto Fly Steal:** Voo ultra-rápido (até 1000 studs/s) com física real e retorno seguro para a base (sem kick do BAC).
-- **🎯 Radar & Scanner de Ovos:** Mapeamento completo de todos os ovos, raridades e ilhas no mapa.
-- **🛡️ GodMode & Proteções:** Imunidade contra dano/mortes.
-- **🥋 Anti-Ragdoll Nativo:** Imune a quedas ou atordoamentos.
-- **🥚 Never Drop Egg:** Nunca solta o ovo das mãos sob impacto.
-- **🧬 Mega Varredura do Jogo:** Introspecção completa de raridades e estruturas do servidor.
-- **🎨 Interface Fluent:** Visual moderno, limpo e com suporte a atalhos (\LeftControl\).
+- **🚀 Roubo automático:** Localiza prompts observáveis `Steal / Egg`, voa até o alcance, aciona o prompt e retorna à posição registrada como base.
+- **🎯 Radar verificável:** Lista somente prompts compatíveis com `Steal / Egg` e informa a fonte de valores ou raridades exibidos.
+- **🥋 Bloqueio local de ragdoll:** Tenta restaurar estados, postura e atributos locais de queda. O servidor pode sobrescrever o efeito.
+- **🥚 Recuperação de ovo:** Tenta reequipar uma ferramenta de ovo ou reacionar o prompt próximo após um impacto detectado.
+- **🧬 Diagnóstico honesto:** Registra ações locais e mudanças observáveis. Não afirma interceptar chamadas remotas nem acessar dados internos do servidor.
+- **🎨 Interface em português:** Visual moderno com atalho no `Control` esquerdo.
+
+Recursos que dependem de autoridade do servidor são tentativas locais e podem variar conforme atualizações do jogo ou do executor.
