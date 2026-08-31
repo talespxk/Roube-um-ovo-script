@@ -295,11 +295,12 @@ local function isEgg(obj)
         local p = obj:FindFirstChildWhichIsA("ProximityPrompt")
         if p then promptText = p.ActionText .. " " .. p.ObjectText end
     end
-    local name = (obj.Name .. " " .. promptText):lower()
-    return name:find("egg") or name:find("ovo") or name:find("brainrot") 
-        or name:find("secret") or name:find("godly") or name:find("mythic") 
-        or name:find("legend") or name:find("steal") or name:find("roub") 
-        or name:find("peg") or name:find("take") or name:find("grab")
+    local name = (obj.Name .. " " .. promptText .. " " .. obj:GetFullName()):lower()
+    return name:find("egg") or name:find("ovo") or name:find("steal") 
+        or name:find("smartprompt") or name:find("areaegg") or name:find("prehistoric") 
+        or name:find("abyss") or name:find("ocean") or name:find("volcano") 
+        or name:find("cherry") or name:find("sakura") or name:find("dragon") 
+        or name:find("brainrot") or name:find("parasite") or name:find("admin")
 end
 
 local function getCharacter()
@@ -346,78 +347,76 @@ local function getBasePosition()
 end
 
 --================================================================--
--- MOTOR AVANÇADO DE DETECÇÃO DE RARIDADE DE OVOS (IA DE VALOR)
+-- MOTOR REAL DE RARIDADE E ÁREAS (BASEADO NOS DADOS DO JOGO)
 --================================================================--
 
 local RarityWeights = {
-    ["infinity"] = 50000,
-    ["infinito"] = 50000,
-    ["void"] = 45000,
-    ["celestial"] = 40000,
-    ["divine"] = 38000,
-    ["divino"] = 38000,
-    ["secret"] = 35000,
-    ["secreto"] = 35000,
-    ["dark matter"] = 32000,
-    ["godly"] = 30000,
-    ["deus"] = 30000,
-    ["trillionaire"] = 28000,
-    ["billionaire"] = 25000,
-    ["millionaire"] = 22000,
-    ["titan"] = 20000,
-    ["tungsten"] = 19000,
-    ["gigachad"] = 18000,
-    ["brainrot"] = 17000,
-    ["sigma"] = 16000,
-    ["skibidi"] = 15000,
-    ["mewing"] = 14000,
-    ["rizz"] = 13000,
-    ["cameraman"] = 12000,
-    ["tvman"] = 11500,
-    ["speaker"] = 11000,
-    ["dragon"] = 10500,
-    ["kitsune"] = 10000,
-    ["rainbow"] = 9000,
-    ["arco-íris"] = 9000,
-    ["diamond"] = 8000,
-    ["diamante"] = 8000,
-    ["emerald"] = 7500,
-    ["esmeralda"] = 7500,
-    ["ruby"] = 7000,
-    ["rubi"] = 7000,
-    ["gold"] = 6500,
-    ["ouro"] = 6500,
-    ["mythic"] = 5500,
-    ["mítico"] = 5500,
-    ["mitico"] = 5500,
-    ["legendary"] = 4500,
-    ["lendário"] = 4500,
-    ["lendario"] = 4500,
-    ["epic"] = 3000,
-    ["épico"] = 3000,
-    ["epico"] = 3000,
-    ["rare"] = 1500,
-    ["raro"] = 1500,
-    ["uncommon"] = 800,
-    ["incomum"] = 800,
-    ["common"] = 200,
-    ["comum"] = 200
+    -- Ovos Especiais / Exclusivos / Eventos
+    ["admin abuse"] = 80000,
+    ["monster parasite"] = 70000,
+    ["dragon"] = 65000,
+    ["sakura"] = 60000,
+    ["brainrot"] = 55000,
+    ["limited"] = 50000,
+    ["capture the egg"] = 45000,
+
+    -- Áreas / Ilhas do Jogo (por ordem de peso e avanço real)
+    ["prehistoric"] = 35000,   -- ~25.000 Kg
+    ["pre-histórico"] = 35000,
+    ["pre historico"] = 35000,
+    ["abyss ocean"] = 28000,   -- ~18.000 a 20.000 Kg
+    ["abyss"] = 28000,
+    ["ocean"] = 28000,
+    ["volcano"] = 20000,       -- ~8.000 a 10.000 Kg
+    ["vulcão"] = 20000,
+    ["vulcao"] = 20000,
+    ["cherry blossom"] = 10000,-- ~185 Kg
+    ["cherry"] = 10000,
+    ["blossom"] = 10000,
+
+    -- Raridades Gerais
+    ["secret"] = 45000,
+    ["secreto"] = 45000,
+    ["mythic"] = 25000,
+    ["mítico"] = 25000,
+    ["mitico"] = 25000,
+    ["legendary"] = 18000,
+    ["lendário"] = 18000,
+    ["lendario"] = 18000,
+    ["epic"] = 8000,
+    ["épico"] = 8000,
+    ["epico"] = 8000,
+    ["rare"] = 4000,
+    ["raro"] = 4000,
+    ["uncommon"] = 1500,
+    ["incomum"] = 1500,
+    ["common"] = 300,
+    ["comum"] = 300
 }
+
+local function parseEggWeightKg(str)
+    if not str then return 0 end
+    local s = tostring(str):lower()
+    local kgStr = s:match("([%d%,%.]+)%s*kg")
+    if kgStr then
+        kgStr = kgStr:gsub(",", "")
+        local kg = tonumber(kgStr)
+        if kg then return kg end
+    end
+    return 0
+end
 
 local function parseMultiplierOrNumber(str)
     if not str then return 0 end
     local s = tostring(str):lower()
 
-    -- 1. Tiers e Levels (ex: Tier 10, T5, Lvl 100)
-    local tier = s:match("tier%s*(%d+)") or s:match("t(%d+)") or s:match("lvl%s*(%d+)") or s:match("level%s*(%d+)")
-    if tier then
-        local tNum = tonumber(tier)
-        if tNum and tNum > 0 then
-            return tNum * 3000
-        end
+    -- Peso em Kg do ovo
+    local kg = parseEggWeightKg(s)
+    if kg > 0 then
+        return kg * 1.5
     end
 
-    -- 2. Multiplicadores e Valores com sufixos (ex: 500k, 10M, 1B, 50T, 1Qa, 1Qi)
+    -- Multiplicadores e Valores com sufixos (ex: 500k, 10M, 1B, 50T, 1Qa, 1Qi)
     local num, suffix = s:match("([%d%,%.]+)%s*([kmbtq]a?i?)")
     if num and suffix then
         num = num:gsub(",", "")
@@ -435,18 +434,11 @@ local function parseMultiplierOrNumber(str)
         end
     end
 
-    -- 3. Multiplicador simples (ex: x500, 100x)
-    local simpleMult = s:match("x(%d+)") or s:match("(%d+)x")
-    if simpleMult then
-        local m = tonumber(simpleMult)
-        if m then return m * 200 end
-    end
-
     return 0
 end
 
 local function evaluateEggRarity(eggObj, prompt)
-    if not eggObj then return 200, "Comum" end
+    if not eggObj then return 300, "Comum" end
     local maxScore = 0
     local detectedRarity = "Comum"
 
@@ -465,7 +457,7 @@ local function evaluateEggRarity(eggObj, prompt)
         local numScore = parseMultiplierOrNumber(s)
         if numScore > maxScore then
             maxScore = numScore
-            detectedRarity = "ALTO VALOR (" .. math.floor(numScore) .. " pts)"
+            detectedRarity = "PESO/VALOR (" .. math.floor(numScore) .. " pts)"
         end
     end
 
@@ -509,11 +501,12 @@ local function evaluateEggRarity(eggObj, prompt)
             end
         end)
 
-        -- Nome
+        -- Nome e Caminho
         checkText(target.Name)
+        checkText(target:GetFullName())
     end
 
-    return (maxScore > 0 and maxScore or 200), detectedRarity
+    return (maxScore > 0 and maxScore or 300), detectedRarity
 end
 
 -- Detecção de Ilha, Zona, Base ou Plot do Ovo
@@ -902,15 +895,18 @@ end
 local function stealEgg(prompt)
     if not prompt or not prompt.Parent then return end
     pcall(function()
-        -- 1. Execução direta com fireproximityprompt
+        -- 1. Execução direta via fireproximityprompt com bypass
         if fireproximityprompt then
+            pcall(function() fireproximityprompt(prompt, 0) end)
+            pcall(function() fireproximityprompt(prompt, 1) end)
             pcall(function() fireproximityprompt(prompt) end)
         end
 
-        -- 2. Fallback com simulação de toque/segurar nativo
+        -- 2. Fallback de interação nativa
         pcall(function()
             prompt:InputHoldBegin()
-            task.wait(0.04)
+            local hold = math.min((prompt.HoldDuration or 0) + 0.05, 1.3)
+            task.wait(hold > 0 and hold or 0.1)
             prompt:InputHoldEnd()
         end)
     end)
@@ -929,7 +925,7 @@ local function flyStealLoop()
         local basePos = getBasePosition()
         if not basePos then return end
 
-        -- 1. Identificar o Melhor Ovo por Raridade Real
+        -- 1. Identificar o Melhor Ovo por Raridade e Peso Real
         local prompt, eggPos, eggInfo = getBestEggPrompt()
         if not prompt or not eggPos then
             if Flags.AutoLogger then
@@ -939,19 +935,16 @@ local function flyStealLoop()
         end
 
         if Flags.AutoLogger then
-            addLog("RARIDADE-ENGINE", "Alvo mais valioso selecionado: " .. eggInfo .. " | Voando a " .. tostring(Flags.FlySpeed) .. " studs/s...", { eggPos, prompt })
+            addLog("RARIDADE-ENGINE", "Alvo selecionado: " .. eggInfo .. " | Voando a " .. tostring(Flags.FlySpeed) .. " studs/s...", { eggPos, prompt })
         end
 
-        -- 2. Voar até a exata posição do ovo em postura firme
-        local targetFlightPos = eggPos + Vector3.new(0, 1.2, 0)
+        -- 2. Voar até a exata posição do ovo (SmartPromptPart)
+        local targetFlightPos = eggPos + Vector3.new(0, 0.8, 0)
         local arrived = flyToPosition(targetFlightPos, Flags.FlySpeed)
         if not arrived or not Flags.AutoSteal then return end
 
-        -- 3. Roubar o Ovo (dispara 3x para garantir registro imediato no servidor)
-        for _ = 1, 3 do
-            stealEgg(prompt)
-            task.wait(0.06)
-        end
+        -- 3. Roubar o Ovo (interage garantindo o tempo de Hold de 1.2s se necessário)
+        stealEgg(prompt)
         task.wait(Flags.StealDelay)
 
         -- 4. RETORNAR VOANDO DIRETO PARA A BASE (SEM TP)
@@ -1093,14 +1086,17 @@ local function applyCharacterProtections(char)
         end
     end)
 
-    -- 3. Never Drop Egg via Evento ChildAdded na Mochila
+    -- 3. Never Drop Egg (Só reequipa se a mão estiver vazia, sem ficar trocando itens)
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if backpack then
         backpack.ChildAdded:Connect(function(item)
             if Flags.NeverDropEgg and (isEgg(item) or item:IsA("Tool")) then
-                task.wait(0.05)
-                if item.Parent == backpack and char:FindFirstChildOfClass("Humanoid") then
-                    char:FindFirstChildOfClass("Humanoid"):EquipTool(item)
+                task.wait(0.1)
+                if item.Parent == backpack and char and char:FindFirstChildOfClass("Humanoid") then
+                    local currentlyHeld = char:FindFirstChildOfClass("Tool")
+                    if not currentlyHeld then
+                        char:FindFirstChildOfClass("Humanoid"):EquipTool(item)
+                    end
                 end
             end
         end)
