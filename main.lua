@@ -406,45 +406,68 @@ local function parseEggWeightKg(str)
     return 0
 end
 
-local function parseMultiplierOrNumber(str)
-    if not str then return 0 end
+local function parseIncomeRate(str)
+    if not str then return 0, nil end
     local s = tostring(str):lower()
 
-    -- Peso em Kg do ovo
-    local kg = parseEggWeightKg(s)
-    if kg > 0 then
-        return kg * 1.5
+    -- 1. Capturar valores de renda por segundo: $147.71M/s, $53.57M/s, $500k/s, $1.2B/s, $50T/s
+    local num, suffix = s:match("%$?%s*([%d%,%.]+)%s*([kmbtq]a?i?)/s")
+    if not num then
+        num, suffix = s:match("%$%s*([%d%,%.]+)%s*([kmbtq]a?i?)")
     end
 
-    -- Multiplicadores e Valores com sufixos (ex: 500k, 10M, 1B, 50T, 1Qa, 1Qi)
-    local num, suffix = s:match("([%d%,%.]+)%s*([kmbtq]a?i?)")
-    if num and suffix then
+    if num then
         num = num:gsub(",", "")
         local n = tonumber(num)
-        if n then
+        if n and n > 0 then
             local mult = 1
-            if suffix:find("qi") then mult = 1e18
-            elseif suffix:find("qa") then mult = 1e15
-            elseif suffix:find("t") then mult = 1e12
-            elseif suffix:find("b") then mult = 1e9
-            elseif suffix:find("m") then mult = 1e6
-            elseif suffix:find("k") then mult = 1e3
+            if suffix then
+                if suffix:find("qi") then mult = 1e18
+                elseif suffix:find("qa") then mult = 1e15
+                elseif suffix:find("t") then mult = 1e12
+                elseif suffix:find("b") then mult = 1e9
+                elseif suffix:find("m") then mult = 1e6
+                elseif suffix:find("k") then mult = 1e3
+                end
             end
-            return math.min(n * (mult > 1e6 and 5000 or (mult > 1e3 and 1000 or 100)), 60000)
+            local finalVal = n * mult
+            local formatted = "$" .. string.format("%.2f", n) .. (suffix and suffix:upper() or "") .. "/s"
+            return finalVal, formatted
         end
     end
 
-    return 0
+    -- 2. Padrão simples de $/s sem sufixo (ex: $500/s, $1200/s)
+    local simpleCash = s:match("%$?%s*([%d%,%.]+)/s")
+    if simpleCash then
+        simpleCash = simpleCash:gsub(",", "")
+        local n = tonumber(simpleCash)
+        if n and n > 0 then
+            return n, "$" .. tostring(n) .. "/s"
+        end
+    end
+
+    return 0, nil
 end
 
 local function evaluateEggRarity(eggObj, prompt)
     if not eggObj then return 300, "Comum" end
     local maxScore = 0
     local detectedRarity = "Comum"
+    local highestIncome = 0
+    local highestIncomeLabel = nil
 
     local function checkText(str)
         if not str or str == "" then return end
         local s = tostring(str):lower()
+
+        -- 1. Checar se tem valor direto de Renda ($/s) - Prioridade Máxima
+        local incomeVal, incomeFmt = parseIncomeRate(s)
+        if incomeVal > highestIncome then
+            highestIncome = incomeVal
+            highestIncomeLabel = incomeFmt
+        end
+
+        -- 2. Checar palavras-chave da tabela de áreas/eventos
         for kw, weight in pairs(RarityWeights) do
             if s:find(kw) then
                 if weight > maxScore then
@@ -454,10 +477,14 @@ local function evaluateEggRarity(eggObj, prompt)
             end
         end
 
-        local numScore = parseMultiplierOrNumber(s)
-        if numScore > maxScore then
-            maxScore = numScore
-            detectedRarity = "PESO/VALOR (" .. math.floor(numScore) .. " pts)"
+        -- 3. Checar peso em Kg do ovo
+        local kg = parseEggWeightKg(s)
+        if kg > 0 then
+            local kgScore = kg * 2
+            if kgScore > maxScore then
+                maxScore = kgScore
+                detectedRarity = string.format("PESO (%s Kg)", tostring(kg))
+            end
         end
     end
 
@@ -467,10 +494,13 @@ local function evaluateEggRarity(eggObj, prompt)
         checkText(prompt.ActionText)
     end
 
-    -- 2. Inspecionar Objeto e seu Pedestal/Pai
+    -- 2. Inspecionar Objeto e seu Pedestal/Esteira/Pai
     local targetsToInspect = { eggObj }
     if eggObj.Parent and eggObj.Parent ~= Services.Workspace then
         table.insert(targetsToInspect, eggObj.Parent)
+        if eggObj.Parent.Parent and eggObj.Parent.Parent ~= Services.Workspace then
+            table.insert(targetsToInspect, eggObj.Parent.Parent)
+        end
     end
 
     for _, target in ipairs(targetsToInspect) do
@@ -492,7 +522,7 @@ local function evaluateEggRarity(eggObj, prompt)
             end
         end)
 
-        -- TextLabels / BillboardGuis
+        -- TextLabels / BillboardGuis / SurfaceGuis
         pcall(function()
             for _, desc in ipairs(target:GetDescendants()) do
                 if desc:IsA("TextLabel") or desc:IsA("TextButton") then
@@ -504,6 +534,11 @@ local function evaluateEggRarity(eggObj, prompt)
         -- Nome e Caminho
         checkText(target.Name)
         checkText(target:GetFullName())
+    end
+
+    -- Se tiver valor monetário direto ($/s), ele se torna a pontuação dominante absoluta!
+    if highestIncome > 0 then
+        return highestIncome, (highestIncomeLabel or ("$" .. tostring(highestIncome) .. "/s"))
     end
 
     return (maxScore > 0 and maxScore or 300), detectedRarity
