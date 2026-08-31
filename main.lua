@@ -790,56 +790,114 @@ end
 
 _G.dumpGameStructure = dumpGameStructure
 
--- Seleção do Melhor Ovo por Raridade (Prioridade Absoluta com Filtros)
+-- Cache Inteligente de Ovos para 0% Lag / 0% Travamento na Corrida
+local cachedBestCandidate = nil
+local lastCandidateScanTime = 0
+local lastScanHadNoCandidate = false
+local eggMetadataCache = setmetatable({}, { __mode = "k" })
+local promptCooldown = setmetatable({}, { __mode = "k" })
+
+-- Um novo prompt invalida imediatamente o cache negativo, sem varredura contínua.
+Services.Workspace.DescendantAdded:Connect(function(obj)
+    if obj:IsA("ProximityPrompt") then
+        lastCandidateScanTime = 0
+        lastScanHadNoCandidate = false
+    end
+end)
+
+-- Seleção do Melhor Ovo por Raridade (Ultra Otimizado com Cache e Busca Direcionada)
 local function getBestEggPrompt()
     local basePos = getBasePosition()
     if not basePos then return nil, nil, "Nenhum" end
 
+    local now = os.clock()
+
+    -- Cache positivo e negativo: evita varrer o mapa várias vezes por segundo.
+    if cachedBestCandidate and (now - lastCandidateScanTime) < 1.25 then
+        if cachedBestCandidate.Prompt and cachedBestCandidate.Prompt.Parent then
+            return cachedBestCandidate.Prompt, cachedBestCandidate.Position, cachedBestCandidate.Info
+        end
+    end
+    if lastScanHadNoCandidate and (now - lastCandidateScanTime) < 3 then
+        return nil, nil, "Nenhum"
+    end
+
     local myPlayerName = LocalPlayer.Name:lower()
-    local candidates = {}
+    local best = nil
 
-    for _, obj in ipairs(Services.Workspace:GetDescendants()) do
-        if obj:IsA("ProximityPrompt") and obj.Enabled then
-            local parent = obj.Parent
-            if parent then
-                local fullName = parent:GetFullName():lower()
-                local isMyBase = fullName:find(myPlayerName)
+    -- Varredura direcionada apenas nas pastas relevantes do jogo (evita varrer 10.000 partes inúteis)
+    local searchRoots = {}
+    if Services.Workspace:FindFirstChild("AreaEggSlotsClient") then
+        table.insert(searchRoots, Services.Workspace.AreaEggSlotsClient)
+    end
+    if Services.Workspace:FindFirstChild("ClientRenderedAssets") then
+        table.insert(searchRoots, Services.Workspace.ClientRenderedAssets)
+    end
+    if Services.Workspace:FindFirstChild("Plots") then
+        table.insert(searchRoots, Services.Workspace.Plots)
+    end
+    if #searchRoots == 0 then
+        table.insert(searchRoots, Services.Workspace)
+    end
 
-                -- Não roubar ovos da própria base
-                if not isMyBase then
-                    local isEligible = isEgg(parent) or isEgg(obj)
-                    if isEligible then
-                        local pos = parent:IsA("BasePart") and parent.Position 
-                                 or (parent:IsA("Model") and parent:GetPivot().Position)
-                                 or (parent:FindFirstChildWhichIsA("BasePart") and parent:FindFirstChildWhichIsA("BasePart").Position)
-                        
-                        if pos then
-                            local dist = (basePos - pos).Magnitude
-                            if dist <= Flags.StealRadius then
-                                local rarityScore, rarityName = evaluateEggRarity(parent, obj)
+    for _, root in ipairs(searchRoots) do
+        for _, obj in ipairs(root:GetDescendants()) do
+            if obj:IsA("ProximityPrompt") and obj.Enabled then
+                local parent = obj.Parent
+                if parent and (not promptCooldown[obj] or promptCooldown[obj] <= now) then
+                    local fullName = parent:GetFullName():lower()
+                    local isMyBase = fullName:find(myPlayerName)
 
-                                -- Aplicação de Filtros de Raridade
-                                local passedFilter = true
-                                if Flags.MinRarityScore > 0 and rarityScore < Flags.MinRarityScore then
-                                    passedFilter = false
-                                end
-                                if Flags.FilterIgnoreCommons and rarityScore <= 800 then
-                                    passedFilter = false
-                                end
+                    -- Não roubar da própria base
+                    if not isMyBase then
+                        local isEligible = isEgg(parent) or isEgg(obj)
+                        if isEligible then
+                            local pos = parent:IsA("BasePart") and parent.Position
+                                     or (parent:IsA("Model") and parent:GetPivot().Position)
+                                     or (parent:FindFirstChildWhichIsA("BasePart") and parent:FindFirstChildWhichIsA("BasePart").Position)
 
-                                if passedFilter then
-                                    local zoneName = getEggLocationZone(parent, obj)
-                                    local displayName = (obj.ObjectText ~= "" and obj.ObjectText) or parent.Name
+                            if pos then
+                                local dist = (basePos - pos).Magnitude
+                                if dist <= Flags.StealRadius then
+                                    local metadata = eggMetadataCache[obj]
+                                    if not metadata or metadata.Parent ~= parent or (now - metadata.Time) > 12 then
+                                        local rarityScore, rarityName = evaluateEggRarity(parent, obj)
+                                        metadata = {
+                                            Parent = parent,
+                                            Time = now,
+                                            RarityScore = rarityScore,
+                                            RarityName = rarityName,
+                                            Zone = getEggLocationZone(parent, obj),
+                                            DisplayName = (obj.ObjectText ~= "" and obj.ObjectText) or parent.Name
+                                        }
+                                        eggMetadataCache[obj] = metadata
+                                    end
 
-                                    table.insert(candidates, {
-                                        Prompt = obj,
-                                        Position = pos,
-                                        RarityScore = rarityScore,
-                                        Name = displayName,
-                                        Rarity = rarityName,
-                                        Zone = zoneName,
-                                        Distance = dist
-                                    })
+                                    local passedFilter = true
+                                    if Flags.MinRarityScore > 0 and metadata.RarityScore < Flags.MinRarityScore then
+                                        passedFilter = false
+                                    end
+                                    if Flags.FilterIgnoreCommons and metadata.RarityScore <= 800 then
+                                        passedFilter = false
+                                    end
+
+                                    if passedFilter then
+                                        local candidate = {
+                                            Prompt = obj,
+                                            Position = pos,
+                                            RarityScore = metadata.RarityScore,
+                                            Name = metadata.DisplayName,
+                                            Rarity = metadata.RarityName,
+                                            Zone = metadata.Zone,
+                                            Distance = dist
+                                        }
+                                        if not best
+                                            or (Flags.PrioritizeRare and candidate.RarityScore > best.RarityScore)
+                                            or (candidate.RarityScore == best.RarityScore and candidate.Distance < best.Distance)
+                                            or (not Flags.PrioritizeRare and candidate.Distance < best.Distance) then
+                                            best = candidate
+                                        end
+                                    end
                                 end
                             end
                         end
@@ -849,35 +907,45 @@ local function getBestEggPrompt()
         end
     end
 
-    if #candidates == 0 then return nil, nil, "Nenhum" end
+    lastCandidateScanTime = now
+    if not best then
+        cachedBestCandidate = nil
+        lastScanHadNoCandidate = true
+        return nil, nil, "Nenhum"
+    end
 
-    -- ORDENAÇÃO ESTRITA: O mais raro SEMPRE vem primeiro, independente da distância
-    table.sort(candidates, function(a, b)
-        if Flags.PrioritizeRare then
-            if a.RarityScore ~= b.RarityScore then
-                return a.RarityScore > b.RarityScore -- Maior pontuação de raridade tem prioridade absoluta!
-            end
-        end
-        return a.Distance < b.Distance -- Se forem da mesma raridade, escolhe o mais próximo
-    end)
+    local info = best.Rarity .. " [" .. best.Name .. "] @ " .. (best.Zone or "Mapa")
+    cachedBestCandidate = {
+        Prompt = best.Prompt,
+        Position = best.Position,
+        Info = info
+    }
+    lastScanHadNoCandidate = false
 
-    local best = candidates[1]
-    return best.Prompt, best.Position, best.Rarity .. " [" .. best.Name .. "] @ " .. (best.Zone or "Mapa")
+    return best.Prompt, best.Position, info
 end
 
 -- Voo ultra-rápido e 100% estável via física (Personagem fica em pé sem animação de queda)
-local function flyToPosition(targetPos, speed)
+local function flyToPosition(targetPos, speed, onApproach)
     local hrp = getHRP()
     local char = LocalPlayer.Character
     if not hrp or not char then return false end
     local hum = char:FindFirstChildOfClass("Humanoid")
+    local collisionState = {}
 
     speed = speed or Flags.FlySpeed or 500
     local startPos = hrp.Position
     local totalDist = (targetPos - startPos).Magnitude
     if totalDist < 3.5 then return true end
 
-    -- Criar BodyPosition & BodyGyro com altíssima força de arraste
+    -- Evita colisões com a linha de corrida/esteira durante o voo.
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            collisionState[part] = part.CanCollide
+            part.CanCollide = false
+        end
+    end
+
     local bp = Instance.new("BodyPosition")
     bp.Name = "StealthFlight_BP"
     bp.MaxForce = Vector3.new(1e9, 1e9, 1e9)
@@ -896,55 +964,63 @@ local function flyToPosition(targetPos, speed)
 
     local travelTime = totalDist / math.max(speed, 10)
     local startTime = os.clock()
+    local lastPhysicsUpdate = 0
 
     while (os.clock() - startTime) < (travelTime + 1.5) do
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / travelTime, 0, 1)
-        local currentTarget = startPos:Lerp(targetPos, alpha)
-        bp.Position = currentTarget
-        bg.CFrame = CFrame.new(hrp.Position, targetPos)
-
-        -- Manter postura firme e ereta (totalmente parado no ar)
-        if hum then
-            hum.PlatformStand = false
-            if hum:GetState() ~= Enum.HumanoidStateType.Running then
-                hum:ChangeState(Enum.HumanoidStateType.Running)
-            end
+        if elapsed - lastPhysicsUpdate >= (1 / 30) then
+            lastPhysicsUpdate = elapsed
+            bp.Position = startPos:Lerp(targetPos, alpha)
+            bg.CFrame = CFrame.new(hrp.Position, targetPos)
         end
 
-        if (targetPos - hrp.Position).Magnitude < 3.5 or alpha >= 1 then
+        local remainingDistance = (targetPos - hrp.Position).Magnitude
+        if onApproach then
+            onApproach(remainingDistance)
+        end
+
+        if hum and hum.PlatformStand then
+            hum.PlatformStand = false
+        end
+
+        if remainingDistance < 3.5 or alpha >= 1 then
             break
         end
         Services.RunService.Heartbeat:Wait()
     end
 
     bp.Position = targetPos
-    task.wait(0.04)
+    task.wait(0.02)
 
     pcall(function() bp:Destroy() end)
     pcall(function() bg:Destroy() end)
+    for part, wasCollidable in pairs(collisionState) do
+        if part and part.Parent then
+            part.CanCollide = wasCollidable
+        end
+    end
 
     return true
 end
 
+-- Roubo 100% Instantâneo (Bypass de Hold / 0ms Delay)
 local function stealEgg(prompt)
-    if not prompt or not prompt.Parent then return end
+    if not prompt or not prompt.Parent then return false end
+    local success = false
     pcall(function()
-        -- 1. Execução direta via fireproximityprompt com bypass
+        prompt.HoldDuration = 0
+        prompt.RequiresLineOfSight = false
         if fireproximityprompt then
-            pcall(function() fireproximityprompt(prompt, 0) end)
-            pcall(function() fireproximityprompt(prompt, 1) end)
-            pcall(function() fireproximityprompt(prompt) end)
-        end
-
-        -- 2. Fallback de interação nativa
-        pcall(function()
+            fireproximityprompt(prompt, 0)
+            success = true
+        else
             prompt:InputHoldBegin()
-            local hold = math.min((prompt.HoldDuration or 0) + 0.05, 1.3)
-            task.wait(hold > 0 and hold or 0.1)
             prompt:InputHoldEnd()
-        end)
+            success = true
+        end
     end)
+    return success
 end
 
 -- Loop Principal de Fly-Steal e Retorno à Base
@@ -960,7 +1036,7 @@ local function flyStealLoop()
         local basePos = getBasePosition()
         if not basePos then return end
 
-        -- 1. Identificar o Melhor Ovo por Raridade e Peso Real
+        -- 1. Identificar o Melhor Ovo por Renda e Peso Real
         local prompt, eggPos, eggInfo = getBestEggPrompt()
         if not prompt or not eggPos then
             if Flags.AutoLogger then
@@ -973,22 +1049,32 @@ local function flyStealLoop()
             addLog("RARIDADE-ENGINE", "Alvo selecionado: " .. eggInfo .. " | Voando a " .. tostring(Flags.FlySpeed) .. " studs/s...", { eggPos, prompt })
         end
 
-        -- 2. Voar até a exata posição do ovo (SmartPromptPart)
+        -- 2. Voar até a exata posição do ovo
         local targetFlightPos = eggPos + Vector3.new(0, 0.8, 0)
-        local arrived = flyToPosition(targetFlightPos, Flags.FlySpeed)
+        local promptTriggered = false
+        local activationDistance = math.max(4, (prompt.MaxActivationDistance or 10) - 1)
+        local arrived = flyToPosition(targetFlightPos, Flags.FlySpeed, function(distance)
+            if not promptTriggered and distance <= activationDistance then
+                promptTriggered = stealEgg(prompt)
+            end
+        end)
         if not arrived or not Flags.AutoSteal then return end
 
-        -- 3. Roubar o Ovo (interage garantindo o tempo de Hold de 1.2s se necessário)
-        stealEgg(prompt)
-        task.wait(Flags.StealDelay)
+        -- 3. Disparar sem espera assim que entrar no alcance do prompt.
+        if not promptTriggered then
+            promptTriggered = stealEgg(prompt)
+        end
+        promptCooldown[prompt] = os.clock() + 2
+        cachedBestCandidate = nil
+        lastCandidateScanTime = 0
 
-        -- 4. RETORNAR VOANDO DIRETO PARA A BASE (SEM TP)
+        -- 4. RETORNAR VOANDO DIRETO PARA A BASE
         if Flags.AutoLogger then
-            addLog("FLY-STEAL", "Ovo coletado! Retornando voando para a Base...", { basePos })
+            addLog("FLY-STEAL", "Ovo coletado! Retornando para a Base...", { basePos })
         end
 
         flyToPosition(basePos + Vector3.new(0, 3, 0), Flags.FlySpeed)
-        task.wait(0.2)
+        task.wait(Flags.StealDelay)
     end)
 
     isStealing = false
@@ -1288,7 +1374,7 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -70, 0, 22)
 Title.Position = UDim2.new(0, 16, 0, 5)
 Title.BackgroundTransparency = 1
-Title.Text = "STEAL AN EGG  /  PRO"
+Title.Text = "ROUBE UM OVO  /  PRO"
 Title.TextColor3 = Color3.fromRGB(240, 245, 255)
 Title.TextSize = 14
 Title.Font = Enum.Font.GothamBold
@@ -1299,7 +1385,7 @@ local Subtitle = Instance.new("TextLabel")
 Subtitle.Size = UDim2.new(1, -70, 0, 16)
 Subtitle.Position = UDim2.new(0, 16, 0, 25)
 Subtitle.BackgroundTransparency = 1
-Subtitle.Text = "Glass Stealth Edition • v3.5"
+Subtitle.Text = "Edição Furtiva em Vidro • v3.5"
 Subtitle.TextColor3 = Color3.fromRGB(120, 140, 170)
 Subtitle.TextSize = 11
 Subtitle.Font = Enum.Font.Gotham
@@ -1420,12 +1506,12 @@ local function createTab(name)
     return tabFrame
 end
 
-local MainTab = createTab("Steal & Base")
-local RadarTab = createTab("Radar & Filters")
-local PlayerTab = createTab("Player Mods")
-local VisualsTab = createTab("Visuals (ESP)")
-local LoggerTab = createTab("Console Logger")
-local SettingsTab = createTab("Settings")
+local MainTab = createTab("Roubo e Base")
+local RadarTab = createTab("Radar e Filtros")
+local PlayerTab = createTab("Modificações")
+local VisualsTab = createTab("Visuais (ESP)")
+local LoggerTab = createTab("Console de Registros")
+local SettingsTab = createTab("Configurações")
 
 TabFrames[1].Visible = true
 TabButtons[1].BackgroundColor3 = Color3.fromRGB(0, 135, 230)
@@ -1605,15 +1691,15 @@ local function addSlider(tab, title, min, max, default, callback)
     end)
 end
 
--- População da Aba 1: Steal & Base
-addToggle(MainTab, "Auto Steal & Base Return (Ultra Fast)", Flags.AutoSteal, function(state)
+-- População da Aba 1: Roubo e Base
+addToggle(MainTab, "Roubo automático e retorno à base", Flags.AutoSteal, function(state)
     Flags.AutoSteal = state
     if state then
         local hrp = getHRP()
         if hrp then
             Flags.SavedBasePos = Flags.CustomBasePos or hrp.Position
         end
-        addLog("FLY-STEAL", "Auto Steal enabled. Base position recorded.")
+        addLog("ROUBO", "Roubo automático ativado. Posição da base registrada.")
         task.spawn(function()
             while Flags.AutoSteal do
                 flyStealLoop()
@@ -1621,23 +1707,23 @@ addToggle(MainTab, "Auto Steal & Base Return (Ultra Fast)", Flags.AutoSteal, fun
             end
         end)
     else
-        addLog("FLY-STEAL", "Auto Steal disabled.")
+        addLog("ROUBO", "Roubo automático desativado.")
     end
 end)
 
-addToggle(MainTab, "Prioritize High Value ($/s & Rare)", Flags.PrioritizeRare, function(state)
+addToggle(MainTab, "Priorizar maior valor ($/s e raridade)", Flags.PrioritizeRare, function(state)
     Flags.PrioritizeRare = state
 end)
 
-addSlider(MainTab, "Flight Speed (Studs/s)", 50, 1000, Flags.FlySpeed, function(val)
+addSlider(MainTab, "Velocidade de voo (blocos/s)", 50, 1000, Flags.FlySpeed, function(val)
     Flags.FlySpeed = val
 end)
 
-addSlider(MainTab, "Search Radius (Studs)", 100, 4000, Flags.StealRadius, function(val)
+addSlider(MainTab, "Raio de busca (blocos)", 100, 4000, Flags.StealRadius, function(val)
     Flags.StealRadius = val
 end)
 
-addButton(MainTab, "Record Current Position as Base", function()
+addButton(MainTab, "Registrar posição atual como base", function()
     local hrp = getHRP()
     if hrp then
         Flags.CustomBasePos = hrp.Position
@@ -1646,7 +1732,7 @@ addButton(MainTab, "Record Current Position as Base", function()
     end
 end)
 
-addButton(MainTab, "Execute Single Steal Cycle Now", function()
+addButton(MainTab, "Executar um ciclo de roubo agora", function()
     task.spawn(function()
         local prev = Flags.AutoSteal
         Flags.AutoSteal = true
@@ -1656,19 +1742,19 @@ addButton(MainTab, "Execute Single Steal Cycle Now", function()
 end)
 
 -- População da Aba 2: Radar & Filters
-addButton(RadarTab, "Scan Map Eggs (Live Radar)", function()
+addButton(RadarTab, "Escanear ovos do mapa (radar ao vivo)", function()
     local discovered, dumpText = scanAllEggsInMap()
     addLog("RADAR", dumpText)
     print("\n" .. dumpText .. "\n")
 end)
 
-addButton(RadarTab, "Mega Game Architecture Dump (TXT)", function()
+addButton(RadarTab, "Gerar relatório completo do jogo (TXT)", function()
     local dump = dumpGameStructure()
     addLog("MEGA-DUMP", "Architecture dump generated and copied to clipboard.")
     print("\n" .. dump .. "\n")
 end)
 
-addButton(RadarTab, "Copy Radar Report to Clipboard", function()
+addButton(RadarTab, "Copiar relatório do radar", function()
     if not _G.EggRadarText or _G.EggRadarText == "" then
         scanAllEggsInMap()
     end
@@ -1680,7 +1766,7 @@ addButton(RadarTab, "Copy Radar Report to Clipboard", function()
     end)
 end)
 
-addButton(RadarTab, "Steal Highest Value Target (#1) Now", function()
+addButton(RadarTab, "Roubar agora o alvo de maior valor", function()
     task.spawn(function()
         local prev = Flags.AutoSteal
         Flags.AutoSteal = true
@@ -1689,72 +1775,72 @@ addButton(RadarTab, "Steal Highest Value Target (#1) Now", function()
     end)
 end)
 
-addToggle(RadarTab, "Filter: Ignore Common & Low Tier", Flags.FilterIgnoreCommons, function(state)
+addToggle(RadarTab, "Filtro: ignorar comuns e baixo nível", Flags.FilterIgnoreCommons, function(state)
     Flags.FilterIgnoreCommons = state
-    addLog("FILTERS", "Ignore Commons: " .. (state and "ENABLED" or "DISABLED"))
+    addLog("FILTROS", "Ignorar comuns: " .. (state and "ATIVADO" or "DESATIVADO"))
 end)
 
-addToggle(RadarTab, "Filter: High Tier / Mythic+ (>= 5,000 pts)", false, function(state)
+addToggle(RadarTab, "Filtro: nível alto / mítico+ (>= 5.000 pts)", false, function(state)
     Flags.MinRarityScore = state and 5000 or 0
-    addLog("FILTERS", "Filter Mythic+: " .. (state and "ENABLED (>= 5,000 pts)" or "DISABLED"))
+    addLog("FILTROS", "Filtro mítico+: " .. (state and "ATIVADO (>= 5.000 pts)" or "DESATIVADO"))
 end)
 
-addToggle(RadarTab, "Filter: Top Tier Only (>= 30,000 pts)", false, function(state)
+addToggle(RadarTab, "Filtro: somente nível máximo (>= 30.000 pts)", false, function(state)
     Flags.MinRarityScore = state and 30000 or 0
-    addLog("FILTERS", "Filter Top Tier: " .. (state and "ENABLED (>= 30,000 pts)" or "DISABLED"))
+    addLog("FILTROS", "Filtro de nível máximo: " .. (state and "ATIVADO (>= 30.000 pts)" or "DESATIVADO"))
 end)
 
-addSlider(RadarTab, "Minimum Score Threshold", 0, 40000, Flags.MinRarityScore, function(val)
+addSlider(RadarTab, "Pontuação mínima", 0, 40000, Flags.MinRarityScore, function(val)
     Flags.MinRarityScore = val
 end)
 
 -- População da Aba 3: Player Mods
-addToggle(PlayerTab, "GodMode Protection", Flags.GodMode, function(state)
+addToggle(PlayerTab, "Proteção de invencibilidade", Flags.GodMode, function(state)
     Flags.GodMode = state
-    if state then addLog("PLAYER", "GodMode enabled.") end
+    if state then addLog("JOGADOR", "Invencibilidade ativada.") end
 end)
 
-addToggle(PlayerTab, "Anti-Ragdoll", Flags.AntiRagdoll, function(state)
+addToggle(PlayerTab, "Anti-queda", Flags.AntiRagdoll, function(state)
     Flags.AntiRagdoll = state
-    if state then addLog("PLAYER", "Anti-Ragdoll enabled.") end
+    if state then addLog("JOGADOR", "Anti-queda ativado.") end
 end)
 
-addToggle(PlayerTab, "Hold Egg (Never Drop)", Flags.NeverDropEgg, function(state)
+addToggle(PlayerTab, "Segurar ovo (nunca soltar)", Flags.NeverDropEgg, function(state)
     Flags.NeverDropEgg = state
-    if state then addLog("PLAYER", "Never Drop Egg enabled.") end
+    if state then addLog("JOGADOR", "Proteção para nunca soltar o ovo ativada.") end
 end)
 
-addToggle(PlayerTab, "WalkSpeed Boost", Flags.SpeedHack, function(state)
+addToggle(PlayerTab, "Aumento de velocidade", Flags.SpeedHack, function(state)
     Flags.SpeedHack = state
 end)
 
-addSlider(PlayerTab, "WalkSpeed Value", 16, 250, Flags.WalkSpeed, function(val)
+addSlider(PlayerTab, "Velocidade de caminhada", 16, 250, Flags.WalkSpeed, function(val)
     Flags.WalkSpeed = val
 end)
 
-addToggle(PlayerTab, "JumpPower Boost", Flags.JumpPowerHack, function(state)
+addToggle(PlayerTab, "Aumento de força do pulo", Flags.JumpPowerHack, function(state)
     Flags.JumpPowerHack = state
 end)
 
-addSlider(PlayerTab, "JumpPower Value", 50, 300, Flags.JumpPower, function(val)
+addSlider(PlayerTab, "Força do pulo", 50, 300, Flags.JumpPower, function(val)
     Flags.JumpPower = val
 end)
 
-addToggle(PlayerTab, "Noclip (Phase Through Walls)", Flags.Noclip, function(state)
+addToggle(PlayerTab, "Atravessar paredes", Flags.Noclip, function(state)
     Flags.Noclip = state
 end)
 
-addToggle(PlayerTab, "Infinite Jump", Flags.InfJump, function(state)
+addToggle(PlayerTab, "Pulo infinito", Flags.InfJump, function(state)
     Flags.InfJump = state
 end)
 
 -- População da Aba 4: Visuals (ESP)
-addToggle(VisualsTab, "Egg ESP (Lightweight Tags)", Flags.EggESP, function(state)
+addToggle(VisualsTab, "ESP de ovos (marcadores leves)", Flags.EggESP, function(state)
     Flags.EggESP = state
     updateESP()
 end)
 
-addToggle(VisualsTab, "Player ESP (Name Tags)", Flags.PlayerESP, function(state)
+addToggle(VisualsTab, "ESP de jogadores (nomes)", Flags.PlayerESP, function(state)
     Flags.PlayerESP = state
     updateESP()
 end)
@@ -1789,7 +1875,7 @@ ConsoleText.TextSize = 11
 ConsoleText.Font = Enum.Font.Code
 ConsoleText.TextXAlignment = Enum.TextXAlignment.Left
 ConsoleText.TextYAlignment = Enum.TextYAlignment.Top
-ConsoleText.Text = "=== SYSTEM & REMOTE EVENT CONSOLE ==="
+ConsoleText.Text = "=== CONSOLE DO SISTEMA E EVENTOS REMOTOS ==="
 ConsoleText.Parent = ConsoleFrame
 
 local function updateLogConsole()
@@ -1799,40 +1885,40 @@ local function updateLogConsole()
 end
 _G.UpdateLogConsole = updateLogConsole
 
-addToggle(LoggerTab, "Auto Save Logs to Disk (writefile)", Flags.SaveToDisk, function(state)
+addToggle(LoggerTab, "Salvar registros automaticamente no disco", Flags.SaveToDisk, function(state)
     Flags.SaveToDisk = state
-    addLog("SYSTEM", "Auto save to disk: " .. (state and "ENABLED" or "DISABLED"))
+    addLog("SISTEMA", "Salvamento automático no disco: " .. (state and "ATIVADO" or "DESATIVADO"))
 end)
 
-addButton(LoggerTab, "Copy Console Logs to Clipboard", function()
+addButton(LoggerTab, "Copiar registros do console", function()
     pcall(function()
         local fullText = table.concat(LogHistory, "\n----------------------------------------\n")
         if setclipboard then
             setclipboard(fullText)
-            addLog("SYSTEM", "All logs copied to clipboard.")
+            addLog("SISTEMA", "Todos os registros foram copiados.")
         end
     end)
 end)
 
-addButton(LoggerTab, "Clear Console History", function()
+addButton(LoggerTab, "Limpar histórico do console", function()
     LogHistory = {}
-    addLog("SYSTEM", "Console history cleared.")
+    addLog("SISTEMA", "Histórico do console limpo.")
 end)
 
 -- População da Aba 6: Settings
-addToggle(SettingsTab, "Anti-AFK Protection", Flags.AntiAFK, function(state)
+addToggle(SettingsTab, "Proteção anti-inatividade", Flags.AntiAFK, function(state)
     Flags.AntiAFK = state
 end)
 
-addToggle(SettingsTab, "Detailed Activity Logger", Flags.AutoLogger, function(state)
+addToggle(SettingsTab, "Registro detalhado de atividades", Flags.AutoLogger, function(state)
     Flags.AutoLogger = state
 end)
 
-addButton(SettingsTab, "Toggle UI Visibility (Left Control)", function()
+addButton(SettingsTab, "Mostrar/ocultar interface (Control esquerdo)", function()
     ScreenGui.Enabled = not ScreenGui.Enabled
 end)
 
-addButton(SettingsTab, "Unload & Destroy Script", function()
+addButton(SettingsTab, "Descarregar e encerrar script", function()
     clearAllESP()
     ScreenGui:Destroy()
 end)
