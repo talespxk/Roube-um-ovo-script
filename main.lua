@@ -994,83 +994,136 @@ local function flyStealLoop()
     isStealing = false
 end
 
--- ESP System
+--================================================================--
+-- SISTEMA DE ESP ULTRA LEVE & ANTI-FREEZE (0% LAG / 0% CRASH)
+--================================================================--
+
 local activeESPs = {}
 
-local function removeESP(target)
-    if activeESPs[target] then
+local function clearAllESP()
+    for target, espItem in pairs(activeESPs) do
         pcall(function()
-            if activeESPs[target].Highlight then activeESPs[target].Highlight:Destroy() end
-            if activeESPs[target].Billboard then activeESPs[target].Billboard:Destroy() end
+            if espItem and espItem.Parent then
+                espItem:Destroy()
+            end
         end)
-        activeESPs[target] = nil
     end
+    activeESPs = {}
 end
 
-local function applyESP(target, isPlayer)
-    if not target or activeESPs[target] then return end
+local function applyLightweightESP(target, labelText, color)
+    if not target or not target.Parent or activeESPs[target] then return end
 
-    local color = isPlayer and Flags.PlayerESPColor or Flags.ESPColor
-    local highlight = Instance.new("Highlight")
-    highlight.Name = getRandomName()
-    highlight.FillColor = color
-    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-    highlight.FillTransparency = 0.4
-    highlight.OutlineTransparency = 0.1
-    highlight.Adornee = target
-    highlight.Parent = target
+    local p = target:IsA("BasePart") and target 
+           or (target:IsA("Model") and (target.PrimaryPart or target:FindFirstChildWhichIsA("BasePart")))
+    if not p then return end
 
     local billboard = Instance.new("BillboardGui")
     billboard.Name = getRandomName()
     billboard.AlwaysOnTop = true
-    billboard.Size = UDim2.new(0, 160, 0, 28)
-    billboard.StudsOffset = Vector3.new(0, 3.5, 0)
-    billboard.Adornee = target
+    billboard.Size = UDim2.new(0, 190, 0, 24)
+    billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+    billboard.Adornee = p
 
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 1, 0)
-    label.BackgroundTransparency = 1
-    label.TextColor3 = color
-    label.TextStrokeTransparency = 0.2
-    label.TextSize = 13
-    label.Font = Enum.Font.SourceSansBold
-    label.Text = (isPlayer and "👤 " or "🥚 ") .. target.Name
-    label.Parent = billboard
+    local tag = Instance.new("TextLabel")
+    tag.Size = UDim2.new(1, 0, 1, 0)
+    tag.BackgroundColor3 = Color3.fromRGB(12, 16, 24)
+    tag.BackgroundTransparency = 0.25
+    tag.TextColor3 = color or Color3.fromRGB(0, 210, 255)
+    tag.TextStrokeTransparency = 0.5
+    tag.TextSize = 11
+    tag.Font = Enum.Font.SourceSansBold
+    tag.Text = labelText
+    tag.Parent = billboard
 
-    billboard.Parent = target
-    activeESPs[target] = { Highlight = highlight, Billboard = billboard, IsPlayer = isPlayer }
+    local tagCorner = Instance.new("UICorner")
+    tagCorner.CornerRadius = UDim.new(0, 4)
+    tagCorner.Parent = tag
+
+    local tagStroke = Instance.new("UIStroke")
+    tagStroke.Color = color or Color3.fromRGB(0, 210, 255)
+    tagStroke.Transparency = 0.7
+    tagStroke.Thickness = 1
+    tagStroke.Parent = tag
+
+    billboard.Parent = p
+    activeESPs[target] = billboard
 
     target.AncestryChanged:Connect(function(_, parent)
-        if not parent then removeESP(target) end
+        if not parent then
+            pcall(function() billboard:Destroy() end)
+            activeESPs[target] = nil
+        end
+    end)
+end
+
+local isESPUpdating = false
+local function refreshESP()
+    if isESPUpdating then return end
+    isESPUpdating = true
+
+    task.spawn(function()
+        pcall(function()
+            if not Flags.EggESP and not Flags.PlayerESP then
+                clearAllESP()
+                isESPUpdating = false
+                return
+            end
+
+            -- 1. Egg ESP (Limita a 25 alvos mais próximos para 0% lag)
+            if Flags.EggESP then
+                local myPlayerName = LocalPlayer.Name:lower()
+                local count = 0
+                for _, obj in ipairs(Services.Workspace:GetDescendants()) do
+                    if count >= 25 then break end
+                    if obj:IsA("ProximityPrompt") and obj.Enabled then
+                        local parent = obj.Parent
+                        if parent and isEgg(parent) then
+                            local fullName = parent:GetFullName():lower()
+                            if not fullName:find(myPlayerName) then
+                                count = count + 1
+                                local score, rName = evaluateEggRarity(parent, obj)
+                                local dName = (obj.ObjectText ~= "" and obj.ObjectText) or parent.Name
+                                applyLightweightESP(parent, dName .. " [" .. rName .. "]", Flags.ESPColor)
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- 2. Player ESP
+            if Flags.PlayerESP then
+                for _, pl in ipairs(Services.Players:GetPlayers()) do
+                    if pl ~= LocalPlayer and pl.Character then
+                        local hrp = pl.Character:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            applyLightweightESP(pl.Character, pl.DisplayName .. " (@" .. pl.Name .. ")", Flags.PlayerESPColor)
+                        end
+                    end
+                end
+            end
+        end)
+        isESPUpdating = false
     end)
 end
 
 local function updateESP()
-    for target, espData in pairs(activeESPs) do
-        if espData.IsPlayer and not Flags.PlayerESP then
-            removeESP(target)
-        elseif not espData.IsPlayer and not Flags.EggESP then
-            removeESP(target)
-        end
-    end
-
-    if Flags.EggESP then
-        for _, obj in ipairs(Services.Workspace:GetDescendants()) do
-            pcall(function()
-                if isEgg(obj) then applyESP(obj, false)
-                elseif obj:IsA("ProximityPrompt") and obj.Parent and isEgg(obj.Parent) then applyESP(obj.Parent, false) end
-            end)
-        end
-    end
-
-    if Flags.PlayerESP then
-        for _, player in ipairs(Services.Players:GetPlayers()) do
-            if player ~= LocalPlayer and player.Character then
-                pcall(function() applyESP(player.Character, true) end)
-            end
-        end
+    if not Flags.EggESP and not Flags.PlayerESP then
+        clearAllESP()
+    else
+        refreshESP()
     end
 end
+
+-- Throttled Background Loop
+task.spawn(function()
+    while true do
+        task.wait(2.5)
+        if Flags.EggESP or Flags.PlayerESP then
+            refreshESP()
+        end
+    end
+end)
 
 -- Player Mods Loop (Ultra-otimizado para 0% de queda de FPS)
 Services.RunService.RenderStepped:Connect(function()
@@ -1176,128 +1229,146 @@ pcall(function()
 end)
 
 --================================================================--
--- CONSTRUÇÃO DA INTERFACE FLUENT DESIGN (NATIVA & ULTRA LIMPA)
+-- INTERFACE GLASSMORPHISM (FROSTED GLASS DARK AESTHETICS - v3.5)
 --================================================================--
 
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = getRandomName()
 ScreenGui.ResetOnSpawn = false
 
+-- Janela Principal com Vidro Fumê Translúcido
 local MainFrame = Instance.new("Frame")
-MainFrame.Name = "FluentMain"
-MainFrame.Size = UDim2.new(0, 660, 0, 450)
-MainFrame.Position = UDim2.new(0.5, -330, 0.5, -225)
-MainFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+MainFrame.Name = "GlassMain"
+MainFrame.Size = UDim2.new(0, 680, 0, 460)
+MainFrame.Position = UDim2.new(0.5, -340, 0.5, -230)
+MainFrame.BackgroundColor3 = Color3.fromRGB(13, 16, 24)
+MainFrame.BackgroundTransparency = 0.12
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
 MainFrame.Draggable = true
 MainFrame.Parent = ScreenGui
 
 local MainCorner = Instance.new("UICorner")
-MainCorner.CornerRadius = UDim.new(0, 10)
+MainCorner.CornerRadius = UDim.new(0, 12)
 MainCorner.Parent = MainFrame
 
+-- Contorno / Reflexo de Vidro
 local MainStroke = Instance.new("UIStroke")
-MainStroke.Color = Color3.fromRGB(50, 50, 65)
+MainStroke.Color = Color3.fromRGB(255, 255, 255)
+MainStroke.Transparency = 0.86
 MainStroke.Thickness = 1
 MainStroke.Parent = MainFrame
 
+-- Linha Superior de Brilho Ciano Suave
 local TopGlow = Instance.new("Frame")
-TopGlow.Size = UDim2.new(1, 0, 0, 3)
-TopGlow.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+TopGlow.Size = UDim2.new(1, 0, 0, 2)
+TopGlow.BackgroundColor3 = Color3.fromRGB(0, 175, 255)
+TopGlow.BackgroundTransparency = 0.2
 TopGlow.BorderSizePixel = 0
 TopGlow.Parent = MainFrame
 
 local TopGlowCorner = Instance.new("UICorner")
-TopGlowCorner.CornerRadius = UDim.new(0, 10)
+TopGlowCorner.CornerRadius = UDim.new(0, 12)
 TopGlowCorner.Parent = TopGlow
 
+-- Cabeçalho Glass
 local Header = Instance.new("Frame")
-Header.Size = UDim2.new(1, 0, 0, 45)
-Header.Position = UDim2.new(0, 0, 0, 3)
-Header.BackgroundColor3 = Color3.fromRGB(26, 26, 34)
+Header.Size = UDim2.new(1, 0, 0, 46)
+Header.Position = UDim2.new(0, 0, 0, 2)
+Header.BackgroundColor3 = Color3.fromRGB(18, 22, 32)
+Header.BackgroundTransparency = 0.25
 Header.BorderSizePixel = 0
 Header.Parent = MainFrame
 
 local HeaderCorner = Instance.new("UICorner")
-HeaderCorner.CornerRadius = UDim.new(0, 10)
+HeaderCorner.CornerRadius = UDim.new(0, 12)
 HeaderCorner.Parent = Header
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -60, 0, 24)
-Title.Position = UDim2.new(0, 16, 0, 4)
+Title.Size = UDim2.new(1, -70, 0, 22)
+Title.Position = UDim2.new(0, 16, 0, 5)
 Title.BackgroundTransparency = 1
-Title.Text = "🥚 Roube um Ovo | Fluent Stealth Hub"
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.TextSize = 15
-Title.Font = Enum.Font.SourceSansBold
+Title.Text = "STEAL AN EGG  /  PRO"
+Title.TextColor3 = Color3.fromRGB(240, 245, 255)
+Title.TextSize = 14
+Title.Font = Enum.Font.GothamBold
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = Header
 
 local Subtitle = Instance.new("TextLabel")
-Subtitle.Size = UDim2.new(1, -60, 0, 16)
-Subtitle.Position = UDim2.new(0, 16, 0, 24)
+Subtitle.Size = UDim2.new(1, -70, 0, 16)
+Subtitle.Position = UDim2.new(0, 16, 0, 25)
 Subtitle.BackgroundTransparency = 1
-Subtitle.Text = "v3.4 • Deep Spy & Auto Disk Logger (" .. LogFileName .. ")"
-Subtitle.TextColor3 = Color3.fromRGB(150, 150, 170)
+Subtitle.Text = "Glass Stealth Edition • v3.5"
+Subtitle.TextColor3 = Color3.fromRGB(120, 140, 170)
 Subtitle.TextSize = 11
-Subtitle.Font = Enum.Font.SourceSans
+Subtitle.Font = Enum.Font.Gotham
 Subtitle.TextXAlignment = Enum.TextXAlignment.Left
 Subtitle.Parent = Header
 
 local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.new(0, 32, 0, 32)
-CloseBtn.Position = UDim2.new(1, -40, 0, 6)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(38, 38, 48)
+CloseBtn.Size = UDim2.new(0, 28, 0, 28)
+CloseBtn.Position = UDim2.new(1, -38, 0, 9)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(25, 30, 44)
+CloseBtn.BackgroundTransparency = 0.3
 CloseBtn.Text = "✕"
-CloseBtn.TextColor3 = Color3.fromRGB(200, 200, 220)
-CloseBtn.TextSize = 15
-CloseBtn.Font = Enum.Font.SourceSansBold
+CloseBtn.TextColor3 = Color3.fromRGB(180, 195, 220)
+CloseBtn.TextSize = 13
+CloseBtn.Font = Enum.Font.GothamBold
 CloseBtn.Parent = Header
 
 local CloseCorner = Instance.new("UICorner")
 CloseCorner.CornerRadius = UDim.new(0, 6)
 CloseCorner.Parent = CloseBtn
 
+local CloseStroke = Instance.new("UIStroke")
+CloseStroke.Color = Color3.fromRGB(255, 255, 255)
+CloseStroke.Transparency = 0.9
+CloseStroke.Thickness = 1
+CloseStroke.Parent = CloseBtn
+
 CloseBtn.MouseButton1Click:Connect(function()
     ScreenGui:Destroy()
 end)
 
+-- Sidebar Vertical
 local Sidebar = Instance.new("Frame")
-Sidebar.Size = UDim2.new(0, 170, 1, -48)
+Sidebar.Size = UDim2.new(0, 165, 1, -48)
 Sidebar.Position = UDim2.new(0, 0, 0, 48)
-Sidebar.BackgroundColor3 = Color3.fromRGB(25, 25, 33)
+Sidebar.BackgroundColor3 = Color3.fromRGB(10, 13, 19)
+Sidebar.BackgroundTransparency = 0.35
 Sidebar.BorderSizePixel = 0
 Sidebar.Parent = MainFrame
 
 local SidebarList = Instance.new("UIListLayout")
-SidebarList.Padding = UDim.new(0, 5)
+SidebarList.Padding = UDim.new(0, 4)
 SidebarList.SortOrder = Enum.SortOrder.LayoutOrder
 SidebarList.Parent = Sidebar
 
 local SidebarPadding = Instance.new("UIPadding")
-SidebarPadding.PaddingTop = UDim.new(0, 10)
-SidebarPadding.PaddingLeft = UDim.new(0, 10)
-SidebarPadding.PaddingRight = UDim.new(0, 10)
+SidebarPadding.PaddingTop = UDim.new(0, 8)
+SidebarPadding.PaddingLeft = UDim.new(0, 8)
+SidebarPadding.PaddingRight = UDim.new(0, 8)
 SidebarPadding.Parent = Sidebar
 
 local ContentContainer = Instance.new("Frame")
-ContentContainer.Size = UDim2.new(1, -170, 1, -48)
-ContentContainer.Position = UDim2.new(0, 170, 0, 48)
+ContentContainer.Size = UDim2.new(1, -165, 1, -48)
+ContentContainer.Position = UDim2.new(0, 165, 0, 48)
 ContentContainer.BackgroundTransparency = 1
 ContentContainer.Parent = MainFrame
 
 local TabFrames = {}
 local TabButtons = {}
 
-local function createTab(name, icon)
+local function createTab(name)
     local tabBtn = Instance.new("TextButton")
-    tabBtn.Size = UDim2.new(1, 0, 0, 38)
-    tabBtn.BackgroundColor3 = Color3.fromRGB(32, 32, 42)
-    tabBtn.Text = "  " .. icon .. "  " .. name
-    tabBtn.TextColor3 = Color3.fromRGB(180, 180, 200)
-    tabBtn.TextSize = 13
-    tabBtn.Font = Enum.Font.SourceSansSemibold
+    tabBtn.Size = UDim2.new(1, 0, 0, 36)
+    tabBtn.BackgroundColor3 = Color3.fromRGB(20, 24, 34)
+    tabBtn.BackgroundTransparency = 0.5
+    tabBtn.Text = "  " .. name
+    tabBtn.TextColor3 = Color3.fromRGB(150, 165, 185)
+    tabBtn.TextSize = 12
+    tabBtn.Font = Enum.Font.GothamMedium
     tabBtn.TextXAlignment = Enum.TextXAlignment.Left
     tabBtn.Parent = Sidebar
 
@@ -1305,18 +1376,25 @@ local function createTab(name, icon)
     btnCorner.CornerRadius = UDim.new(0, 6)
     btnCorner.Parent = tabBtn
 
+    local btnStroke = Instance.new("UIStroke")
+    btnStroke.Color = Color3.fromRGB(255, 255, 255)
+    btnStroke.Transparency = 0.94
+    btnStroke.Thickness = 1
+    btnStroke.Parent = tabBtn
+
     local tabFrame = Instance.new("ScrollingFrame")
-    tabFrame.Size = UDim2.new(1, -18, 1, -18)
-    tabFrame.Position = UDim2.new(0, 9, 0, 9)
+    tabFrame.Size = UDim2.new(1, -16, 1, -16)
+    tabFrame.Position = UDim2.new(0, 8, 0, 8)
     tabFrame.BackgroundTransparency = 1
     tabFrame.BorderSizePixel = 0
     tabFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-    tabFrame.ScrollBarThickness = 4
+    tabFrame.ScrollBarThickness = 3
+    tabFrame.ScrollBarImageColor3 = Color3.fromRGB(0, 175, 255)
     tabFrame.Visible = false
     tabFrame.Parent = ContentContainer
 
     local frameList = Instance.new("UIListLayout")
-    frameList.Padding = UDim.new(0, 8)
+    frameList.Padding = UDim.new(0, 6)
     frameList.SortOrder = Enum.SortOrder.LayoutOrder
     frameList.Parent = tabFrame
 
@@ -1333,29 +1411,32 @@ local function createTab(name, icon)
         end
         for i, btn in ipairs(TabButtons) do
             local active = (btn == tabBtn)
-            btn.BackgroundColor3 = active and Color3.fromRGB(0, 120, 215) or Color3.fromRGB(32, 32, 42)
-            btn.TextColor3 = active and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(180, 180, 200)
+            btn.BackgroundColor3 = active and Color3.fromRGB(0, 135, 230) or Color3.fromRGB(20, 24, 34)
+            btn.BackgroundTransparency = active and 0.15 or 0.5
+            btn.TextColor3 = active and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 165, 185)
         end
     end)
 
     return tabFrame
 end
 
-local MainTab = createTab("Fly Steal & Base", "🚀")
-local RadarTab = createTab("Radar & Filtros", "🎯")
-local PlayerTab = createTab("Player & Mover", "⚡")
-local VisualsTab = createTab("ESP & Visuais", "👁️")
-local LoggerTab = createTab("Remote Logger", "📜")
-local SettingsTab = createTab("Configurações", "⚙️")
+local MainTab = createTab("Steal & Base")
+local RadarTab = createTab("Radar & Filters")
+local PlayerTab = createTab("Player Mods")
+local VisualsTab = createTab("Visuals (ESP)")
+local LoggerTab = createTab("Console Logger")
+local SettingsTab = createTab("Settings")
 
 TabFrames[1].Visible = true
-TabButtons[1].BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+TabButtons[1].BackgroundColor3 = Color3.fromRGB(0, 135, 230)
+TabButtons[1].BackgroundTransparency = 0.15
 TabButtons[1].TextColor3 = Color3.fromRGB(255, 255, 255)
 
 local function addToggle(tab, text, defaultState, callback)
     local card = Instance.new("Frame")
-    card.Size = UDim2.new(1, 0, 0, 44)
-    card.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    card.Size = UDim2.new(1, 0, 0, 42)
+    card.BackgroundColor3 = Color3.fromRGB(20, 26, 38)
+    card.BackgroundTransparency = 0.35
     card.Parent = tab
 
     local cardCorner = Instance.new("UICorner")
@@ -1363,7 +1444,8 @@ local function addToggle(tab, text, defaultState, callback)
     cardCorner.Parent = card
 
     local cardStroke = Instance.new("UIStroke")
-    cardStroke.Color = Color3.fromRGB(45, 45, 60)
+    cardStroke.Color = Color3.fromRGB(255, 255, 255)
+    cardStroke.Transparency = 0.92
     cardStroke.Thickness = 1
     cardStroke.Parent = card
 
@@ -1372,16 +1454,16 @@ local function addToggle(tab, text, defaultState, callback)
     label.Position = UDim2.new(0, 12, 0, 0)
     label.BackgroundTransparency = 1
     label.Text = text
-    label.TextColor3 = Color3.fromRGB(230, 230, 240)
-    label.TextSize = 13
-    label.Font = Enum.Font.SourceSansSemibold
+    label.TextColor3 = Color3.fromRGB(225, 235, 245)
+    label.TextSize = 12
+    label.Font = Enum.Font.GothamMedium
     label.TextXAlignment = Enum.TextXAlignment.Left
     label.Parent = card
 
     local switchBg = Instance.new("TextButton")
-    switchBg.Size = UDim2.new(0, 42, 0, 22)
-    switchBg.Position = UDim2.new(1, -52, 0.5, -11)
-    switchBg.BackgroundColor3 = defaultState and Color3.fromRGB(0, 120, 215) or Color3.fromRGB(50, 50, 65)
+    switchBg.Size = UDim2.new(0, 40, 0, 20)
+    switchBg.Position = UDim2.new(1, -50, 0.5, -10)
+    switchBg.BackgroundColor3 = defaultState and Color3.fromRGB(0, 160, 255) or Color3.fromRGB(38, 46, 62)
     switchBg.Text = ""
     switchBg.Parent = card
 
@@ -1390,8 +1472,8 @@ local function addToggle(tab, text, defaultState, callback)
     switchCorner.Parent = switchBg
 
     local knob = Instance.new("Frame")
-    knob.Size = UDim2.new(0, 16, 0, 16)
-    knob.Position = defaultState and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)
+    knob.Size = UDim2.new(0, 14, 0, 14)
+    knob.Position = defaultState and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)
     knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     knob.Parent = switchBg
 
@@ -1402,12 +1484,12 @@ local function addToggle(tab, text, defaultState, callback)
     local state = defaultState
     switchBg.MouseButton1Click:Connect(function()
         state = not state
-        switchBg.BackgroundColor3 = state and Color3.fromRGB(0, 120, 215) or Color3.fromRGB(50, 50, 65)
+        switchBg.BackgroundColor3 = state and Color3.fromRGB(0, 160, 255) or Color3.fromRGB(38, 46, 62)
         knob:TweenPosition(
-            state and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8),
+            state and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7),
             Enum.EasingDirection.Out,
             Enum.EasingStyle.Quad,
-            0.15,
+            0.12,
             true
         )
         pcall(function() callback(state) end)
@@ -1418,12 +1500,13 @@ end
 
 local function addButton(tab, text, callback)
     local card = Instance.new("TextButton")
-    card.Size = UDim2.new(1, 0, 0, 42)
-    card.BackgroundColor3 = Color3.fromRGB(36, 36, 48)
+    card.Size = UDim2.new(1, 0, 0, 38)
+    card.BackgroundColor3 = Color3.fromRGB(24, 31, 46)
+    card.BackgroundTransparency = 0.35
     card.Text = "  " .. text
-    card.TextColor3 = Color3.fromRGB(255, 255, 255)
-    card.TextSize = 13
-    card.Font = Enum.Font.SourceSansSemibold
+    card.TextColor3 = Color3.fromRGB(235, 245, 255)
+    card.TextSize = 12
+    card.Font = Enum.Font.GothamMedium
     card.TextXAlignment = Enum.TextXAlignment.Left
     card.Parent = tab
 
@@ -1432,7 +1515,8 @@ local function addButton(tab, text, callback)
     cardCorner.Parent = card
 
     local cardStroke = Instance.new("UIStroke")
-    cardStroke.Color = Color3.fromRGB(55, 55, 75)
+    cardStroke.Color = Color3.fromRGB(0, 175, 255)
+    cardStroke.Transparency = 0.85
     cardStroke.Thickness = 1
     cardStroke.Parent = card
 
@@ -1445,8 +1529,9 @@ end
 
 local function addSlider(tab, title, min, max, default, callback)
     local card = Instance.new("Frame")
-    card.Size = UDim2.new(1, 0, 0, 54)
-    card.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    card.Size = UDim2.new(1, 0, 0, 50)
+    card.BackgroundColor3 = Color3.fromRGB(20, 26, 38)
+    card.BackgroundTransparency = 0.35
     card.Parent = tab
 
     local cardCorner = Instance.new("UICorner")
@@ -1454,25 +1539,26 @@ local function addSlider(tab, title, min, max, default, callback)
     cardCorner.Parent = card
 
     local cardStroke = Instance.new("UIStroke")
-    cardStroke.Color = Color3.fromRGB(45, 45, 60)
+    cardStroke.Color = Color3.fromRGB(255, 255, 255)
+    cardStroke.Transparency = 0.92
     cardStroke.Thickness = 1
     cardStroke.Parent = card
 
     local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -24, 0, 22)
-    label.Position = UDim2.new(0, 12, 0, 5)
+    label.Size = UDim2.new(1, -24, 0, 20)
+    label.Position = UDim2.new(0, 12, 0, 4)
     label.BackgroundTransparency = 1
     label.Text = title .. ": " .. tostring(default)
-    label.TextColor3 = Color3.fromRGB(220, 220, 235)
-    label.TextSize = 12
-    label.Font = Enum.Font.SourceSansBold
+    label.TextColor3 = Color3.fromRGB(210, 225, 240)
+    label.TextSize = 11
+    label.Font = Enum.Font.GothamMedium
     label.TextXAlignment = Enum.TextXAlignment.Left
     label.Parent = card
 
     local sliderBg = Instance.new("TextButton")
-    sliderBg.Size = UDim2.new(1, -24, 0, 10)
-    sliderBg.Position = UDim2.new(0, 12, 0, 32)
-    sliderBg.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
+    sliderBg.Size = UDim2.new(1, -24, 0, 8)
+    sliderBg.Position = UDim2.new(0, 12, 0, 28)
+    sliderBg.BackgroundColor3 = Color3.fromRGB(34, 42, 58)
     sliderBg.Text = ""
     sliderBg.Parent = card
 
@@ -1482,7 +1568,7 @@ local function addSlider(tab, title, min, max, default, callback)
 
     local fill = Instance.new("Frame")
     fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
-    fill.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+    fill.BackgroundColor3 = Color3.fromRGB(0, 160, 255)
     fill.BorderSizePixel = 0
     fill.Parent = sliderBg
 
@@ -1519,15 +1605,15 @@ local function addSlider(tab, title, min, max, default, callback)
     end)
 end
 
--- População da Aba 1: Fly Steal & Base
-addToggle(MainTab, "Auto Steal + Retorno à Base (Voo Ultra Rápido)", Flags.AutoSteal, function(state)
+-- População da Aba 1: Steal & Base
+addToggle(MainTab, "Auto Steal & Base Return (Ultra Fast)", Flags.AutoSteal, function(state)
     Flags.AutoSteal = state
     if state then
         local hrp = getHRP()
         if hrp then
             Flags.SavedBasePos = Flags.CustomBasePos or hrp.Position
         end
-        addLog("FLY-STEAL", "Auto Steal ativado. Base gravada com sucesso!")
+        addLog("FLY-STEAL", "Auto Steal enabled. Base position recorded.")
         task.spawn(function()
             while Flags.AutoSteal do
                 flyStealLoop()
@@ -1535,32 +1621,32 @@ addToggle(MainTab, "Auto Steal + Retorno à Base (Voo Ultra Rápido)", Flags.Aut
             end
         end)
     else
-        addLog("FLY-STEAL", "Auto Steal desativado.")
+        addLog("FLY-STEAL", "Auto Steal disabled.")
     end
 end)
 
-addToggle(MainTab, "Priorizar Ovos Raros (Brainrot, Godly, Secret)", Flags.PrioritizeRare, function(state)
+addToggle(MainTab, "Prioritize High Value ($/s & Rare)", Flags.PrioritizeRare, function(state)
     Flags.PrioritizeRare = state
 end)
 
-addSlider(MainTab, "Velocidade do Voo (Studs/s)", 50, 1000, Flags.FlySpeed, function(val)
+addSlider(MainTab, "Flight Speed (Studs/s)", 50, 1000, Flags.FlySpeed, function(val)
     Flags.FlySpeed = val
 end)
 
-addSlider(MainTab, "Raio de Busca no Mapa (Studs)", 100, 4000, Flags.StealRadius, function(val)
+addSlider(MainTab, "Search Radius (Studs)", 100, 4000, Flags.StealRadius, function(val)
     Flags.StealRadius = val
 end)
 
-addButton(MainTab, "📌 Definir Posição ONDE ESTOU como Base", function()
+addButton(MainTab, "Record Current Position as Base", function()
     local hrp = getHRP()
     if hrp then
         Flags.CustomBasePos = hrp.Position
         Flags.SavedBasePos = hrp.Position
-        addLog("BASE", "Nova Base gravada em: " .. tostring(math.floor(hrp.Position.X)) .. ", " .. tostring(math.floor(hrp.Position.Z)))
+        addLog("BASE", "Base position updated: " .. tostring(math.floor(hrp.Position.X)) .. ", " .. tostring(math.floor(hrp.Position.Z)))
     end
 end)
 
-addButton(MainTab, "⚡ Executar Fly Steal 1x Agora", function()
+addButton(MainTab, "Execute Single Steal Cycle Now", function()
     task.spawn(function()
         local prev = Flags.AutoSteal
         Flags.AutoSteal = true
@@ -1569,32 +1655,32 @@ addButton(MainTab, "⚡ Executar Fly Steal 1x Agora", function()
     end)
 end)
 
--- População da Aba 2: Radar de Ovos & Filtros do Servidor
-addButton(RadarTab, "🔍 ESCANEAR MAPA COMPLETO (Radar & Dump)", function()
+-- População da Aba 2: Radar & Filters
+addButton(RadarTab, "Scan Map Eggs (Live Radar)", function()
     local discovered, dumpText = scanAllEggsInMap()
     addLog("RADAR", dumpText)
     print("\n" .. dumpText .. "\n")
 end)
 
-addButton(RadarTab, "🧬 MEGA VARREDURA DO JOGO (Extrair Raridades Reais)", function()
+addButton(RadarTab, "Mega Game Architecture Dump (TXT)", function()
     local dump = dumpGameStructure()
-    addLog("MEGA-DUMP", "Mega Varredura concluída! Arquivo ROUBE_UM_OVO_MEGA_DUMP.txt gerado e copiado para o Clipboard.")
+    addLog("MEGA-DUMP", "Architecture dump generated and copied to clipboard.")
     print("\n" .. dump .. "\n")
 end)
 
-addButton(RadarTab, "📋 Copiar Relatório do Radar (Clipboard)", function()
+addButton(RadarTab, "Copy Radar Report to Clipboard", function()
     if not _G.EggRadarText or _G.EggRadarText == "" then
         scanAllEggsInMap()
     end
     pcall(function()
         if setclipboard then
             setclipboard(_G.EggRadarText)
-            addLog("RADAR", "Relatório de todos os ovos copiado para a Área de Transferência!")
+            addLog("RADAR", "Radar report copied to clipboard.")
         end
     end)
 end)
 
-addButton(RadarTab, "⚡ Roubar Ovo #1 Mais Raro do Radar Agora", function()
+addButton(RadarTab, "Steal Highest Value Target (#1) Now", function()
     task.spawn(function()
         local prev = Flags.AutoSteal
         Flags.AutoSteal = true
@@ -1603,158 +1689,151 @@ addButton(RadarTab, "⚡ Roubar Ovo #1 Mais Raro do Radar Agora", function()
     end)
 end)
 
-addToggle(RadarTab, "Filtro: Ignorar Ovos Comuns & Incomuns", Flags.FilterIgnoreCommons, function(state)
+addToggle(RadarTab, "Filter: Ignore Common & Low Tier", Flags.FilterIgnoreCommons, function(state)
     Flags.FilterIgnoreCommons = state
-    addLog("FILTRO", "Ignorar Comuns: " .. (state and "ATIVADO" or "DESATIVADO"))
+    addLog("FILTERS", "Ignore Commons: " .. (state and "ENABLED" or "DISABLED"))
 end)
 
-addToggle(RadarTab, "Filtro: Apenas Ovos Raros/Míticos+ (>= 5.000 pts)", false, function(state)
+addToggle(RadarTab, "Filter: High Tier / Mythic+ (>= 5,000 pts)", false, function(state)
     Flags.MinRarityScore = state and 5000 or 0
-    addLog("FILTRO", "Filtro Míticos+: " .. (state and "ATIVADO (>= 5.000 pts)" or "DESATIVADO"))
+    addLog("FILTERS", "Filter Mythic+: " .. (state and "ENABLED (>= 5,000 pts)" or "DISABLED"))
 end)
 
-addToggle(RadarTab, "Filtro: Apenas Secret & Godly (>= 30.000 pts)", false, function(state)
+addToggle(RadarTab, "Filter: Top Tier Only (>= 30,000 pts)", false, function(state)
     Flags.MinRarityScore = state and 30000 or 0
-    addLog("FILTRO", "Filtro Secret/Godly: " .. (state and "ATIVADO (>= 30.000 pts)" or "DESATIVADO"))
+    addLog("FILTERS", "Filter Top Tier: " .. (state and "ENABLED (>= 30,000 pts)" or "DISABLED"))
 end)
 
-addSlider(RadarTab, "Pontuação Mínima de Raridade (Filtro)", 0, 40000, Flags.MinRarityScore, function(val)
+addSlider(RadarTab, "Minimum Score Threshold", 0, 40000, Flags.MinRarityScore, function(val)
     Flags.MinRarityScore = val
 end)
 
--- População da Aba 3: Player, Proteção & Movimento
-addToggle(PlayerTab, "🛡️ GodMode (Imortalidade / Sem Dano)", Flags.GodMode, function(state)
+-- População da Aba 3: Player Mods
+addToggle(PlayerTab, "GodMode Protection", Flags.GodMode, function(state)
     Flags.GodMode = state
-    if state then
-        addLog("PLAYER", "GodMode ativado.")
-    end
+    if state then addLog("PLAYER", "GodMode enabled.") end
 end)
 
-addToggle(PlayerTab, "🥋 Anti-Ragdoll (Não Cair / Não Ser Derrubado)", Flags.AntiRagdoll, function(state)
+addToggle(PlayerTab, "Anti-Ragdoll", Flags.AntiRagdoll, function(state)
     Flags.AntiRagdoll = state
-    if state then
-        addLog("PLAYER", "Anti-Ragdoll ativado.")
-    end
+    if state then addLog("PLAYER", "Anti-Ragdoll enabled.") end
 end)
 
-addToggle(PlayerTab, "🥚 Segurar Ovo Sempre (Never Drop Egg)", Flags.NeverDropEgg, function(state)
+addToggle(PlayerTab, "Hold Egg (Never Drop)", Flags.NeverDropEgg, function(state)
     Flags.NeverDropEgg = state
-    if state then
-        addLog("PLAYER", "Never Drop Egg ativado.")
-    end
+    if state then addLog("PLAYER", "Never Drop Egg enabled.") end
 end)
 
-addToggle(PlayerTab, "Velocidade Aumentada (Speed Hack)", Flags.SpeedHack, function(state)
+addToggle(PlayerTab, "WalkSpeed Boost", Flags.SpeedHack, function(state)
     Flags.SpeedHack = state
 end)
 
-addSlider(PlayerTab, "Velocidade de Caminhada (WalkSpeed)", 16, 250, Flags.WalkSpeed, function(val)
+addSlider(PlayerTab, "WalkSpeed Value", 16, 250, Flags.WalkSpeed, function(val)
     Flags.WalkSpeed = val
 end)
 
-addToggle(PlayerTab, "Super Pulo (JumpPower Hack)", Flags.JumpPowerHack, function(state)
+addToggle(PlayerTab, "JumpPower Boost", Flags.JumpPowerHack, function(state)
     Flags.JumpPowerHack = state
 end)
 
-addSlider(PlayerTab, "Força do Pulo (JumpPower)", 50, 300, Flags.JumpPower, function(val)
+addSlider(PlayerTab, "JumpPower Value", 50, 300, Flags.JumpPower, function(val)
     Flags.JumpPower = val
 end)
 
-addToggle(PlayerTab, "Noclip (Atravessar Paredes)", Flags.Noclip, function(state)
+addToggle(PlayerTab, "Noclip (Phase Through Walls)", Flags.Noclip, function(state)
     Flags.Noclip = state
 end)
 
-addToggle(PlayerTab, "Infinite Jump (Pulo Infinito no Ar)", Flags.InfJump, function(state)
+addToggle(PlayerTab, "Infinite Jump", Flags.InfJump, function(state)
     Flags.InfJump = state
 end)
 
--- População da Aba 3: ESP & Visuais
-addToggle(VisualsTab, "Egg ESP (Destacar Ovos)", Flags.EggESP, function(state)
+-- População da Aba 4: Visuals (ESP)
+addToggle(VisualsTab, "Egg ESP (Lightweight Tags)", Flags.EggESP, function(state)
     Flags.EggESP = state
     updateESP()
 end)
 
-addToggle(VisualsTab, "Player ESP (Destacar Jogadores)", Flags.PlayerESP, function(state)
+addToggle(VisualsTab, "Player ESP (Name Tags)", Flags.PlayerESP, function(state)
     Flags.PlayerESP = state
     updateESP()
 end)
 
--- População da Aba 4: Remote Logger & Inspector (Console)
+-- População da Aba 5: Console Logger
 local ConsoleFrame = Instance.new("ScrollingFrame")
 ConsoleFrame.Size = UDim2.new(1, 0, 1, -85)
-ConsoleFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
+ConsoleFrame.BackgroundColor3 = Color3.fromRGB(11, 14, 20)
+ConsoleFrame.BackgroundTransparency = 0.3
 ConsoleFrame.BorderSizePixel = 0
 ConsoleFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-ConsoleFrame.ScrollBarThickness = 6
+ConsoleFrame.ScrollBarThickness = 4
+ConsoleFrame.ScrollBarImageColor3 = Color3.fromRGB(0, 175, 255)
 ConsoleFrame.Parent = LoggerTab
 
 local ConsoleCorner = Instance.new("UICorner")
 ConsoleCorner.CornerRadius = UDim.new(0, 6)
 ConsoleCorner.Parent = ConsoleFrame
 
+local ConsoleStroke = Instance.new("UIStroke")
+ConsoleStroke.Color = Color3.fromRGB(255, 255, 255)
+ConsoleStroke.Transparency = 0.94
+ConsoleStroke.Thickness = 1
+ConsoleStroke.Parent = ConsoleFrame
+
 local ConsoleText = Instance.new("TextLabel")
 ConsoleText.Size = UDim2.new(1, -10, 1, 0)
 ConsoleText.Position = UDim2.new(0, 5, 0, 5)
 ConsoleText.BackgroundTransparency = 1
-ConsoleText.TextColor3 = Color3.fromRGB(0, 230, 140)
+ConsoleText.TextColor3 = Color3.fromRGB(0, 220, 180)
 ConsoleText.TextSize = 11
 ConsoleText.Font = Enum.Font.Code
 ConsoleText.TextXAlignment = Enum.TextXAlignment.Left
 ConsoleText.TextYAlignment = Enum.TextYAlignment.Top
-ConsoleText.Text = "=== LOGGER DETALHADO DE EVENTOS, REMOTES E PROMPTS ==="
+ConsoleText.Text = "=== SYSTEM & REMOTE EVENT CONSOLE ==="
 ConsoleText.Parent = ConsoleFrame
 
 local function updateLogConsole()
     local text = table.concat(LogHistory, "\n")
     ConsoleText.Text = text
-    ConsoleFrame.CanvasSize = UDim2.new(0, 0, 0, #LogHistory * 22 + 30)
+    ConsoleFrame.CanvasSize = UDim2.new(0, 0, 0, #LogHistory * 20 + 30)
 end
 _G.UpdateLogConsole = updateLogConsole
 
-addToggle(LoggerTab, "Salvar Logs Automaticamente no Disco (writefile)", Flags.SaveToDisk, function(state)
+addToggle(LoggerTab, "Auto Save Logs to Disk (writefile)", Flags.SaveToDisk, function(state)
     Flags.SaveToDisk = state
-    addLog("SISTEMA", "Gravação automática no disco: " .. (state and "ATIVADA" or "DESATIVADA"))
+    addLog("SYSTEM", "Auto save to disk: " .. (state and "ENABLED" or "DISABLED"))
 end)
 
-addButton(LoggerTab, "📋 Copiar Todos os Logs para a Área de Transferência", function()
+addButton(LoggerTab, "Copy Console Logs to Clipboard", function()
     pcall(function()
         local fullText = table.concat(LogHistory, "\n----------------------------------------\n")
         if setclipboard then
             setclipboard(fullText)
-            addLog("SISTEMA", "Todos os logs foram copiados para a área de transferência.")
+            addLog("SYSTEM", "All logs copied to clipboard.")
         end
     end)
 end)
 
-addButton(LoggerTab, "📦 Copiar Funções Capturadas do BFLoader", function()
-    pcall(function()
-        local txt = _G.BFLoader_LogText or "Nenhuma função capturada ainda."
-        if setclipboard then
-            setclipboard(txt)
-            addLog("SISTEMA", "Funções capturadas do BFLoader copiadas para a área de transferência!")
-        end
-    end)
-end)
-
-addButton(LoggerTab, "🧹 Limpar Histórico de Logs", function()
+addButton(LoggerTab, "Clear Console History", function()
     LogHistory = {}
-    addLog("SISTEMA", "Logs limpos pelo usuário.")
+    addLog("SYSTEM", "Console history cleared.")
 end)
 
--- População da Aba 5: Configurações & Utils
-addToggle(SettingsTab, "Anti-AFK (Prevenir Desconexão)", Flags.AntiAFK, function(state)
+-- População da Aba 6: Settings
+addToggle(SettingsTab, "Anti-AFK Protection", Flags.AntiAFK, function(state)
     Flags.AntiAFK = state
 end)
 
-addToggle(SettingsTab, "Logger Automático de Atividades", Flags.AutoLogger, function(state)
+addToggle(SettingsTab, "Detailed Activity Logger", Flags.AutoLogger, function(state)
     Flags.AutoLogger = state
 end)
 
-addButton(SettingsTab, "👁️ Esconder / Exibir Interface (Ctrl)", function()
+addButton(SettingsTab, "Toggle UI Visibility (Left Control)", function()
     ScreenGui.Enabled = not ScreenGui.Enabled
 end)
 
-addButton(SettingsTab, "❌ Destruir Interface", function()
+addButton(SettingsTab, "Unload & Destroy Script", function()
+    clearAllESP()
     ScreenGui:Destroy()
 end)
 
@@ -1765,17 +1844,7 @@ Services.UserInputService.InputBegan:Connect(function(input, gpe)
     end
 end)
 
--- Realtime Listener Otimizado (Sem sobrecarga de CPU)
-Services.Workspace.DescendantAdded:Connect(function(obj)
-    if not (Flags.EggESP or Flags.AutoSteal) then return end
-    pcall(function()
-        if obj:IsA("ProximityPrompt") and obj.Parent and isEgg(obj.Parent) then
-            if Flags.EggESP then applyESP(obj.Parent, false) end
-        end
-    end)
-end)
-
 -- Iniciar GUI com proteção contra detecção de ChildAdded
 protectGui(ScreenGui)
 ScreenGui.Parent = getGuiContainer()
-print("========== SCRIPT ÚNICO: ROUBE UM OVO HUB v3.4 CARREGADO ==========")
+print("========== ROUBE UM OVO PRO v3.5 (GLASS EDITION) CARREGADO ==========")
