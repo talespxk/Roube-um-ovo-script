@@ -1,15 +1,22 @@
 --[[
-    HOP SERVER v1.3 -- Roube um Ovo
-    Busca instantanea (100 servidores com 1 player).
-    Cooldown ultra rapido de 3s (sem esperas longas).
-    Cache persistente: nunca perde a lista em caso de delay da API.
-    Tecla RightControl para mostrar/ocultar.
+    HOP SERVER v1.4 -- Roube um Ovo (Stealth Edition)
+    -----------------------------------------------------------------------
+    - Busca instantanea de servidores publicos (100 servidores ordenados pelo menor numero de players).
+    - Design Fluent UI dark com ranking (#1, #2, #3), FPS, Ping e Job ID.
+    - Botao "Ir ao Menor" instantaneo e botao manual por servidor.
+    - Arquitetura stealth (cloneref, gethui, nomes randomizados, sem hooks de metametodos).
+    - Auto-reload via queue_on_teleport com espera de carregamento completo do jogo.
+    - Tecla RightControl para mostrar/ocultar.
 ]]
 
-print("========== HOP SERVER v1.3 INICIANDO ==========")
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
+print("========== CARREGANDO: HOP SERVER v1.4 (STEALTH) ==========")
 
 -- ============================================================
---  SERVICOS & CONFIGURACAO
+--  SERVICOS SEGUROS
 -- ============================================================
 
 local function safeService(name)
@@ -40,88 +47,76 @@ local State = {
     isHopping     = false,
     uiVisible     = true,
     minimized     = false,
-    lastRequestAt = 0,  -- timestamp da ultima requisicao HTTP feita
+    lastRequestAt = 0,
 }
-local MIN_REQUEST_INTERVAL = 4  -- segundos minimos entre requests (API Roblox: ~3s)
+local MIN_REQUEST_INTERVAL = 4
 
 -- ============================================================
---  ANTI-KICK / ANTI-CHEAT BYPASS
---  Tenta interceptar kicks client-side e bloquear remotos AC.
---  Tudo dentro de pcall -- nao quebra se o executor nao suportar.
+--  UTILITARIOS DE SEGURANCA & GUI CONTAINER (STEALTH)
 -- ============================================================
 
-local function setupAntiKick()
-    -- 1. Hook __namecall para interceptar :Kick()
-    pcall(function()
-        local mt = getrawmetatable(game)
-        if not mt then return end
+local function getRandomName()
+    local guid = ""
+    pcall(function() guid = HttpService:GenerateGUID(false):sub(1, 8) end)
+    if guid == "" then guid = tostring(math.random(100000, 999999)) end
+    return "HopUI_" .. guid
+end
 
-        local oldNamecall = mt.__namecall
-        setreadonly(mt, false)
-        mt.__namecall = newcclosure(function(self, ...)
-            local method = getnamecallmethod and getnamecallmethod() or ""
-            -- Bloqueia Kick no LocalPlayer
-            if method == "Kick" and self == LocalPlayer then
-                print("[HopServer] Anti-Kick: kick interceptado e bloqueado!")
-                return
-            end
-            -- Bloqueia FireServer em remotos com nomes de anti-cheat
-            if method == "FireServer" or method == "InvokeServer" then
-                local name = tostring(self.Name or ""):lower()
-                if name:find("ban") or name:find("kick") or name:find("cheat") or name:find("bac") or name:find("anticheat") then
-                    print("[HopServer] Anti-Kick: remoto AC bloqueado: " .. tostring(self.Name))
-                    return
-                end
-            end
-            return oldNamecall(self, ...)
-        end)
-        setreadonly(mt, true)
-        print("[HopServer] Anti-Kick: hook de namecall ativo.")
-    end)
-
-    -- 2. Hook hookfunction em Players.LocalPlayer.Kick diretamente
+local function protectGui(gui)
     pcall(function()
-        if hookfunction then
-            local oldKick = LocalPlayer.Kick
-            hookfunction(oldKick, newcclosure(function(self, ...)
-                if self == LocalPlayer then
-                    print("[HopServer] Anti-Kick: Players:Kick bloqueado via hookfunction!")
-                    return
-                end
-                return oldKick(self, ...)
-            end))
-            print("[HopServer] Anti-Kick: hookfunction em Kick ativo.")
-        end
-    end)
-
-    -- 3. Monitora e destrói scripts de anti-cheat locais conhecidos
-    pcall(function()
-        local function checkScript(s)
-            if not s then return end
-            local name = tostring(s.Name or ""):lower()
-            if name:find("bac") or name:find("anticheat") or name:find("ac_") then
-                pcall(function() s:Destroy() end)
-                print("[HopServer] Anti-Kick: script AC destruido: " .. tostring(s.Name))
+        local env = (getgenv and getgenv()) or _G
+        local pgui = rawget(env, "protectgui") or env.protectgui
+        if type(pgui) == "function" then
+            pgui(gui)
+        else
+            local synTable = rawget(env, "syn") or env.syn
+            if type(synTable) == "table" and type(synTable.protect_gui) == "function" then
+                synTable.protect_gui(gui)
             end
         end
-        for _, s in ipairs(LocalPlayer:GetChildren()) do checkScript(s) end
-        for _, s in ipairs(game:GetService("ReplicatedFirst"):GetChildren()) do checkScript(s) end
-        LocalPlayer.ChildAdded:Connect(function(s) task.delay(0, function() checkScript(s) end) end)
     end)
 end
 
-pcall(setupAntiKick)
-print("[HopServer] Anti-Kick iniciado.")
+local function getGuiContainer()
+    local container = nil
+    pcall(function()
+        if gethui then
+            container = gethui()
+        end
+    end)
+    if not container then
+        pcall(function()
+            local cg = game:GetService("CoreGui")
+            container = (cloneref and cloneref(cg)) or cg
+        end)
+    end
+    if not container then
+        container = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    end
+    return container
+end
+
+local function tw(obj, props, t, style, dir)
+    TweenService:Create(obj,
+        TweenInfo.new(t or 0.18, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out),
+        props):Play()
+end
+
+local function make(cls, props, parent)
+    local o = Instance.new(cls)
+    for k, v in pairs(props) do o[k] = v end
+    if parent then o.Parent = parent end
+    return o
+end
 
 -- ============================================================
---  HTTP GET ROBUSTO
---  User-Agent: Roblox/WinInet (evita bloqueio sem usar cookies por conta)
+--  HTTP GET ROBUSTO (SEM COOKIES DE CONTA)
 -- ============================================================
 
 local function httpGet(url)
     local fn = nil
     pcall(function()
-        if type(request)      == "function" then fn = request
+        if type(request) == "function" then fn = request
         elseif type(http_request) == "function" then fn = http_request
         elseif syn and type(syn.request) == "function" then fn = syn.request end
     end)
@@ -148,20 +143,17 @@ end
 
 -- ============================================================
 --  BUSCA DE SERVIDORES
---  Throttle transparente: espera silenciosamente se necessario.
---  Sem bloqueios na UI. Retry automatico em caso de rate limit.
 -- ============================================================
 
 local function fetchServers(onDone)
     if State.isScanning then
-        if onDone then onDone(State.servers, true, nil) end
+        if onDone then onDone(State.servers, true) end
         return
     end
 
     State.isScanning = true
 
     task.spawn(function()
-        -- Throttle: aguarda silenciosamente ate o intervalo minimo
         local elapsed = os.time() - State.lastRequestAt
         if elapsed < MIN_REQUEST_INTERVAL then
             task.wait(MIN_REQUEST_INTERVAL - elapsed)
@@ -182,7 +174,6 @@ local function fetchServers(onDone)
                 return false, "JSON invalido", nil
             end
             if not data.data then
-                -- Rate limit ou erro da API: raw tem {"errors":[...]}
                 return false, "sem_data", raw
             end
             return true, nil, data.data
@@ -190,17 +181,16 @@ local function fetchServers(onDone)
 
         local ok, errInfo, svData = doRequest()
 
-        -- Se falhou, tenta 1 vez apos 4s automaticamente (sem mostrar erro)
         if not ok then
-            print("[HopServer] Primeira tentativa falhou (" .. tostring(errInfo) .. "). Retry em 4s...")
+            print("[HopServer] Primeira tentativa falhou. Retry em 4s...")
             task.wait(4)
             ok, errInfo, svData = doRequest()
         end
 
         if not ok or not svData then
             State.isScanning = false
-            print("[HopServer] Falha definitiva: " .. tostring(errInfo))
-            if onDone then onDone(State.servers, false, tostring(errInfo)) end
+            print("[HopServer] Falha na busca: " .. tostring(errInfo))
+            if onDone then onDone(State.servers, false) end
             return
         end
 
@@ -226,29 +216,31 @@ local function fetchServers(onDone)
         State.servers    = list
         State.isScanning = false
 
-        print("[HopServer] OK! " .. #list .. " servidores.")
-        if onDone then onDone(list, true, nil) end
+        print("[HopServer] Sucesso! " .. #list .. " servidores encontrados.")
+        if onDone then onDone(list, true) end
     end)
 end
 
 -- ============================================================
---  TELEPORTE & AUTO-RELOAD
+--  TELEPORTE & AUTO-RELOAD SEGURO
 -- ============================================================
 
 local function queueAutoReload()
     if Config.SelfURL == "" then return end
     pcall(function()
-        local src = 'task.wait(8) pcall(function() loadstring(game:HttpGet("' .. Config.SelfURL .. '",true))() end)'
-        local fn = nil
-        pcall(function() if type(queue_on_teleport) == "function" then fn = queue_on_teleport end end)
-        if not fn then pcall(function() if syn and type(syn.queue_on_teleport) == "function" then fn = syn.queue_on_teleport end end) end
-        if not fn then
-            local env = (getgenv and getgenv()) or _G
-            pcall(function() if type(env.queue_on_teleport) == "function" then fn = env.queue_on_teleport end end)
-        end
-        if type(fn) == "function" then
-            fn(src)
-            print("[HopServer] Auto-reload agendado.")
+        local src = 'repeat task.wait(1) until game:IsLoaded() task.wait(3) pcall(function() loadstring(game:HttpGet("' .. Config.SelfURL .. '",true))() end)'
+        local q = nil
+        pcall(function()
+            if type(queue_on_teleport) == "function" then q = queue_on_teleport end
+            if not q and syn and type(syn.queue_on_teleport) == "function" then q = syn.queue_on_teleport end
+            if not q then
+                local env = (getgenv and getgenv()) or _G
+                if type(env.queue_on_teleport) == "function" then q = env.queue_on_teleport end
+            end
+        end)
+        if type(q) == "function" then
+            q(src)
+            print("[HopServer] Auto-reload configurado com espera de carregamento.")
         end
     end)
 end
@@ -269,7 +261,7 @@ local function hopTo(jobId, onResult)
 end
 
 -- ============================================================
---  PALETA DE CORES
+--  PALETA DE CORES FLUENT DARK
 -- ============================================================
 
 local C = {
@@ -292,59 +284,32 @@ local C = {
 }
 
 -- ============================================================
---  GUI
+--  INTERFACE GRAFICA
 -- ============================================================
 
 pcall(function()
-    local prev = (gethui and gethui()) or LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    if prev then
-        local old = prev:FindFirstChild("HopServerUI_v1")
-        if old then old:Destroy() end
+    local c = getGuiContainer()
+    if c then
+        for _, ch in ipairs(c:GetChildren()) do
+            if ch.Name:find("HopUI_") or ch.Name == "HopServerUI_v1" then
+                ch:Destroy()
+            end
+        end
     end
 end)
-
-local function getContainer()
-    local c
-    pcall(function() c = gethui() end)
-    if not c then pcall(function() c = cloneref and cloneref(game:GetService("CoreGui")) or game:GetService("CoreGui") end) end
-    if not c then c = LocalPlayer:FindFirstChildOfClass("PlayerGui") end
-    return c
-end
-
-local function protectGui(gui)
-    pcall(function()
-        local env = (getgenv and getgenv()) or _G
-        local fn = rawget(env, "protectgui") or env.protectgui
-        if type(fn) == "function" then fn(gui); return end
-        local s = rawget(env, "syn") or env.syn
-        if type(s) == "table" and type(s.protect_gui) == "function" then s.protect_gui(gui) end
-    end)
-end
-
-local function tw(obj, props, t, style, dir)
-    TweenService:Create(obj,
-        TweenInfo.new(t or 0.18, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out),
-        props):Play()
-end
-
-local function make(cls, props, parent)
-    local o = Instance.new(cls)
-    for k, v in pairs(props) do o[k] = v end
-    if parent then o.Parent = parent end
-    return o
-end
 
 local WIN_W, WIN_H = 380, 520
 
 local ScreenGui = make("ScreenGui", {
-    Name           = "HopServerUI_v1",
+    Name           = getRandomName(),
     ResetOnSpawn   = false,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     IgnoreGuiInset = true,
-}, getContainer())
+}, getGuiContainer())
 protectGui(ScreenGui)
 
 local MainFrame = make("Frame", {
+    Name             = "MainFrame",
     Size             = UDim2.new(0, WIN_W, 0, WIN_H),
     Position         = UDim2.new(0.5, -WIN_W/2, 0.5, -WIN_H/2),
     BackgroundColor3 = C.BG,
@@ -426,7 +391,7 @@ local Body = make("Frame", {
     BackgroundTransparency=1, ZIndex=2,
 }, MainFrame)
 
--- Botoes
+-- Botoes de Acao
 local ActionsRow = make("Frame", {
     Size=UDim2.new(1,-24,0,38), Position=UDim2.new(0,12,0,10), BackgroundTransparency=1,
 }, Body)
@@ -478,7 +443,7 @@ make("UICorner",{CornerRadius=UDim.new(0,2)},ProgBG)
 local ProgBar = make("Frame", {Size=UDim2.new(0,0,1,0),BackgroundColor3=C.Accent,BorderSizePixel=0},ProgBG)
 make("UICorner",{CornerRadius=UDim.new(0,2)},ProgBar)
 
--- Cabecalho
+-- Cabecalho da lista
 local HeaderRow = make("Frame", {
     Size=UDim2.new(1,-24,0,22), Position=UDim2.new(0,12,0,97), BackgroundTransparency=1,
 }, Body)
@@ -492,7 +457,7 @@ hdr("PING",170,48) hdr("JOB ID",222,90) hdr("IR",326,28,Enum.TextXAlignment.Cent
 
 make("Frame",{Size=UDim2.new(1,-24,0,1),Position=UDim2.new(0,12,0,122),BackgroundColor3=C.Border,BorderSizePixel=0},Body)
 
--- Lista
+-- Lista de Servidores
 local ListFrame = make("ScrollingFrame", {
     Name="ServerList", Size=UDim2.new(1,-24,1,-192), Position=UDim2.new(0,12,0,127),
     BackgroundTransparency=1, ScrollBarThickness=4, ScrollBarImageColor3=C.Accent,
@@ -554,7 +519,7 @@ local function renderList(servers)
 
     if #servers == 0 then
         make("TextLabel",{
-            Text="Nenhum servidor encontrado.\\nClique em [+] Atualizar para buscar.",
+            Text="Nenhum servidor encontrado.\nClique em [+] Atualizar para buscar.",
             Size=UDim2.new(1,0,0,70), BackgroundTransparency=1,
             TextSize=11, Font=Enum.Font.Gotham, TextColor3=C.TextDim,
             TextWrapped=true, TextXAlignment=Enum.TextXAlignment.Center, LayoutOrder=1,
@@ -647,7 +612,7 @@ local function doScan(opts)
         InfoText.TextColor3 = C.TextDim
     end
 
-    fetchServers(function(servers, ok, errMsg)
+    fetchServers(function(servers, ok)
         if ok and #servers > 0 then
             tw(StatusDot,{BackgroundColor3=C.GreenBr},0.2)
             InfoText.Text = #servers.." servidores  |  "..os.date("%H:%M:%S")
@@ -659,7 +624,6 @@ local function doScan(opts)
             if not opts.silent then setStatus("Lista atualizada") end
         else
             if #State.servers > 0 then
-                -- Mantém cache: mostra lista antiga sem apagar
                 tw(StatusDot,{BackgroundColor3=C.Yellow},0.2)
                 InfoText.Text = #State.servers.." servidores (cache)  |  "..os.date("%H:%M:%S")
                 InfoText.TextColor3 = C.Yellow
