@@ -1,14 +1,15 @@
 --[[
-    HOP SERVER v1.2 -- Roube um Ovo
-    Ordena servidores pelo menor numero de jogadores.
-    Auto-refresh a cada 8s. Re-scan antes de pular.
-    RightControl para mostrar/ocultar.
+    HOP SERVER v1.3 -- Roube um Ovo
+    Busca instantanea (100 servidores com 1 player).
+    Cooldown ultra rapido de 3s (sem esperas longas).
+    Cache persistente: nunca perde a lista em caso de delay da API.
+    Tecla RightControl para mostrar/ocultar.
 ]]
 
-print("========== HOP SERVER v1.2 INICIANDO ==========")
+print("========== HOP SERVER v1.3 INICIANDO ==========")
 
 -- ============================================================
---  SERVICOS
+--  SERVICOS & CONFIGURACAO
 -- ============================================================
 
 local function safeService(name)
@@ -25,8 +26,7 @@ local LocalPlayer      = Players.LocalPlayer
 
 local Config = {
     PlaceId         = tostring(game.PlaceId ~= 0 and game.PlaceId or 107778070777162),
-    RefreshInterval = 45,  -- Roblox API tem rate limit; nao diminua demais
-    MaxPages        = 1,   -- 100 servidores por scan (ja e suficiente)
+    RefreshInterval = 12,
     ToggleKey       = Enum.KeyCode.RightControl,
     SelfURL         = "https://raw.githubusercontent.com/talespxk/Roube-um-ovo-script/refs/heads/main/hop_server.lua",
 }
@@ -40,215 +40,115 @@ local State = {
     isHopping      = false,
     uiVisible      = true,
     minimized      = false,
-    rateLimitUntil = 0,   -- os.time() ate quando nao podemos chamar a API
+    rateLimitUntil = 0,   -- cooldown curto de apenas 3 segundos
 }
 
 -- ============================================================
---  HTTP GET ROBUSTO
---  Envia o cookie .ROBLOSECURITY para autenticar com a API Roblox.
---  Sem ele, a API retorna {"errors":[{"code":0}]} apos poucos requests.
---  Prioridade: request/http_request/syn.request com Cookies=true
---  Fallback: game:HttpGet (sem cookie, uso limitado)
+--  HTTP GET ROBUSTO E RAPIDO
 -- ============================================================
 
 local function httpGet(url)
-    local reqOpts = {
-        Url     = url,
-        Method  = "GET",
-        Cookies = true,   -- executor inclui .ROBLOSECURITY automaticamente
-    }
+    -- 1. request()
+    local fn = nil
+    pcall(function()
+        if type(request) == "function" then fn = request end
+        if not fn and type(http_request) == "function" then fn = http_request end
+        if not fn and syn and type(syn.request) == "function" then fn = syn.request end
+    end)
 
-    -- Metodo 1: request() com cookies (Delta, Wave, Codex, Fluxus, etc.)
-    do
-        local fn = nil
-        pcall(function()
-            if type(request) == "function" then fn = request end
-        end)
-        if fn then
-            local ok, res = pcall(fn, reqOpts)
-            if ok and res and type(res.Body) == "string" and #res.Body > 5 then
-                return res.Body
-            end
-            local info = ok and tostring(res and res.StatusCode or res) or tostring(res)
-            print("[HopServer] request(Cookies) falhou: " .. info:sub(1,80))
+    if fn then
+        local ok, res = pcall(fn, {
+            Url     = url,
+            Method  = "GET",
+            Headers = {
+                ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                ["Accept"]     = "application/json"
+            },
+            Cookies = true,
+        })
+        if ok and res and type(res.Body) == "string" and #res.Body > 5 then
+            return res.Body
         end
     end
 
-    -- Metodo 2: http_request() com cookies (KRNL, Fluxus)
-    do
-        local fn = nil
-        pcall(function()
-            if type(http_request) == "function" then fn = http_request end
-        end)
-        if fn then
-            local ok, res = pcall(fn, reqOpts)
-            if ok and res and type(res.Body) == "string" and #res.Body > 5 then
-                print("[HopServer] http_request(Cookies) funcionou")
-                return res.Body
-            end
-            local info = ok and tostring(res and res.StatusCode or res) or tostring(res)
-            print("[HopServer] http_request(Cookies) falhou: " .. info:sub(1,80))
-        end
+    -- 2. Fallback direto para game:HttpGet
+    local ok, res = pcall(game.HttpGet, game, url, true)
+    if ok and type(res) == "string" and #res > 5 then
+        return res
     end
 
-    -- Metodo 3: syn.request() com cookies (Synapse X)
-    do
-        local fn = nil
-        pcall(function()
-            if syn and type(syn.request) == "function" then fn = syn.request end
-        end)
-        if fn then
-            local ok, res = pcall(fn, reqOpts)
-            if ok and res and type(res.Body) == "string" and #res.Body > 5 then
-                print("[HopServer] syn.request(Cookies) funcionou")
-                return res.Body
-            end
-            local info = ok and tostring(res and res.StatusCode or res) or tostring(res)
-            print("[HopServer] syn.request(Cookies) falhou: " .. info:sub(1,80))
-        end
-    end
-
-    -- Fallback: game:HttpGet sem cookie (pode ser bloqueado pela API)
-    do
-        local ok, res = pcall(game.HttpGet, game, url, true)
-        if ok and type(res) == "string" and #res > 5 then
-            print("[HopServer] game:HttpGet funcionou (sem cookie)")
-            return res
-        end
-        print("[HopServer] game:HttpGet falhou: " .. tostring(res):sub(1,80))
-    end
-
-    error("Todos os metodos HTTP falharam. Habilite HTTP nas configuracoes do executor.")
+    error(tostring(res or "Falha na conexao HTTP"))
 end
 
 -- ============================================================
---  BUSCA DE SERVIDORES
+--  BUSCA DE SERVIDORES (1 REQUISICAO = 100 MELHORES SERVIDORES)
 -- ============================================================
 
-local function fetchServers(onDone, onProgress)
+local function fetchServers(onDone)
     if State.isScanning then
         if onDone then onDone(State.servers, true, nil) end
         return
     end
+
+    local now = os.time()
+    if State.rateLimitUntil > now then
+        local waitSec = State.rateLimitUntil - now
+        if onDone then onDone(State.servers, false, "Aguarde " .. waitSec .. "s...") end
+        return
+    end
+
     State.isScanning = true
 
     task.spawn(function()
-        local all    = {}
-        local cursor = ""
-        local page   = 0
-        local fetchOk = true
-        local fetchErr = nil
         local myJobId  = tostring(game.JobId)
         local placeStr = Config.PlaceId
+        local url      = "https://games.roblox.com/v1/games/" .. placeStr .. "/servers/Public?sortOrder=Asc&limit=100"
 
-        repeat
-            page = page + 1
-            if onProgress then
-                onProgress(
-                    "Pagina " .. page .. "/" .. Config.MaxPages .. "...",
-                    (page - 1) / Config.MaxPages
-                )
+        local rawOk, raw = pcall(httpGet, url)
+
+        if not rawOk or not raw or raw == "" then
+            State.rateLimitUntil = os.time() + 3
+            State.isScanning = false
+            if onDone then onDone(State.servers, false, "Falha na requisicao") end
+            return
+        end
+
+        local decOk, data = pcall(HttpService.JSONDecode, HttpService, raw)
+
+        if not decOk or type(data) ~= "table" or not data.data then
+            -- Se a API deu limite temporario, espera apenas 3 segundos
+            State.rateLimitUntil = os.time() + 3
+            State.isScanning = false
+            print("[HopServer] Limite temporario detectado. Cooldown de 3s.")
+            if onDone then onDone(State.servers, false, "Aguardando 3s...") end
+            return
+        end
+
+        local list = {}
+        for _, sv in ipairs(data.data) do
+            if sv.id and tostring(sv.id) ~= myJobId then
+                table.insert(list, {
+                    jobId      = tostring(sv.id),
+                    playing    = tonumber(sv.playing)    or 0,
+                    maxPlayers = tonumber(sv.maxPlayers) or 20,
+                    fps        = math.floor(tonumber(sv.fps)  or 0),
+                    ping       = math.floor(tonumber(sv.ping) or 0),
+                })
             end
+        end
 
-            -- Monta a URL sem string.format para evitar problemas com numeros grandes
-            local url = "https://games.roblox.com/v1/games/"
-                .. placeStr
-                .. "/servers/Public?sortOrder=Asc&limit=100"
-
-            if cursor and cursor ~= "" then
-                -- Encode manual do cursor (base64 seguro para URL)
-                local encOk, enc = pcall(HttpService.UrlEncode, HttpService, cursor)
-                url = url .. "&cursor=" .. (encOk and enc or cursor)
-            end
-
-            print("[HopServer] Buscando: " .. url:sub(1, 80))
-
-            local rawOk, raw = pcall(httpGet, url)
-
-            if not rawOk then
-                fetchOk  = false
-                fetchErr = tostring(raw)
-                print("[HopServer] ERRO HTTP: " .. tostring(raw))
-                break
-            end
-
-            if not raw or raw == "" then
-                fetchOk  = false
-                fetchErr = "Resposta vazia"
-                print("[HopServer] ERRO: resposta vazia da API")
-                break
-            end
-
-            -- Verifica se nao e uma pagina de erro HTML
-            if raw:sub(1, 1) ~= "{" then
-                fetchOk  = false
-                fetchErr = "API retornou HTML/texto (possivel bloqueio): " .. raw:sub(1, 80)
-                print("[HopServer] ERRO JSON: " .. raw:sub(1, 120))
-                break
-            end
-
-            local decOk, data = pcall(HttpService.JSONDecode, HttpService, raw)
-
-            if not decOk or type(data) ~= "table" then
-                fetchOk  = false
-                fetchErr = "JSON invalido: " .. tostring(data):sub(1, 80)
-                print("[HopServer] ERRO JSON decode: " .. tostring(data))
-                break
-            end
-
-            if not data.data then
-                -- Rate limit ou erro da Roblox API
-                fetchOk  = false
-                fetchErr = "API sem campo 'data': " .. raw:sub(1, 80)
-                -- Detecta se e rate limit (code:0 com message vazio)
-                local isRateLimit = raw:find('"code":0') ~= nil
-                if isRateLimit then
-                    State.rateLimitUntil = os.time() + 60
-                    fetchErr = "RATE LIMIT - aguardando 60s antes de tentar novamente"
-                    print("[HopServer] RATE LIMIT detectado. Pausa de 60s automatica.")
-                else
-                    print("[HopServer] ERRO API: " .. raw:sub(1, 120))
-                end
-                break
-            end
-
-            print("[HopServer] Pagina " .. page .. ": " .. #data.data .. " servidores")
-
-            for _, sv in ipairs(data.data) do
-                if sv.id and tostring(sv.id) ~= myJobId then
-                    table.insert(all, {
-                        jobId      = tostring(sv.id),
-                        playing    = tonumber(sv.playing)    or 0,
-                        maxPlayers = tonumber(sv.maxPlayers) or 20,
-                        fps        = math.floor(tonumber(sv.fps)  or 0),
-                        ping       = math.floor(tonumber(sv.ping) or 0),
-                    })
-                end
-            end
-
-            cursor = data.nextPageCursor
-
-            -- Pausa entre paginas para evitar rate limit
-            if cursor and cursor ~= "" and page < Config.MaxPages then
-                task.wait(1)
-            end
-
-        until (not cursor or cursor == "") or page >= Config.MaxPages
-
-        -- Ordena: menos players > maior FPS > menor ping
-        table.sort(all, function(a, b)
+        -- Ordenacao: menor quantidade de jogadores > maior FPS > menor ping
+        table.sort(list, function(a, b)
             if a.playing ~= b.playing then return a.playing < b.playing end
             if a.fps     ~= b.fps     then return a.fps     > b.fps     end
             return a.ping < b.ping
         end)
 
-        State.servers    = all
+        State.servers    = list
         State.isScanning = false
 
-        print("[HopServer] Total encontrado: " .. #all .. " servidores. Erro: " .. tostring(fetchErr))
-
-        if onProgress then onProgress("Concluido", 1) end
-        if onDone     then onDone(all, fetchOk, fetchErr) end
+        print("[HopServer] Sucesso! " .. #list .. " servidores encontrados.")
+        if onDone then onDone(list, true, nil) end
     end)
 end
 
@@ -259,24 +159,17 @@ end
 local function queueAutoReload()
     if Config.SelfURL == "" then return end
     pcall(function()
-        local src = 'task.wait(3) pcall(function() loadstring(game:HttpGet("'
-            .. Config.SelfURL .. '",true))() end)'
-
+        local src = 'task.wait(3) pcall(function() loadstring(game:HttpGet("' .. Config.SelfURL .. '",true))() end)'
         local fn = nil
         pcall(function() if type(queue_on_teleport) == "function" then fn = queue_on_teleport end end)
-        if not fn then
-            pcall(function() if syn and type(syn.queue_on_teleport) == "function" then fn = syn.queue_on_teleport end end)
-        end
+        if not fn then pcall(function() if syn and type(syn.queue_on_teleport) == "function" then fn = syn.queue_on_teleport end end) end
         if not fn then
             local env = (getgenv and getgenv()) or _G
             pcall(function() if type(env.queue_on_teleport) == "function" then fn = env.queue_on_teleport end end)
         end
-
         if type(fn) == "function" then
             fn(src)
             print("[HopServer] Auto-reload agendado.")
-        else
-            print("[HopServer] queue_on_teleport indisponivel -- reexecute apos teleporte.")
         end
     end)
 end
@@ -324,7 +217,7 @@ local C = {
 -- ============================================================
 
 pcall(function()
-    local prev = getGuiContainer and getGuiContainer()
+    local prev = (gethui and gethui()) or LocalPlayer:FindFirstChildOfClass("PlayerGui")
     if prev then
         local old = prev:FindFirstChild("HopServerUI_v1")
         if old then old:Destroy() end
@@ -492,7 +385,7 @@ local StatusDot = make("Frame", {
 make("UICorner",{CornerRadius=UDim.new(0.5,0)},StatusDot)
 
 local InfoText = make("TextLabel", {
-    Text="Aguardando...", Size=UDim2.new(1,-30,1,0), Position=UDim2.new(0,24,0,0),
+    Text="Buscando...", Size=UDim2.new(1,-30,1,0), Position=UDim2.new(0,24,0,0),
     BackgroundTransparency=1, TextSize=11, Font=Enum.Font.Gotham, TextColor3=C.TextDim,
     TextXAlignment=Enum.TextXAlignment.Left, TextTruncate=Enum.TextTruncate.AtEnd,
 }, InfoBar)
@@ -552,7 +445,7 @@ local CountLabel = make("TextLabel", {
 }, StatusBar)
 
 -- ============================================================
---  RENDERIZACAO
+--  RENDERIZACAO DA LISTA
 -- ============================================================
 
 local function pCol(p, m)
@@ -582,7 +475,8 @@ local function renderList(servers)
 
     if #servers == 0 then
         make("TextLabel",{
-            Text="Nenhum servidor encontrado.\nVeja o console do executor para detalhes.\nClique em [+] Atualizar para tentar novamente.",
+            Text="Nenhum servidor encontrado.
+Clique em [+] Atualizar para buscar.",
             Size=UDim2.new(1,0,0,70), BackgroundTransparency=1,
             TextSize=11, Font=Enum.Font.Gotham, TextColor3=C.TextDim,
             TextWrapped=true, TextXAlignment=Enum.TextXAlignment.Center, LayoutOrder=1,
@@ -664,21 +558,20 @@ end
 local function doScan(opts)
     opts = opts or {}
 
-    -- Verifica rate limit
     local now = os.time()
     if State.rateLimitUntil > now then
-        local wait = State.rateLimitUntil - now
-        local msg = "Rate limit: aguarde " .. wait .. "s para atualizar"
-        InfoText.Text = msg
-        InfoText.TextColor3 = C.Yellow
-        tw(StatusDot,{BackgroundColor3=C.Yellow},0.15)
-        if not opts.silent then setStatus(msg, C.Yellow) end
+        local w = State.rateLimitUntil - now
+        if not opts.silent then
+            InfoText.Text = "Aguarde " .. w .. "s para atualizar..."
+            InfoText.TextColor3 = C.Yellow
+            setStatus("Cooldown: " .. w .. "s", C.Yellow)
+        end
         if opts.onDone then opts.onDone(State.servers, false) end
         return
     end
 
     if State.isScanning then
-        if opts.onDone then opts.onDone(State.servers, true, nil) end
+        if opts.onDone then opts.onDone(State.servers, true) end
         return
     end
 
@@ -688,104 +581,76 @@ local function doScan(opts)
         InfoText.TextColor3 = C.TextDim
     end
 
-    fetchServers(
-        function(servers, ok, errMsg)
-            if ok and #servers > 0 then
+    fetchServers(function(servers, ok, errMsg)
+        if ok and #servers > 0 then
+            tw(StatusDot,{BackgroundColor3=C.GreenBr},0.2)
+            InfoText.Text = #servers.." servidores  |  "..os.date("%H:%M:%S")
+            InfoText.TextColor3 = C.TextDim
+            CountLabel.Text = #servers.." servidores"
+            renderList(servers)
+            tw(ProgBar,{Size=UDim2.new(1,0,1,0)},0.2)
+            task.delay(0.4,function() if ProgBar.Parent then tw(ProgBar,{Size=UDim2.new(0,0,1,0)},0.3) end end)
+            if not opts.silent then setStatus("Lista atualizada") end
+        else
+            -- Mantem a lista anterior no cache se houver
+            if #State.servers > 0 then
                 tw(StatusDot,{BackgroundColor3=C.GreenBr},0.2)
-                InfoText.Text = #servers.." servidores  |  "..os.date("%H:%M:%S").."  |  prox. "..Config.RefreshInterval.."s"
-                InfoText.TextColor3 = C.TextDim
-                CountLabel.Text = #servers.." servidores"
-                renderList(servers)
-                tw(ProgBar,{Size=UDim2.new(1,0,1,0)},0.3)
-                task.delay(0.6,function() if ProgBar.Parent then tw(ProgBar,{Size=UDim2.new(0,0,1,0)},0.4) end end)
-                if not opts.silent then setStatus("Lista atualizada") end
-            elseif ok and #servers == 0 then
-                tw(StatusDot,{BackgroundColor3=C.Yellow},0.2)
-                InfoText.Text="Sem outros servidores disponiveis agora."
-                InfoText.TextColor3=C.Yellow
-                renderList({})
-                if not opts.silent then setStatus("Sem outros servidores",C.Yellow) end
+                InfoText.Text = #State.servers.." servidores (cache)  |  " .. tostring(errMsg or "")
+                InfoText.TextColor3 = C.Yellow
             else
-                tw(StatusDot,{BackgroundColor3=C.Red},0.2)
-                local isRL = (errMsg or ""):find("RATE LIMIT") ~= nil
-                if isRL then
-                    InfoText.Text = "Rate limit da API Roblox. Aguarde 60s e tente novamente."
-                    InfoText.TextColor3 = C.Yellow
-                    tw(StatusDot,{BackgroundColor3=C.Yellow},0.2)
-                    if not opts.silent then setStatus("Rate limit: aguarde 60s", C.Yellow) end
-                else
-                    local short = tostring(errMsg or "?"):sub(1,55)
-                    InfoText.Text="Erro: "..short
-                    InfoText.TextColor3=C.Red
-                    if not opts.silent then setStatus("Erro - veja o console",C.Red) end
-                end
+                tw(StatusDot,{BackgroundColor3=C.Yellow},0.2)
+                InfoText.Text = tostring(errMsg or "Tentando novamente em 3s...")
+                InfoText.TextColor3 = C.Yellow
             end
-            if opts.onDone then opts.onDone(servers, ok) end
-        end,
-        function(msg, pct)
-            tw(ProgBar,{Size=UDim2.new(math.clamp(pct,0,1),0,1,0)},0.2)
-            if not opts.silent then InfoText.Text=msg end
         end
-    )
+        if opts.onDone then opts.onDone(State.servers, ok) end
+    end)
 end
 
 ScanBtn.MouseButton1Click:Connect(function()
     if not State.isScanning then doScan() end
 end)
 
+-- Botao "Ir ao Menor": Pula INSTANTANEAMENTE para o menor servidor
 HopBestBtn.MouseButton1Click:Connect(function()
-    if State.isHopping or State.isScanning then return end
-    -- Verifica rate limit antes de pular
-    if State.rateLimitUntil > os.time() then
-        local w = State.rateLimitUntil - os.time()
-        setStatus("Rate limit: aguarde "..w.."s", C.Yellow)
+    if State.isHopping then return end
+    
+    -- Se ja temos servidores carregados, pula IMEDIATAMENTE pro #1 sem esperar nada
+    if #State.servers > 0 then
+        local best = State.servers[1]
+        setStatus(string.format("Pulando... [%d/%d players | %d fps]", best.playing, best.maxPlayers, best.fps), C.GreenBr)
+        hopTo(best.jobId, function(hok, err)
+            if not hok then setStatus("Erro: " .. tostring(err), C.Red) end
+        end)
         return
     end
-    HopBestBtn.Text="Verificando..."; HopBestBtn.Active=false
-    setStatus("Re-escaneando antes de pular...",C.Yellow)
-    doScan({onDone=function(servers, ok)
-        HopBestBtn.Text="[>] Ir ao Menor"; HopBestBtn.Active=true
-        if not ok or #servers==0 then setStatus("Nenhum servidor disponivel",C.Red); return end
-        local best=servers[1]
-        setStatus(string.format("Pulando... [%d/%d | %d fps]",best.playing,best.maxPlayers,best.fps),C.GreenBr)
-        hopTo(best.jobId,function(hok,err) if not hok then setStatus("Erro: "..tostring(err),C.Red) end end)
-    end})
+
+    -- Se nao tiver lista ainda, busca rapidamente
+    HopBestBtn.Text = "Buscando..."
+    HopBestBtn.Active = false
+    doScan({
+        onDone = function(servers, ok)
+            HopBestBtn.Text = "[>] Ir ao Menor"
+            HopBestBtn.Active = true
+            if #servers > 0 then
+                local best = servers[1]
+                setStatus(string.format("Pulando... [%d/%d | %d fps]", best.playing, best.maxPlayers, best.fps), C.GreenBr)
+                hopTo(best.jobId, function(hok, err)
+                    if not hok then setStatus("Erro: " .. tostring(err), C.Red) end
+                end)
+            else
+                setStatus("Nenhum servidor encontrado", C.Red)
+            end
+        end
+    })
 end)
 
--- Auto-refresh (respeita rate limit)
+-- Auto-refresh silencioso a cada 12s
 task.spawn(function()
     while ScreenGui.Parent do
         task.wait(Config.RefreshInterval)
-        if ScreenGui.Parent and not State.isHopping then
-            if State.rateLimitUntil <= os.time() then
-                doScan({silent=true})
-            else
-                local w = State.rateLimitUntil - os.time()
-                print("[HopServer] Auto-refresh ignorado: rate limit por mais " .. w .. "s")
-            end
-        end
-    end
-end)
-
--- Countdown do rate limit na InfoBar
-task.spawn(function()
-    while ScreenGui.Parent do
-        task.wait(1)
-        if InfoText.Parent and State.rateLimitUntil > os.time() then
-            local w = State.rateLimitUntil - os.time()
-            InfoText.Text = "Rate limit da API Roblox. Aguardando " .. w .. "s..."
-            InfoText.TextColor3 = C.Yellow
-        end
-    end
-end)
-
--- Pulsar dot
-task.spawn(function()
-    local p=false
-    while ScreenGui.Parent do
-        task.wait(0.6)
-        if State.isScanning and StatusDot.Parent then
-            p=not p; tw(StatusDot,{BackgroundTransparency=p and 0.6 or 0},0.5)
+        if ScreenGui.Parent and not State.isHopping and State.rateLimitUntil <= os.time() then
+            doScan({silent=true})
         end
     end
 end)
@@ -812,6 +677,6 @@ MainFrame.Size=UDim2.new(0,0,0,0)
 MainFrame.Position=UDim2.new(0.5,0,0.5,0)
 tw(MainFrame,{Size=UDim2.new(0,WIN_W,0,WIN_H),Position=UDim2.new(0.5,-WIN_W/2,0.5,-WIN_H/2)},0.4,Enum.EasingStyle.Back)
 
-task.delay(0.15, function() doScan() end)
-setStatus("Buscando servidores...")
+task.delay(0.1, function() doScan() end)
+setStatus("Pronto | RCtrl para ocultar")
 print("[HopServer] Pronto. RCtrl para ocultar/mostrar.")
