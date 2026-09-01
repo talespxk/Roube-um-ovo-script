@@ -44,6 +44,75 @@ local State = {
 }
 
 -- ============================================================
+--  ANTI-KICK / ANTI-CHEAT BYPASS
+--  Tenta interceptar kicks client-side e bloquear remotos AC.
+--  Tudo dentro de pcall -- nao quebra se o executor nao suportar.
+-- ============================================================
+
+local function setupAntiKick()
+    -- 1. Hook __namecall para interceptar :Kick()
+    pcall(function()
+        local mt = getrawmetatable(game)
+        if not mt then return end
+
+        local oldNamecall = mt.__namecall
+        setreadonly(mt, false)
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod and getnamecallmethod() or ""
+            -- Bloqueia Kick no LocalPlayer
+            if method == "Kick" and self == LocalPlayer then
+                print("[HopServer] Anti-Kick: kick interceptado e bloqueado!")
+                return
+            end
+            -- Bloqueia FireServer em remotos com nomes de anti-cheat
+            if method == "FireServer" or method == "InvokeServer" then
+                local name = tostring(self.Name or ""):lower()
+                if name:find("ban") or name:find("kick") or name:find("cheat") or name:find("bac") or name:find("anticheat") then
+                    print("[HopServer] Anti-Kick: remoto AC bloqueado: " .. tostring(self.Name))
+                    return
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+        setreadonly(mt, true)
+        print("[HopServer] Anti-Kick: hook de namecall ativo.")
+    end)
+
+    -- 2. Hook hookfunction em Players.LocalPlayer.Kick diretamente
+    pcall(function()
+        if hookfunction then
+            local oldKick = LocalPlayer.Kick
+            hookfunction(oldKick, newcclosure(function(self, ...)
+                if self == LocalPlayer then
+                    print("[HopServer] Anti-Kick: Players:Kick bloqueado via hookfunction!")
+                    return
+                end
+                return oldKick(self, ...)
+            end))
+            print("[HopServer] Anti-Kick: hookfunction em Kick ativo.")
+        end
+    end)
+
+    -- 3. Monitora e destrói scripts de anti-cheat locais conhecidos
+    pcall(function()
+        local function checkScript(s)
+            if not s then return end
+            local name = tostring(s.Name or ""):lower()
+            if name:find("bac") or name:find("anticheat") or name:find("ac_") then
+                pcall(function() s:Destroy() end)
+                print("[HopServer] Anti-Kick: script AC destruido: " .. tostring(s.Name))
+            end
+        end
+        for _, s in ipairs(LocalPlayer:GetChildren()) do checkScript(s) end
+        for _, s in ipairs(game:GetService("ReplicatedFirst"):GetChildren()) do checkScript(s) end
+        LocalPlayer.ChildAdded:Connect(function(s) task.delay(0, function() checkScript(s) end) end)
+    end)
+end
+
+pcall(setupAntiKick)
+print("[HopServer] Anti-Kick iniciado.")
+
+-- ============================================================
 --  HTTP GET ROBUSTO E RAPIDO
 -- ============================================================
 
@@ -159,7 +228,7 @@ end
 local function queueAutoReload()
     if Config.SelfURL == "" then return end
     pcall(function()
-        local src = 'task.wait(3) pcall(function() loadstring(game:HttpGet("' .. Config.SelfURL .. '",true))() end)'
+        local src = 'task.wait(8) pcall(function() loadstring(game:HttpGet("' .. Config.SelfURL .. '",true))() end)'
         local fn = nil
         pcall(function() if type(queue_on_teleport) == "function" then fn = queue_on_teleport end end)
         if not fn then pcall(function() if syn and type(syn.queue_on_teleport) == "function" then fn = syn.queue_on_teleport end end) end
