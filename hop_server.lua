@@ -25,8 +25,8 @@ local LocalPlayer      = Players.LocalPlayer
 
 local Config = {
     PlaceId         = tostring(game.PlaceId ~= 0 and game.PlaceId or 107778070777162),
-    RefreshInterval = 8,
-    MaxPages        = 3,
+    RefreshInterval = 45,  -- Roblox API tem rate limit; nao diminua demais
+    MaxPages        = 1,   -- 100 servidores por scan (ja e suficiente)
     ToggleKey       = Enum.KeyCode.RightControl,
     SelfURL         = "https://raw.githubusercontent.com/talespxk/Roube-um-ovo-script/refs/heads/main/hop_server.lua",
 }
@@ -35,11 +35,12 @@ print("[HopServer] PlaceId: " .. Config.PlaceId)
 print("[HopServer] JobId:   " .. tostring(game.JobId))
 
 local State = {
-    servers    = {},
-    isScanning = false,
-    isHopping  = false,
-    uiVisible  = true,
-    minimized  = false,
+    servers        = {},
+    isScanning     = false,
+    isHopping      = false,
+    uiVisible      = true,
+    minimized      = false,
+    rateLimitUntil = 0,   -- os.time() ate quando nao podemos chamar a API
 }
 
 -- ============================================================
@@ -196,10 +197,18 @@ local function fetchServers(onDone, onProgress)
             end
 
             if not data.data then
-                -- API retornou JSON mas sem campo "data" -- provavelmente erro da Roblox
+                -- Rate limit ou erro da Roblox API
                 fetchOk  = false
-                fetchErr = "API sem campo 'data': " .. raw:sub(1, 120)
-                print("[HopServer] ERRO API: campo data ausente. Resposta: " .. raw:sub(1, 200))
+                fetchErr = "API sem campo 'data': " .. raw:sub(1, 80)
+                -- Detecta se e rate limit (code:0 com message vazio)
+                local isRateLimit = raw:find('"code":0') ~= nil
+                if isRateLimit then
+                    State.rateLimitUntil = os.time() + 60
+                    fetchErr = "RATE LIMIT - aguardando 60s antes de tentar novamente"
+                    print("[HopServer] RATE LIMIT detectado. Pausa de 60s automatica.")
+                else
+                    print("[HopServer] ERRO API: " .. raw:sub(1, 120))
+                end
                 break
             end
 
@@ -218,6 +227,11 @@ local function fetchServers(onDone, onProgress)
             end
 
             cursor = data.nextPageCursor
+
+            -- Pausa entre paginas para evitar rate limit
+            if cursor and cursor ~= "" and page < Config.MaxPages then
+                task.wait(1)
+            end
 
         until (not cursor or cursor == "") or page >= Config.MaxPages
 
@@ -649,6 +663,20 @@ end
 
 local function doScan(opts)
     opts = opts or {}
+
+    -- Verifica rate limit
+    local now = os.time()
+    if State.rateLimitUntil > now then
+        local wait = State.rateLimitUntil - now
+        local msg = "Rate limit: aguarde " .. wait .. "s para atualizar"
+        InfoText.Text = msg
+        InfoText.TextColor3 = C.Yellow
+        tw(StatusDot,{BackgroundColor3=C.Yellow},0.15)
+        if not opts.silent then setStatus(msg, C.Yellow) end
+        if opts.onDone then opts.onDone(State.servers, false) end
+        return
+    end
+
     if State.isScanning then
         if opts.onDone then opts.onDone(State.servers, true, nil) end
         return
@@ -679,10 +707,18 @@ local function doScan(opts)
                 if not opts.silent then setStatus("Sem outros servidores",C.Yellow) end
             else
                 tw(StatusDot,{BackgroundColor3=C.Red},0.2)
-                local short = tostring(errMsg or "?"):sub(1,60)
-                InfoText.Text="Erro: "..short
-                InfoText.TextColor3=C.Red
-                if not opts.silent then setStatus("Erro - veja o console do executor",C.Red) end
+                local isRL = (errMsg or ""):find("RATE LIMIT") ~= nil
+                if isRL then
+                    InfoText.Text = "Rate limit da API Roblox. Aguarde 60s e tente novamente."
+                    InfoText.TextColor3 = C.Yellow
+                    tw(StatusDot,{BackgroundColor3=C.Yellow},0.2)
+                    if not opts.silent then setStatus("Rate limit: aguarde 60s", C.Yellow) end
+                else
+                    local short = tostring(errMsg or "?"):sub(1,55)
+                    InfoText.Text="Erro: "..short
+                    InfoText.TextColor3=C.Red
+                    if not opts.silent then setStatus("Erro - veja o console",C.Red) end
+                end
             end
             if opts.onDone then opts.onDone(servers, ok) end
         end,
@@ -699,6 +735,12 @@ end)
 
 HopBestBtn.MouseButton1Click:Connect(function()
     if State.isHopping or State.isScanning then return end
+    -- Verifica rate limit antes de pular
+    if State.rateLimitUntil > os.time() then
+        local w = State.rateLimitUntil - os.time()
+        setStatus("Rate limit: aguarde "..w.."s", C.Yellow)
+        return
+    end
     HopBestBtn.Text="Verificando..."; HopBestBtn.Active=false
     setStatus("Re-escaneando antes de pular...",C.Yellow)
     doScan({onDone=function(servers, ok)
@@ -710,12 +752,29 @@ HopBestBtn.MouseButton1Click:Connect(function()
     end})
 end)
 
--- Auto-refresh
+-- Auto-refresh (respeita rate limit)
 task.spawn(function()
     while ScreenGui.Parent do
         task.wait(Config.RefreshInterval)
         if ScreenGui.Parent and not State.isHopping then
-            doScan({silent=true})
+            if State.rateLimitUntil <= os.time() then
+                doScan({silent=true})
+            else
+                local w = State.rateLimitUntil - os.time()
+                print("[HopServer] Auto-refresh ignorado: rate limit por mais " .. w .. "s")
+            end
+        end
+    end
+end)
+
+-- Countdown do rate limit na InfoBar
+task.spawn(function()
+    while ScreenGui.Parent do
+        task.wait(1)
+        if InfoText.Parent and State.rateLimitUntil > os.time() then
+            local w = State.rateLimitUntil - os.time()
+            InfoText.Text = "Rate limit da API Roblox. Aguardando " .. w .. "s..."
+            InfoText.TextColor3 = C.Yellow
         end
     end
 end)
