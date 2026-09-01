@@ -554,8 +554,7 @@ local function renderList(servers)
 
     if #servers == 0 then
         make("TextLabel",{
-            Text="Nenhum servidor encontrado.
-Clique em [+] Atualizar para buscar.",
+            Text="Nenhum servidor encontrado.\\nClique em [+] Atualizar para buscar.",
             Size=UDim2.new(1,0,0,70), BackgroundTransparency=1,
             TextSize=11, Font=Enum.Font.Gotham, TextColor3=C.TextDim,
             TextWrapped=true, TextXAlignment=Enum.TextXAlignment.Center, LayoutOrder=1,
