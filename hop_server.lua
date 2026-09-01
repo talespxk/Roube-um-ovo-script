@@ -1,4 +1,4 @@
-﻿--[[
+--[[
     HOP SERVER v1.0 — Roube um Ovo
     ══════════════════════════════════════════════════════════════════════
     • Busca servidores públicos via API do Roblox
