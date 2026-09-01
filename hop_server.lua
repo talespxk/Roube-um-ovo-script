@@ -1,21 +1,18 @@
 --[[
-    HOP SERVER v1.5 -- Roube um Ovo (Resilient Edition)
+    HOP SERVER v1.6 -- Roube um Ovo (Fast & Resilient)
     -----------------------------------------------------------------------
+    - Execucao imediata no executor (sem esperas infinitas).
     - Busca instantanea de servidores publicos (100 servidores ordenados pelo menor numero de players).
     - Design Fluent UI dark com ranking (#1, #2, #3), FPS, Ping e Job ID.
     - Detector de servidor cheio/fechado via TeleportInitFailed com blacklist automatica.
     - Timeout de 5s para nunca travar a interface em caso de falha de teleporte.
     - Botao "Ir ao Menor" instantaneo e botao manual por servidor com reset automatico.
-    - Arquitetura stealth (cloneref, gethui, nomes randomizados, sem hooks de metametodos).
-    - Auto-reload via queue_on_teleport com espera de carregamento completo do jogo.
+    - Arquitetura stealth pura (cloneref, gethui, nomes randomizados, sem hooks de metametodos).
+    - Auto-reload via queue_on_teleport.
     - Tecla RightControl para mostrar/ocultar.
 ]]
 
-if not game:IsLoaded() then
-    game.Loaded:Wait()
-end
-
-print("========== CARREGANDO: HOP SERVER v1.5 (RESILIENT) ==========")
+print("========== CARREGANDO: HOP SERVER v1.6 ==========")
 
 -- ============================================================
 --  SERVICOS SEGUROS
@@ -94,8 +91,8 @@ local function getGuiContainer()
             container = (cloneref and cloneref(cg)) or cg
         end)
     end
-    if not container then
-        container = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not container and LocalPlayer then
+        container = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 3)
     end
     return container
 end
@@ -245,7 +242,7 @@ end
 local function queueAutoReload()
     if Config.SelfURL == "" then return end
     pcall(function()
-        local src = 'repeat task.wait(1) until game:IsLoaded() task.wait(3) pcall(function() loadstring(game:HttpGet("' .. Config.SelfURL .. '",true))() end)'
+        local src = 'task.wait(4) pcall(function() loadstring(game:HttpGet("' .. Config.SelfURL .. '",true))() end)'
         local q = nil
         pcall(function()
             if type(queue_on_teleport) == "function" then q = queue_on_teleport end
