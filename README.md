@@ -1,14 +1,18 @@
-﻿# 🥚 Roube um Ovo - Fluent Stealth Hub
+# 🥚 Roube um Ovo - Fluent Stealth Hub
 
 Um script completo, otimizado e furtivo para o jogo **Roube um Ovo** no Roblox.
 
 ## 🚀 Como Executar (Loadstring)
 
-Cole o seguinte código no seu executor de Roblox:
-
-\\\lua
+### 🥚 Script Principal (Auto-Steal Hub):
+```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/talespxk/Roube-um-ovo-script/refs/heads/main/main.lua"))()
-\\\
+```
+
+### ⚡ Hop Server (Troca Rápida de Servidores):
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/talespxk/Roube-um-ovo-script/refs/heads/main/hop_server.lua"))()
+```
 
 ---
 
