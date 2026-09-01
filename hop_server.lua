@@ -1,5 +1,5 @@
 --[[
-    HOP SERVER v1.0 -- Roube um Ovo
+    HOP SERVER v1.1 -- Roube um Ovo
     Busca servidores publicos via API do Roblox.
     Ordena pelo menor numero de jogadores (empate: maior FPS, menor ping).
     Atualiza a lista a cada 8 segundos.
@@ -8,7 +8,7 @@
     Tecla RightControl para mostrar/ocultar.
 ]]
 
-print("========== CARREGANDO: HOP SERVER v1.0 ==========")
+print("========== CARREGANDO: HOP SERVER v1.1 ==========")
 
 -- ============================================================
 --  SERVICOS & CONFIGURACAO
@@ -28,7 +28,7 @@ local UserInputService = safeService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
 local Config = {
-    PlaceId         = (game.PlaceId ~= 0) and game.PlaceId or 107778070777162,
+    PlaceId         = (game.PlaceId and game.PlaceId ~= 0) and tostring(game.PlaceId) or "107778070777162",
     RefreshInterval = 8,
     MaxPages        = 5,
     ToggleKey       = Enum.KeyCode.RightControl,
@@ -48,7 +48,7 @@ local State = {
 }
 
 -- ============================================================
---  UTILIDADES
+--  UTILIDADES & HTTP RESILIENTE
 -- ============================================================
 
 local function safeGet(fn)
@@ -92,11 +92,28 @@ local function make(cls, props, parent)
     return o
 end
 
--- ============================================================
---  BUSCA DE SERVIDORES (API)
--- ============================================================
+-- HTTP Fetcher compativel com multiplos executores (syn, http_request, request, game:HttpGet)
+local httpCustom = (syn and syn.request) or (http and http.request) or http_request or request
+local function fetchUrl(url)
+    if type(httpCustom) == "function" then
+        local response = httpCustom({
+            Url = url,
+            Method = "GET",
+            Headers = {
+                ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                ["Accept"] = "application/json"
+            }
+        })
+        if response and response.Body then
+            return response.Body
+        end
+    end
+    return game:HttpGet(url)
+end
 
-local API_URL = "https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100&cursor=%s"
+-- ============================================================
+--  BUSCA DE SERVIDORES (ROBLOX API)
+-- ============================================================
 
 local function fetchServers(onDone, onProgress)
     if State.isScanning then
@@ -106,11 +123,13 @@ local function fetchServers(onDone, onProgress)
     State.isScanning = true
 
     task.spawn(function()
-        local all    = {}
-        local cursor = ""
-        local page   = 0
-        local ok     = true
-        local jobId  = tostring(game.JobId)
+        local all      = {}
+        local cursor   = ""
+        local page     = 0
+        local ok       = true
+        local lastErr  = nil
+        local currentJobId = tostring(game.JobId)
+        local placeIdStr = tostring(Config.PlaceId)
 
         repeat
             page = page + 1
@@ -121,15 +140,34 @@ local function fetchServers(onDone, onProgress)
                 )
             end
 
-            local url = string.format(API_URL, Config.PlaceId, cursor)
-            local rawOk, raw = pcall(game.HttpGet, game, url)
-            if not rawOk or not raw then ok = false; break end
+            local url = "https://games.roblox.com/v1/games/" .. placeIdStr .. "/servers/Public?sortOrder=Asc&limit=100"
+            if cursor and cursor ~= "" then
+                local encOk, encCursor = pcall(function() return HttpService:UrlEncode(cursor) end)
+                url = url .. "&cursor=" .. (encOk and encCursor or cursor)
+            end
 
-            local decOk, data = pcall(HttpService.JSONDecode, HttpService, raw)
-            if not decOk or not data or not data.data then ok = false; break end
+            local rawOk, raw = pcall(function()
+                return fetchUrl(url)
+            end)
+
+            if not rawOk or not raw or raw == "" then
+                ok = false
+                lastErr = raw or "Falha no HttpGet"
+                break
+            end
+
+            local decOk, data = pcall(function()
+                return HttpService:JSONDecode(raw)
+            end)
+
+            if not decOk or not data or not data.data then
+                ok = false
+                lastErr = "Erro ao decodificar JSON"
+                break
+            end
 
             for _, sv in ipairs(data.data) do
-                if sv.id and sv.id ~= jobId then
+                if sv.id and tostring(sv.id) ~= currentJobId then
                     table.insert(all, {
                         jobId      = tostring(sv.id),
                         playing    = tonumber(sv.playing)    or 0,
@@ -143,7 +181,7 @@ local function fetchServers(onDone, onProgress)
             cursor = data.nextPageCursor
         until (not cursor or cursor == "") or page >= Config.MaxPages
 
-        -- Menor players primeiro; empate: maior FPS; empate: menor ping
+        -- Ordenacao: menor players primeiro; empate -> maior FPS -> menor ping
         table.sort(all, function(a, b)
             if a.playing ~= b.playing then return a.playing < b.playing end
             if a.fps     ~= b.fps     then return a.fps     > b.fps     end
@@ -154,7 +192,7 @@ local function fetchServers(onDone, onProgress)
         State.isScanning = false
 
         if onProgress then onProgress("Concluido", 1) end
-        if onDone     then onDone(all, ok)            end
+        if onDone     then onDone(all, ok, lastErr)   end
     end)
 end
 
@@ -189,8 +227,9 @@ local function hopTo(jobId, onResult)
     if State.isHopping then return end
     State.isHopping = true
     queueAutoReload()
+    local targetPlaceId = tonumber(Config.PlaceId) or game.PlaceId
     local ok, err = pcall(function()
-        TeleportService:TeleportToPlaceInstance(Config.PlaceId, jobId, LocalPlayer)
+        TeleportService:TeleportToPlaceInstance(targetPlaceId, jobId, LocalPlayer)
     end)
     if not ok then
         State.isHopping = false
@@ -199,7 +238,7 @@ local function hopTo(jobId, onResult)
 end
 
 -- ============================================================
---  CORES
+--  CORES (PALETA FLUENT)
 -- ============================================================
 
 local C = {
@@ -222,7 +261,7 @@ local C = {
 }
 
 -- ============================================================
---  GUI
+--  INTERFACE GRAFICA
 -- ============================================================
 
 pcall(function()
@@ -272,7 +311,6 @@ local TitleBar = make("Frame", {
     ZIndex           = 3,
 }, MainFrame)
 make("UICorner", { CornerRadius = UDim.new(0, 14) }, TitleBar)
--- preenche cantos inferiores do titlebar
 make("Frame", {
     Size             = UDim2.new(1, 0, 0, 14),
     Position         = UDim2.new(0, 0, 1, -14),
@@ -343,7 +381,7 @@ for _, btn in ipairs({MinBtn, CloseBtn}) do
     end)
 end
 
--- Drag
+-- Arrastar Janela (Drag)
 local dragging, dragStart, startPos
 TitleBar.InputBegan:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -459,7 +497,7 @@ local ProgBar = make("Frame", {
 }, ProgBG)
 make("UICorner", { CornerRadius = UDim.new(0, 2) }, ProgBar)
 
--- Cabecalho
+-- Cabecalho da tabela
 local HeaderRow = make("Frame", {
     Size = UDim2.new(1, -24, 0, 22),
     Position = UDim2.new(0, 12, 0, 97),
@@ -549,7 +587,7 @@ local CountLabel = make("TextLabel", {
 }, StatusBar)
 
 -- ============================================================
---  RENDERIZACAO DA LISTA
+--  RENDERIZACAO DA LISTA DE SERVIDORES
 -- ============================================================
 
 local function pColor(playing, max)
@@ -588,7 +626,7 @@ local function renderList(servers)
 
     if #servers == 0 then
         make("TextLabel", {
-            Text = "Nenhum servidor encontrado. Clique em [+] Atualizar.",
+            Text = "Nenhum servidor encontrado.\nClique em [+] Atualizar.",
             Size = UDim2.new(1, 0, 0, 64),
             BackgroundTransparency = 1,
             TextSize = 12,
@@ -747,7 +785,7 @@ local function renderList(servers)
                 GoBtn.Text = ">>"
                 GoBtn.Active = true
                 if not hok then
-                    StatusText.Text = "Erro: " .. err
+                    StatusText.Text = "Erro: " .. tostring(err)
                     StatusText.TextColor3 = C.Red
                 end
             end)
@@ -778,8 +816,8 @@ local function doScan(opts)
     end
 
     fetchServers(
-        function(servers, ok)
-            if ok then
+        function(servers, ok, lastErr)
+            if ok and #servers > 0 then
                 tw(StatusDot, { BackgroundColor3 = C.GreenBr }, 0.2)
                 local t = os.date("%H:%M:%S")
                 InfoText.Text = string.format(
@@ -796,9 +834,16 @@ local function doScan(opts)
                     end
                 end)
                 if not opts.silent then setStatus("Lista atualizada") end
+            elseif ok and #servers == 0 then
+                tw(StatusDot, { BackgroundColor3 = C.Yellow }, 0.2)
+                InfoText.Text = "Nenhum outro servidor disponivel no momento."
+                InfoText.TextColor3 = C.Yellow
+                renderList({})
+                if not opts.silent then setStatus("Sem outros servidores", C.Yellow) end
             else
                 tw(StatusDot, { BackgroundColor3 = C.Red }, 0.2)
-                InfoText.Text = "Erro ao buscar. Verifique sua conexao."
+                local errSnippet = tostring(lastErr or "Erro desconhecido"):sub(1, 35)
+                InfoText.Text = "Erro: " .. errSnippet
                 InfoText.TextColor3 = C.Red
                 if not opts.silent then setStatus("Falha na conexao", C.Red) end
             end
@@ -838,13 +883,13 @@ HopBestBtn.MouseButton1Click:Connect(function()
                 best.playing, best.maxPlayers, best.fps
             ), C.GreenBr)
             hopTo(best.jobId, function(hok, err)
-                if not hok then setStatus("Erro: " .. err, C.Red) end
+                if not hok then setStatus("Erro: " .. tostring(err), C.Red) end
             end)
         end
     })
 end)
 
--- Auto-refresh silencioso
+-- Auto-refresh silencioso a cada 8 segundos
 task.spawn(function()
     while ScreenGui.Parent do
         task.wait(Config.RefreshInterval)
@@ -912,6 +957,6 @@ tw(MainFrame, {
 
 task.delay(0.15, function() doScan() end)
 setStatus("Buscando servidores...")
-print("========== HOP SERVER v1.0 CARREGADO ==========")
+print("========== HOP SERVER v1.1 CARREGADO ==========")
 print("[HopServer] PlaceId: " .. tostring(Config.PlaceId))
 print("[HopServer] JobId atual: " .. tostring(game.JobId))
