@@ -1,10 +1,10 @@
 --[[
-    HOP SERVER v1.8 -- Roube um Ovo (Settings Persistence Edition)
+    HOP SERVER v1.9 -- Roube um Ovo (Manual & Auto BFLoader Edition)
     -----------------------------------------------------------------------
     - Busca instantanea de servidores publicos (100 servidores ordenados pelo menor numero de players).
     - Design Fluent UI dark com ranking (#1, #2, #3), FPS, Ping e Job ID.
-    - Toggle no Menu: Auto-Carregar BFLoader automaticamente apos o Hop (com persistencia de configuracao).
-    - Configuracao salva no getgenv() e em arquivo local para manter sua escolha apos o Hop.
+    - Toggle no Menu: Auto-Carregar BFLoader automaticamente apos o Hop (com persistencia).
+    - Botao no Menu: [⚡ Executar BFLoader] para carregar o loader manualmente a qualquer momento.
     - Detector de servidor cheio/fechado via TeleportInitFailed com blacklist automatica.
     - Timeout de 5s para nunca travar a interface em caso de falha de teleporte.
     - Botao "Ir ao Menor" instantaneo e botao manual por servidor com reset automatico.
@@ -12,7 +12,7 @@
     - Tecla RightControl para mostrar/ocultar.
 ]]
 
-print("========== CARREGANDO: HOP SERVER v1.8 ==========")
+print("========== CARREGANDO: HOP SERVER v1.9 ==========")
 
 -- ============================================================
 --  SERVICOS SEGUROS
@@ -526,24 +526,18 @@ local ScanBtn = makeBtn("[+] Atualizar", C.Card, 108, 1, ActionsRow)
 HopBestBtn    = makeBtn("[>] Ir ao Menor", C.Accent, 148, 2, ActionsRow)
 make("UIStroke",{Color=C.Border,Thickness=1},ScanBtn)
 
--- Toggle de Auto-Carregar BFLoader
+-- Linha de BFLoader (Toggle Auto-Hop + Botao Executar Manual)
 local ToggleRow = make("Frame", {
     Name="ToggleRow",
-    Size=UDim2.new(1,-24,0,32), Position=UDim2.new(0,12,0,52),
+    Size=UDim2.new(1,-24,0,34), Position=UDim2.new(0,12,0,52),
     BackgroundColor3=C.Card, BorderSizePixel=0,
 }, Body)
 make("UICorner",{CornerRadius=UDim.new(0,8)},ToggleRow)
 make("UIStroke",{Color=C.Border,Thickness=1},ToggleRow)
 
-local ToggleLabel = make("TextLabel", {
-    Text="Auto-carregar BFLoader no hop",
-    Size=UDim2.new(1,-60,1,0), Position=UDim2.new(0,12,0,0),
-    BackgroundTransparency=1, TextSize=11, Font=Enum.Font.GothamBold,
-    TextColor3=C.Text, TextXAlignment=Enum.TextXAlignment.Left,
-}, ToggleRow)
-
+-- Switch Auto-Hop
 local SwitchPill = make("TextButton", {
-    Text="", Size=UDim2.new(0,40,0,20), Position=UDim2.new(1,-48,0.5,-10),
+    Text="", Size=UDim2.new(0,36,0,20), Position=UDim2.new(0,10,0.5,-10),
     BackgroundColor3=State.autoLoadBFLoader and C.Accent or C.Border,
     BorderSizePixel=0, AutoButtonColor=false,
 }, ToggleRow)
@@ -551,15 +545,22 @@ make("UICorner",{CornerRadius=UDim.new(0,10)},SwitchPill)
 
 local SwitchThumb = make("Frame", {
     Size=UDim2.new(0,14,0,14),
-    Position=State.autoLoadBFLoader and UDim2.new(1,-17,0.5,-7) or UDim2.new(0,3,0.5,-7),
+    Position=State.autoLoadBFLoader and UDim2.new(1,-16,0.5,-7) or UDim2.new(0,2,0.5,-7),
     BackgroundColor3=Color3.fromRGB(255,255,255), BorderSizePixel=0,
 }, SwitchPill)
 make("UICorner",{CornerRadius=UDim.new(0.5,0)},SwitchThumb)
 
+local ToggleLabel = make("TextLabel", {
+    Text="Auto BF no hop",
+    Size=UDim2.new(0,100,1,0), Position=UDim2.new(0,52,0,0),
+    BackgroundTransparency=1, TextSize=11, Font=Enum.Font.GothamBold,
+    TextColor3=C.Text, TextXAlignment=Enum.TextXAlignment.Left,
+}, ToggleRow)
+
 local function updateSwitchVisual()
     local on = State.autoLoadBFLoader
     tw(SwitchPill, { BackgroundColor3 = on and C.Accent or C.Border }, 0.15)
-    tw(SwitchThumb, { Position = on and UDim2.new(1,-17,0.5,-7) or UDim2.new(0,3,0.5,-7) }, 0.15)
+    tw(SwitchThumb, { Position = on and UDim2.new(1,-16,0.5,-7) or UDim2.new(0,2,0.5,-7) }, 0.15)
 end
 
 local function toggleBFLoader()
@@ -572,15 +573,44 @@ local function toggleBFLoader()
 end
 
 SwitchPill.MouseButton1Click:Connect(toggleBFLoader)
-ToggleRow.InputBegan:Connect(function(inp)
-    if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-        toggleBFLoader()
-    end
+
+-- Botao de Execucao Manual do BFLoader
+local ManualBFBtn = make("TextButton", {
+    Text="⚡ Executar BFLoader",
+    Size=UDim2.new(0,150,0,26), Position=UDim2.new(1,-158,0.5,-13),
+    BackgroundColor3=C.CardHov, TextColor3=C.Text,
+    TextSize=10, Font=Enum.Font.GothamBold, BorderSizePixel=0, AutoButtonColor=false,
+}, ToggleRow)
+make("UICorner",{CornerRadius=UDim.new(0,7)},ManualBFBtn)
+make("UIStroke",{Color=C.Border,Thickness=1},ManualBFBtn)
+
+ManualBFBtn.MouseEnter:Connect(function() tw(ManualBFBtn,{BackgroundColor3=C.Accent},0.12) end)
+ManualBFBtn.MouseLeave:Connect(function() tw(ManualBFBtn,{BackgroundColor3=C.CardHov},0.12) end)
+
+ManualBFBtn.MouseButton1Click:Connect(function()
+    ManualBFBtn.Text = "Carregando..."
+    ManualBFBtn.Active = false
+    setStatus("Executando BFLoader...", C.Yellow)
+    task.spawn(function()
+        local ok, err = pcall(function()
+            loadstring(game:HttpGet(Config.BFLoaderURL, true))()
+        end)
+        task.wait(0.5)
+        ManualBFBtn.Text = "⚡ Executar BFLoader"
+        ManualBFBtn.Active = true
+        if ok then
+            setStatus("BFLoader executado com sucesso!", C.GreenBr)
+            print("[HopServer] BFLoader carregado com sucesso.")
+        else
+            setStatus("Erro ao carregar BFLoader", C.Red)
+            print("[HopServer] Erro ao carregar BFLoader: " .. tostring(err))
+        end
+    end)
 end)
 
 -- InfoBar
 local InfoBar = make("Frame", {
-    Size=UDim2.new(1,-24,0,28), Position=UDim2.new(0,12,0,90),
+    Size=UDim2.new(1,-24,0,28), Position=UDim2.new(0,12,0,92),
     BackgroundColor3=C.Card, BorderSizePixel=0,
 }, Body)
 make("UICorner",{CornerRadius=UDim.new(0,8)},InfoBar)
@@ -599,7 +629,7 @@ InfoText = make("TextLabel", {
 
 -- Progress bar
 local ProgBG = make("Frame", {
-    Size=UDim2.new(1,-24,0,2), Position=UDim2.new(0,12,0,122),
+    Size=UDim2.new(1,-24,0,2), Position=UDim2.new(0,12,0,124),
     BackgroundColor3=C.Border, BorderSizePixel=0,
 }, Body)
 make("UICorner",{CornerRadius=UDim.new(0,2)},ProgBG)
@@ -608,7 +638,7 @@ make("UICorner",{CornerRadius=UDim.new(0,2)},ProgBar)
 
 -- Cabecalho da lista
 local HeaderRow = make("Frame", {
-    Size=UDim2.new(1,-24,0,22), Position=UDim2.new(0,12,0,128), BackgroundTransparency=1,
+    Size=UDim2.new(1,-24,0,22), Position=UDim2.new(0,12,0,130), BackgroundTransparency=1,
 }, Body)
 local function hdr(t,x,w,al)
     return make("TextLabel",{Text=t,Size=UDim2.new(0,w,1,0),Position=UDim2.new(0,x,0,0),
@@ -618,11 +648,11 @@ end
 hdr("#",0,22) hdr("PLAYERS",26,90) hdr("FPS",122,42)
 hdr("PING",170,48) hdr("JOB ID",222,90) hdr("IR",326,28,Enum.TextXAlignment.Center)
 
-make("Frame",{Size=UDim2.new(1,-24,0,1),Position=UDim2.new(0,12,0,153),BackgroundColor3=C.Border,BorderSizePixel=0},Body)
+make("Frame",{Size=UDim2.new(1,-24,0,1),Position=UDim2.new(0,12,0,155),BackgroundColor3=C.Border,BorderSizePixel=0},Body)
 
 -- Lista de Servidores
 local ListFrame = make("ScrollingFrame", {
-    Name="ServerList", Size=UDim2.new(1,-24,1,-225), Position=UDim2.new(0,12,0,158),
+    Name="ServerList", Size=UDim2.new(1,-24,1,-225), Position=UDim2.new(0,12,0,160),
     BackgroundTransparency=1, ScrollBarThickness=4, ScrollBarImageColor3=C.Accent,
     ScrollBarImageTransparency=0.3, BorderSizePixel=0,
     CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y,
