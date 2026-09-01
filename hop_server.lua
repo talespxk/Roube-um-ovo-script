@@ -1,21 +1,21 @@
 --[[
-    HOP SERVER v1.9 -- Roube um Ovo (Manual & Auto BFLoader Edition)
+    HOP SERVER v2.0 -- Roube um Ovo (Anti-BAC & Stealth Edition)
     -----------------------------------------------------------------------
-    - Busca instantanea de servidores publicos (100 servidores ordenados pelo menor numero de players).
-    - Design Fluent UI dark com ranking (#1, #2, #3), FPS, Ping e Job ID.
-    - Toggle no Menu: Auto-Carregar BFLoader automaticamente apos o Hop (com persistencia).
-    - Botao no Menu: [⚡ Executar BFLoader] para carregar o loader manualmente a qualquer momento.
-    - Detector de servidor cheio/fechado via TeleportInitFailed com blacklist automatica.
-    - Timeout de 5s para nunca travar a interface em caso de falha de teleporte.
-    - Botao "Ir ao Menor" instantaneo e botao manual por servidor com reset automatico.
-    - Arquitetura stealth pura (cloneref, gethui, nomes randomizados, sem hooks de metametodos).
-    - Tecla RightControl para mostrar/ocultar.
+    MUDANCAS v2.0 (Anti-BAC):
+    - queue_on_teleport Seguro: Removido script longo/concatenado da fila.
+      Usa flag persistente em getgenv() para carregar o BFLoader em segundo plano de forma protegida.
+    - TeleportToPlaceInstance: Removido LocalPlayer como 3o argumento para evitar hooks internos.
+    - httpGet: Removido headers customizados/spoofing (User-Agent).
+    - Delays seguros pós-join para evitar conflito com inicialização de anti-cheat.
+    - Botão Manual: [⚡ Executar BFLoader] disponível diretamente na interface.
+    - Persistência contínua da opção do usuário em memória e arquivo local JSON.
+    - Tecla RightControl para mostrar/ocultar a UI.
 ]]
 
-print("========== CARREGANDO: HOP SERVER v1.9 ==========")
+print("========== CARREGANDO: HOP SERVER v2.0 ==========")
 
 -- ============================================================
---  SERVICOS SEGUROS
+--  SERVIÇOS SEGUROS
 -- ============================================================
 
 local function safeService(name)
@@ -32,18 +32,18 @@ local LocalPlayer      = Players.LocalPlayer
 
 local Config = {
     PlaceId         = tostring(game.PlaceId ~= 0 and game.PlaceId or 107778070777162),
-    RefreshInterval = 12,
+    RefreshInterval = 15,
     ToggleKey       = Enum.KeyCode.RightControl,
     SelfURL         = "https://raw.githubusercontent.com/talespxk/Roube-um-ovo-script/refs/heads/main/hop_server.lua",
     BFLoaderURL     = "https://raw.githubusercontent.com/hanniii1/Loader/refs/heads/main/BFLoader.lua",
     SettingsFile    = "hop_server_settings.json",
 }
 
-print("[HopServer] PlaceId: " .. Config.PlaceId)
-print("[HopServer] JobId:   " .. tostring(game.JobId))
+print("[HopServer v2.0] PlaceId: " .. Config.PlaceId)
+print("[HopServer v2.0] JobId:   " .. tostring(game.JobId))
 
 -- ============================================================
---  PERSISTENCIA DE CONFIGURACOES (MEMORIA & DISCO)
+--  PERSISTÊNCIA DE CONFIGURAÇÕES (MEMÓRIA & ARQUIVO)
 -- ============================================================
 
 local function loadSavedSettings()
@@ -51,8 +51,7 @@ local function loadSavedSettings()
     if env.HopServer_AutoLoadBFLoader ~= nil then
         return env.HopServer_AutoLoadBFLoader == true
     end
-
-    local val = false -- padrao desativado por seguranca
+    local val = false -- Padrão desativado para máxima segurança
     pcall(function()
         if readfile and isfile and isfile(Config.SettingsFile) then
             local raw = readfile(Config.SettingsFile)
@@ -71,29 +70,53 @@ local function saveCurrentSettings(val)
     env.HopServer_AutoLoadBFLoader = val
     pcall(function()
         if writefile then
-            local data = { autoLoadBFLoader = val }
-            writefile(Config.SettingsFile, HttpService:JSONEncode(data))
+            writefile(Config.SettingsFile, HttpService:JSONEncode({ autoLoadBFLoader = val }))
         end
     end)
 end
 
+-- ============================================================
+--  VERIFICAÇÃO PÓS-HOP DE SEGUNDO ESTÁGIO (STEALTH)
+-- ============================================================
+
+local function checkAndHandlePostHop()
+    local env = (getgenv and getgenv()) or _G
+    if env.HopServer_LoadBFAfterHop == true then
+        env.HopServer_LoadBFAfterHop = nil
+        print("[HopServer v2.0] Flag pós-hop detectada. Aguardando estabilização para carregar BFLoader...")
+        task.delay(10, function()
+            local ok, err = pcall(function()
+                loadstring(game:HttpGet(Config.BFLoaderURL, true))()
+            end)
+            if ok then
+                print("[HopServer v2.0] BFLoader carregado com sucesso após hop.")
+            else
+                print("[HopServer v2.0] Erro ao carregar BFLoader pós-hop: " .. tostring(err))
+            end
+        end)
+    end
+end
+
 local State = {
     servers             = {},
-    failedServers       = {},  -- servidores cheios/fechados ignorados
+    failedServers       = {},
     isScanning          = false,
     isHopping           = false,
     lastAttemptedJobId  = nil,
-    autoLoadBFLoader    = loadSavedSettings(), -- Carrega a escolha salva pelo usuario
+    autoLoadBFLoader    = loadSavedSettings(),
     uiVisible           = true,
     minimized           = false,
     lastRequestAt       = 0,
 }
 local MIN_REQUEST_INTERVAL = 4
 
-print("[HopServer] BFLoader auto-load: " .. (State.autoLoadBFLoader and "ATIVADO" or "DESATIVADO"))
+print("[HopServer v2.0] BFLoader auto-load: " .. (State.autoLoadBFLoader and "ATIVADO" or "DESATIVADO"))
+
+-- Executa rotina pós-hop de forma assíncrona
+checkAndHandlePostHop()
 
 -- ============================================================
---  UTILITARIOS DE SEGURANCA & GUI CONTAINER (STEALTH)
+--  UTILITÁRIOS DE GUI & STEALTH
 -- ============================================================
 
 local function getRandomName()
@@ -121,9 +144,7 @@ end
 local function getGuiContainer()
     local container = nil
     pcall(function()
-        if gethui then
-            container = gethui()
-        end
+        if gethui then container = gethui() end
     end)
     if not container then
         pcall(function()
@@ -150,7 +171,6 @@ local function make(cls, props, parent)
     return o
 end
 
--- Declaracoes adiantadas de UI
 local renderList
 local setStatus
 local InfoText
@@ -160,7 +180,7 @@ local CountLabel
 local HopBestBtn
 
 -- ============================================================
---  HTTP GET ROBUSTO (SEM COOKIES DE CONTA)
+--  HTTP GET SEGURO (SEM HEADERS CUSTOMIZADOS)
 -- ============================================================
 
 local function httpGet(url)
@@ -173,12 +193,8 @@ local function httpGet(url)
 
     if fn then
         local ok, res = pcall(fn, {
-            Url     = url,
-            Method  = "GET",
-            Headers = {
-                ["User-Agent"] = "Roblox/WinInet",
-                ["Accept"]     = "application/json",
-            },
+            Url    = url,
+            Method = "GET",
         })
         if ok and res and type(res.Body) == "string" and #res.Body > 5 then
             return res.Body
@@ -187,12 +203,11 @@ local function httpGet(url)
 
     local ok, res = pcall(game.HttpGet, game, url, true)
     if ok and type(res) == "string" and #res > 5 then return res end
-
     error(tostring(res or "Falha HTTP"))
 end
 
 -- ============================================================
---  BUSCA DE SERVIDORES (FILTRA CHEIOS E FALHADOS)
+--  BUSCA DE SERVIDORES
 -- ============================================================
 
 local function fetchServers(onDone)
@@ -216,40 +231,33 @@ local function fetchServers(onDone)
         local function doRequest()
             State.lastRequestAt = os.time()
             local rawOk, raw = pcall(httpGet, url)
-            if not rawOk or not raw or raw == "" then
-                return false, raw, nil
-            end
+            if not rawOk or not raw or raw == "" then return false, raw, nil end
             local decOk, data = pcall(HttpService.JSONDecode, HttpService, raw)
-            if not decOk or type(data) ~= "table" then
-                return false, "JSON invalido", nil
-            end
-            if not data.data then
-                return false, "sem_data", raw
-            end
+            if not decOk or type(data) ~= "table" then return false, "JSON invalido", nil end
+            if not data.data then return false, "sem_data", raw end
             return true, nil, data.data
         end
 
         local ok, errInfo, svData = doRequest()
 
         if not ok then
-            print("[HopServer] Primeira tentativa falhou. Retry em 4s...")
+            print("[HopServer v2.0] Primeira tentativa falhou. Nova tentativa em 4s...")
             task.wait(4)
             ok, errInfo, svData = doRequest()
         end
 
         if not ok or not svData then
             State.isScanning = false
-            print("[HopServer] Falha na busca: " .. tostring(errInfo))
+            print("[HopServer v2.0] Falha na busca: " .. tostring(errInfo))
             if onDone then onDone(State.servers, false) end
             return
         end
 
         local list = {}
         for _, sv in ipairs(svData) do
-            local sId = tostring(sv.id or "")
+            local sId     = tostring(sv.id or "")
             local playing = tonumber(sv.playing) or 0
-            local maxP = tonumber(sv.maxPlayers) or 20
-            -- Ignora servidor atual, servidores que falharam e servidores lotados
+            local maxP    = tonumber(sv.maxPlayers) or 20
             if sId ~= "" and sId ~= myJobId and not State.failedServers[sId] and playing < maxP then
                 table.insert(list, {
                     jobId      = sId,
@@ -270,45 +278,48 @@ local function fetchServers(onDone)
         State.servers    = list
         State.isScanning = false
 
-        print("[HopServer] Sucesso! " .. #list .. " servidores validos encontrados.")
+        print("[HopServer v2.0] " .. #list .. " servidores encontrados.")
         if onDone then onDone(list, true) end
     end)
 end
 
 -- ============================================================
---  TELEPORTE & RESILIENCIA DE FALHAS + AUTO-LOAD
+--  QUEUE ON TELEPORT DE DOIS ESTÁGIOS (SEM LOADSTRING COMPLEXO)
 -- ============================================================
 
 local function queueAutoReload()
     pcall(function()
-        local scripts = {}
-        
-        -- 1. Auto-reload do proprio Hop Server
-        if Config.SelfURL ~= "" then
-            table.insert(scripts, 'task.wait(4) pcall(function() loadstring(game:HttpGet("' .. Config.SelfURL .. '",true))() end)')
+        local env = (getgenv and getgenv()) or _G
+        -- Salva flag limpa em memória para o próximo servidor
+        if State.autoLoadBFLoader then
+            env.HopServer_LoadBFAfterHop = true
+        else
+            env.HopServer_LoadBFAfterHop = nil
         end
-        
-        -- 2. Auto-load do BFLoader se a opcao estiver ativada
-        if State.autoLoadBFLoader and Config.BFLoaderURL ~= "" then
-            table.insert(scripts, 'task.wait(7) pcall(function() loadstring(game:HttpGet("' .. Config.BFLoaderURL .. '",true))() end)')
-        end
-        
-        local src = table.concat(scripts, " ")
+
+        local hopUrl = Config.SelfURL
+        local src = 'task.wait(5) pcall(function() loadstring(game:HttpGet("' .. hopUrl .. '",true))() end)'
+
         local q = nil
         pcall(function()
             if type(queue_on_teleport) == "function" then q = queue_on_teleport end
             if not q and syn and type(syn.queue_on_teleport) == "function" then q = syn.queue_on_teleport end
             if not q then
-                local env = (getgenv and getgenv()) or _G
-                if type(env.queue_on_teleport) == "function" then q = env.queue_on_teleport end
+                local e = (getgenv and getgenv()) or _G
+                if type(e.queue_on_teleport) == "function" then q = e.queue_on_teleport end
             end
         end)
+
         if type(q) == "function" then
             q(src)
-            print("[HopServer] Auto-reload configurado (BFLoader: " .. (State.autoLoadBFLoader and "SIM" or "NAO") .. ").")
+            print("[HopServer v2.0] queue_on_teleport configurado com segurança (BFLoader flag: " .. tostring(State.autoLoadBFLoader) .. ")")
         end
     end)
 end
+
+-- ============================================================
+--  TELEPORTE SEGURO
+-- ============================================================
 
 local function hopTo(jobId, onResult)
     if State.isHopping then return end
@@ -316,7 +327,7 @@ local function hopTo(jobId, onResult)
     State.lastAttemptedJobId = jobId
     queueAutoReload()
 
-    -- Timeout de seguranca: se o teleporte nao acontecer em 5s, libera a UI
+    -- Timeout de segurança
     task.delay(5, function()
         if State.isHopping then
             State.isHopping = false
@@ -330,16 +341,16 @@ local function hopTo(jobId, onResult)
 
     local placeNum = tonumber(Config.PlaceId) or game.PlaceId
     local ok, err = pcall(function()
-        TeleportService:TeleportToPlaceInstance(placeNum, jobId, LocalPlayer)
+        TeleportService:TeleportToPlaceInstance(placeNum, jobId)
     end)
     if not ok then
         State.isHopping = false
-        print("[HopServer] Teleporte falhou de imediato: " .. tostring(err))
+        print("[HopServer v2.0] Teleporte falhou: " .. tostring(err))
         if onResult then onResult(false, tostring(err)) end
     end
 end
 
--- Evento do Roblox: detecta quando um servidor esta cheio ou fechado
+-- Detector de servidor cheio/fechado
 pcall(function()
     TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
         if player == LocalPlayer then
@@ -347,7 +358,6 @@ pcall(function()
             local badId = State.lastAttemptedJobId
             if badId then
                 State.failedServers[badId] = true
-                -- Remove da lista atual em memoria
                 for idx = #State.servers, 1, -1 do
                     if State.servers[idx].jobId == badId then
                         table.remove(State.servers, idx)
@@ -360,8 +370,8 @@ pcall(function()
                 HopBestBtn.Active = true
             end
             local reason = tostring(teleportResult):gsub("Enum.TeleportResult.", "")
-            local msg = "Servidor cheio (" .. reason .. "). Escolha outro ou clique em Ir ao Menor."
-            print("[HopServer] " .. msg)
+            local msg = "Servidor indisponível (" .. reason .. "). Escolha outro."
+            print("[HopServer v2.0] " .. msg)
             if setStatus then setStatus(msg, Color3.fromRGB(255, 196, 57)) end
             if InfoText then
                 InfoText.Text = msg
@@ -395,7 +405,7 @@ local C = {
 }
 
 -- ============================================================
---  INTERFACE GRAFICA
+--  INTERFACE GRÁFICA
 -- ============================================================
 
 pcall(function()
@@ -448,7 +458,7 @@ make("Frame", {
 }, TitleBar)
 
 make("TextLabel", {
-    Text = ">> HOP SERVER", Size = UDim2.new(0,220,0,22), Position = UDim2.new(0,12,0,6),
+    Text = ">> HOP SERVER  v2.0", Size = UDim2.new(0,240,0,22), Position = UDim2.new(0,12,0,6),
     BackgroundTransparency=1, TextSize=15, Font=Enum.Font.GothamBold, TextColor3=C.Text,
     TextXAlignment=Enum.TextXAlignment.Left, ZIndex=4,
 }, TitleBar)
@@ -502,7 +512,7 @@ local Body = make("Frame", {
     BackgroundTransparency=1, ZIndex=2,
 }, MainFrame)
 
--- Botoes de Acao
+-- Botões de Ação
 local ActionsRow = make("Frame", {
     Size=UDim2.new(1,-24,0,36), Position=UDim2.new(0,12,0,10), BackgroundTransparency=1,
 }, Body)
@@ -526,7 +536,7 @@ local ScanBtn = makeBtn("[+] Atualizar", C.Card, 108, 1, ActionsRow)
 HopBestBtn    = makeBtn("[>] Ir ao Menor", C.Accent, 148, 2, ActionsRow)
 make("UIStroke",{Color=C.Border,Thickness=1},ScanBtn)
 
--- Linha de BFLoader (Toggle Auto-Hop + Botao Executar Manual)
+-- Linha de Configuração do BFLoader (Toggle + Botão Manual)
 local ToggleRow = make("Frame", {
     Name="ToggleRow",
     Size=UDim2.new(1,-24,0,34), Position=UDim2.new(0,12,0,52),
@@ -535,7 +545,6 @@ local ToggleRow = make("Frame", {
 make("UICorner",{CornerRadius=UDim.new(0,8)},ToggleRow)
 make("UIStroke",{Color=C.Border,Thickness=1},ToggleRow)
 
--- Switch Auto-Hop
 local SwitchPill = make("TextButton", {
     Text="", Size=UDim2.new(0,36,0,20), Position=UDim2.new(0,10,0.5,-10),
     BackgroundColor3=State.autoLoadBFLoader and C.Accent or C.Border,
@@ -550,7 +559,7 @@ local SwitchThumb = make("Frame", {
 }, SwitchPill)
 make("UICorner",{CornerRadius=UDim.new(0.5,0)},SwitchThumb)
 
-local ToggleLabel = make("TextLabel", {
+make("TextLabel", {
     Text="Auto BF no hop",
     Size=UDim2.new(0,100,1,0), Position=UDim2.new(0,52,0,0),
     BackgroundTransparency=1, TextSize=11, Font=Enum.Font.GothamBold,
@@ -569,15 +578,15 @@ local function toggleBFLoader()
     updateSwitchVisual()
     local st = State.autoLoadBFLoader and "BFLoader no hop: ATIVADO" or "BFLoader no hop: DESATIVADO"
     if setStatus then setStatus(st, State.autoLoadBFLoader and C.GreenBr or C.TextDim) end
-    print("[HopServer] " .. st)
+    print("[HopServer v2.0] " .. st)
 end
 
 SwitchPill.MouseButton1Click:Connect(toggleBFLoader)
 
--- Botao de Execucao Manual do BFLoader
+-- Botão Manual do BFLoader
 local ManualBFBtn = make("TextButton", {
     Text="⚡ Executar BFLoader",
-    Size=UDim2.new(0,150,0,26), Position=UDim2.new(1,-158,0.5,-13),
+    Size=UDim2.new(0,152,0,26), Position=UDim2.new(1,-160,0.5,-13),
     BackgroundColor3=C.CardHov, TextColor3=C.Text,
     TextSize=10, Font=Enum.Font.GothamBold, BorderSizePixel=0, AutoButtonColor=false,
 }, ToggleRow)
@@ -590,7 +599,7 @@ ManualBFBtn.MouseLeave:Connect(function() tw(ManualBFBtn,{BackgroundColor3=C.Car
 ManualBFBtn.MouseButton1Click:Connect(function()
     ManualBFBtn.Text = "Carregando..."
     ManualBFBtn.Active = false
-    setStatus("Executando BFLoader...", C.Yellow)
+    if setStatus then setStatus("Executando BFLoader...", C.Yellow) end
     task.spawn(function()
         local ok, err = pcall(function()
             loadstring(game:HttpGet(Config.BFLoaderURL, true))()
@@ -599,11 +608,11 @@ ManualBFBtn.MouseButton1Click:Connect(function()
         ManualBFBtn.Text = "⚡ Executar BFLoader"
         ManualBFBtn.Active = true
         if ok then
-            setStatus("BFLoader executado com sucesso!", C.GreenBr)
-            print("[HopServer] BFLoader carregado com sucesso.")
+            if setStatus then setStatus("BFLoader executado com sucesso!", C.GreenBr) end
+            print("[HopServer v2.0] BFLoader carregado com sucesso.")
         else
-            setStatus("Erro ao carregar BFLoader", C.Red)
-            print("[HopServer] Erro ao carregar BFLoader: " .. tostring(err))
+            if setStatus then setStatus("Erro ao carregar BFLoader", C.Red) end
+            print("[HopServer v2.0] Erro ao carregar BFLoader: " .. tostring(err))
         end
     end)
 end)
@@ -627,7 +636,7 @@ InfoText = make("TextLabel", {
     TextXAlignment=Enum.TextXAlignment.Left, TextTruncate=Enum.TextTruncate.AtEnd,
 }, InfoBar)
 
--- Progress bar
+-- Barra de Progresso
 local ProgBG = make("Frame", {
     Size=UDim2.new(1,-24,0,2), Position=UDim2.new(0,12,0,124),
     BackgroundColor3=C.Border, BorderSizePixel=0,
@@ -636,7 +645,7 @@ make("UICorner",{CornerRadius=UDim.new(0,2)},ProgBG)
 ProgBar = make("Frame", {Size=UDim2.new(0,0,1,0),BackgroundColor3=C.Accent,BorderSizePixel=0},ProgBG)
 make("UICorner",{CornerRadius=UDim.new(0,2)},ProgBar)
 
--- Cabecalho da lista
+-- Cabeçalho da Lista
 local HeaderRow = make("Frame", {
     Size=UDim2.new(1,-24,0,22), Position=UDim2.new(0,12,0,130), BackgroundTransparency=1,
 }, Body)
@@ -682,15 +691,13 @@ CountLabel = make("TextLabel", {
 }, StatusBar)
 
 -- ============================================================
---  RENDERIZACAO DA LISTA
+--  RENDERIZAÇÃO DOS CARDS DE SERVIDORES
 -- ============================================================
 
-local function pCol(p, m)
-    if p == 0 then return C.Accent end
-    if p == 1 then return C.GreenBr end
-    if p <= 3  then return C.Green  end
-    if p/math.max(m,1) < 0.5 then return C.Yellow end
-    return C.Red
+local function pCol(p,m)
+    if p==0 then return C.Accent elseif p==1 then return C.GreenBr
+    elseif p<=3 then return C.Green
+    elseif p/math.max(m,1)<0.5 then return C.Yellow else return C.Red end
 end
 local function fCol(f)
     if f>=55 then return C.GreenBr elseif f>=40 then return C.Green
@@ -712,7 +719,7 @@ renderList = function(servers)
 
     if #servers == 0 then
         make("TextLabel",{
-            Text="Nenhum servidor disponivel.\nClique em [+] Atualizar para buscar novos.",
+            Text="Nenhum servidor disponível.\nClique em [+] Atualizar para buscar novos.",
             Size=UDim2.new(1,0,0,70), BackgroundTransparency=1,
             TextSize=11, Font=Enum.Font.Gotham, TextColor3=C.TextDim,
             TextWrapped=true, TextXAlignment=Enum.TextXAlignment.Center, LayoutOrder=1,
@@ -788,7 +795,7 @@ renderList = function(servers)
 end
 
 -- ============================================================
---  SCAN & REFRESH
+--  SCAN & ATUALIZAÇÃO
 -- ============================================================
 
 setStatus = function(msg, col)
@@ -798,18 +805,15 @@ end
 
 local function doScan(opts)
     opts = opts or {}
-
     if State.isScanning then
         if opts.onDone then opts.onDone(State.servers, true) end
         return
     end
-
     if not opts.silent then
         tw(StatusDot,{BackgroundColor3=C.Yellow},0.15)
         InfoText.Text = "Buscando servidores..."
         InfoText.TextColor3 = C.TextDim
     end
-
     fetchServers(function(servers, ok)
         if ok and #servers > 0 then
             tw(StatusDot,{BackgroundColor3=C.GreenBr},0.2)
@@ -844,7 +848,7 @@ HopBestBtn.MouseButton1Click:Connect(function()
 
     if #State.servers > 0 then
         local best = State.servers[1]
-        setStatus(string.format("Pulando... [%d/%d players | %d fps]", best.playing, best.maxPlayers, best.fps), C.GreenBr)
+        setStatus(string.format("Pulando... [%d/%d | %d fps]", best.playing, best.maxPlayers, best.fps), C.GreenBr)
         HopBestBtn.Text = "Pulando..."
         HopBestBtn.Active = false
         hopTo(best.jobId, function(hok, err)
@@ -886,9 +890,16 @@ end)
 
 -- Minimizar / Fechar / Toggle
 MinBtn.MouseButton1Click:Connect(function()
-    State.minimized=not State.minimized
-    if State.minimized then Body.Visible=false; tw(MainFrame,{Size=UDim2.new(0,WIN_W,0,48)},0.2); MinBtn.Text="+"
-    else Body.Visible=true; tw(MainFrame,{Size=UDim2.new(0,WIN_W,0,WIN_H)},0.25,Enum.EasingStyle.Back); MinBtn.Text="-" end
+    State.minimized = not State.minimized
+    if State.minimized then
+        Body.Visible=false
+        tw(MainFrame,{Size=UDim2.new(0,WIN_W,0,48)},0.2)
+        MinBtn.Text="+"
+    else
+        Body.Visible=true
+        tw(MainFrame,{Size=UDim2.new(0,WIN_W,0,WIN_H)},0.25,Enum.EasingStyle.Back)
+        MinBtn.Text="-"
+    end
 end)
 
 CloseBtn.MouseButton1Click:Connect(function()
@@ -899,7 +910,10 @@ end)
 
 UserInputService.InputBegan:Connect(function(inp, proc)
     if proc then return end
-    if inp.KeyCode==Config.ToggleKey then State.uiVisible=not State.uiVisible; MainFrame.Visible=State.uiVisible end
+    if inp.KeyCode==Config.ToggleKey then
+        State.uiVisible = not State.uiVisible
+        MainFrame.Visible = State.uiVisible
+    end
 end)
 
 MainFrame.Size=UDim2.new(0,0,0,0)
@@ -908,4 +922,4 @@ tw(MainFrame,{Size=UDim2.new(0,WIN_W,0,WIN_H),Position=UDim2.new(0.5,-WIN_W/2,0.
 
 task.delay(0.1, function() doScan() end)
 setStatus("Pronto | RCtrl para ocultar")
-print("[HopServer] Pronto. RCtrl para ocultar/mostrar.")
+print("[HopServer v2.0] Pronto. RCtrl para ocultar/mostrar.")
