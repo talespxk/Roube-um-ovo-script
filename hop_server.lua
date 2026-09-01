@@ -1,18 +1,17 @@
 --[[
-    HOP SERVER v1.6 -- Roube um Ovo (Fast & Resilient)
+    HOP SERVER v1.7 -- Roube um Ovo (BFLoader Auto-Load Edition)
     -----------------------------------------------------------------------
-    - Execucao imediata no executor (sem esperas infinitas).
     - Busca instantanea de servidores publicos (100 servidores ordenados pelo menor numero de players).
     - Design Fluent UI dark com ranking (#1, #2, #3), FPS, Ping e Job ID.
+    - Toggle no Menu: Auto-Carregar BFLoader automaticamente apos o Hop.
     - Detector de servidor cheio/fechado via TeleportInitFailed com blacklist automatica.
     - Timeout de 5s para nunca travar a interface em caso de falha de teleporte.
     - Botao "Ir ao Menor" instantaneo e botao manual por servidor com reset automatico.
     - Arquitetura stealth pura (cloneref, gethui, nomes randomizados, sem hooks de metametodos).
-    - Auto-reload via queue_on_teleport.
     - Tecla RightControl para mostrar/ocultar.
 ]]
 
-print("========== CARREGANDO: HOP SERVER v1.6 ==========")
+print("========== CARREGANDO: HOP SERVER v1.7 ==========")
 
 -- ============================================================
 --  SERVICOS SEGUROS
@@ -35,6 +34,7 @@ local Config = {
     RefreshInterval = 12,
     ToggleKey       = Enum.KeyCode.RightControl,
     SelfURL         = "https://raw.githubusercontent.com/talespxk/Roube-um-ovo-script/refs/heads/main/hop_server.lua",
+    BFLoaderURL     = "https://raw.githubusercontent.com/hanniii1/Loader/refs/heads/main/BFLoader.lua",
 }
 
 print("[HopServer] PlaceId: " .. Config.PlaceId)
@@ -46,6 +46,7 @@ local State = {
     isScanning          = false,
     isHopping           = false,
     lastAttemptedJobId  = nil,
+    autoLoadBFLoader    = true, -- Auto-carregar BFLoader apos o Hop (padrao: ativado)
     uiVisible           = true,
     minimized           = false,
     lastRequestAt       = 0,
@@ -236,13 +237,24 @@ local function fetchServers(onDone)
 end
 
 -- ============================================================
---  TELEPORTE & RESILIENCIA DE FALHAS
+--  TELEPORTE & RESILIENCIA DE FALHAS + AUTO-LOAD
 -- ============================================================
 
 local function queueAutoReload()
-    if Config.SelfURL == "" then return end
     pcall(function()
-        local src = 'task.wait(4) pcall(function() loadstring(game:HttpGet("' .. Config.SelfURL .. '",true))() end)'
+        local scripts = {}
+        
+        -- 1. Auto-reload do proprio Hop Server
+        if Config.SelfURL ~= "" then
+            table.insert(scripts, 'task.wait(4) pcall(function() loadstring(game:HttpGet("' .. Config.SelfURL .. '",true))() end)')
+        end
+        
+        -- 2. Auto-load do BFLoader se a opcao estiver ativada
+        if State.autoLoadBFLoader and Config.BFLoaderURL ~= "" then
+            table.insert(scripts, 'task.wait(6) pcall(function() loadstring(game:HttpGet("' .. Config.BFLoaderURL .. '",true))() end)')
+        end
+        
+        local src = table.concat(scripts, " ")
         local q = nil
         pcall(function()
             if type(queue_on_teleport) == "function" then q = queue_on_teleport end
@@ -254,7 +266,7 @@ local function queueAutoReload()
         end)
         if type(q) == "function" then
             q(src)
-            print("[HopServer] Auto-reload configurado.")
+            print("[HopServer] Auto-reload configurado (BFLoader: " .. (State.autoLoadBFLoader and "SIM" or "NAO") .. ").")
         end
     end)
 end
@@ -358,7 +370,7 @@ pcall(function()
     end
 end)
 
-local WIN_W, WIN_H = 380, 520
+local WIN_W, WIN_H = 380, 545
 
 local ScreenGui = make("ScreenGui", {
     Name           = getRandomName(),
@@ -453,7 +465,7 @@ local Body = make("Frame", {
 
 -- Botoes de Acao
 local ActionsRow = make("Frame", {
-    Size=UDim2.new(1,-24,0,38), Position=UDim2.new(0,12,0,10), BackgroundTransparency=1,
+    Size=UDim2.new(1,-24,0,36), Position=UDim2.new(0,12,0,10), BackgroundTransparency=1,
 }, Body)
 make("UIListLayout", {
     FillDirection=Enum.FillDirection.Horizontal, Padding=UDim.new(0,8),
@@ -475,9 +487,60 @@ local ScanBtn = makeBtn("[+] Atualizar", C.Card, 108, 1, ActionsRow)
 HopBestBtn    = makeBtn("[>] Ir ao Menor", C.Accent, 148, 2, ActionsRow)
 make("UIStroke",{Color=C.Border,Thickness=1},ScanBtn)
 
+-- Toggle de Auto-Carregar BFLoader
+local ToggleRow = make("Frame", {
+    Name="ToggleRow",
+    Size=UDim2.new(1,-24,0,32), Position=UDim2.new(0,12,0,52),
+    BackgroundColor3=C.Card, BorderSizePixel=0,
+}, Body)
+make("UICorner",{CornerRadius=UDim.new(0,8)},ToggleRow)
+make("UIStroke",{Color=C.Border,Thickness=1},ToggleRow)
+
+local ToggleLabel = make("TextLabel", {
+    Text="Auto-carregar BFLoader no hop",
+    Size=UDim2.new(1,-60,1,0), Position=UDim2.new(0,12,0,0),
+    BackgroundTransparency=1, TextSize=11, Font=Enum.Font.GothamBold,
+    TextColor3=C.Text, TextXAlignment=Enum.TextXAlignment.Left,
+}, ToggleRow)
+
+local SwitchPill = make("TextButton", {
+    Text="", Size=UDim2.new(0,40,0,20), Position=UDim2.new(1,-48,0.5,-10),
+    BackgroundColor3=State.autoLoadBFLoader and C.Accent or C.Border,
+    BorderSizePixel=0, AutoButtonColor=false,
+}, ToggleRow)
+make("UICorner",{CornerRadius=UDim.new(0,10)},SwitchPill)
+
+local SwitchThumb = make("Frame", {
+    Size=UDim2.new(0,14,0,14),
+    Position=State.autoLoadBFLoader and UDim2.new(1,-17,0.5,-7) or UDim2.new(0,3,0.5,-7),
+    BackgroundColor3=Color3.fromRGB(255,255,255), BorderSizePixel=0,
+}, SwitchPill)
+make("UICorner",{CornerRadius=UDim.new(0.5,0)},SwitchThumb)
+
+local function updateSwitchVisual()
+    local on = State.autoLoadBFLoader
+    tw(SwitchPill, { BackgroundColor3 = on and C.Accent or C.Border }, 0.15)
+    tw(SwitchThumb, { Position = on and UDim2.new(1,-17,0.5,-7) or UDim2.new(0,3,0.5,-7) }, 0.15)
+end
+
+local function toggleBFLoader()
+    State.autoLoadBFLoader = not State.autoLoadBFLoader
+    updateSwitchVisual()
+    local st = State.autoLoadBFLoader and "BFLoader no hop: ATIVADO" or "BFLoader no hop: DESATIVADO"
+    if setStatus then setStatus(st, State.autoLoadBFLoader and C.GreenBr or C.TextDim) end
+    print("[HopServer] " .. st)
+end
+
+SwitchPill.MouseButton1Click:Connect(toggleBFLoader)
+ToggleRow.InputBegan:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+        toggleBFLoader()
+    end
+end)
+
 -- InfoBar
 local InfoBar = make("Frame", {
-    Size=UDim2.new(1,-24,0,30), Position=UDim2.new(0,12,0,56),
+    Size=UDim2.new(1,-24,0,28), Position=UDim2.new(0,12,0,90),
     BackgroundColor3=C.Card, BorderSizePixel=0,
 }, Body)
 make("UICorner",{CornerRadius=UDim.new(0,8)},InfoBar)
@@ -496,7 +559,7 @@ InfoText = make("TextLabel", {
 
 -- Progress bar
 local ProgBG = make("Frame", {
-    Size=UDim2.new(1,-24,0,2), Position=UDim2.new(0,12,0,90),
+    Size=UDim2.new(1,-24,0,2), Position=UDim2.new(0,12,0,122),
     BackgroundColor3=C.Border, BorderSizePixel=0,
 }, Body)
 make("UICorner",{CornerRadius=UDim.new(0,2)},ProgBG)
@@ -505,7 +568,7 @@ make("UICorner",{CornerRadius=UDim.new(0,2)},ProgBar)
 
 -- Cabecalho da lista
 local HeaderRow = make("Frame", {
-    Size=UDim2.new(1,-24,0,22), Position=UDim2.new(0,12,0,97), BackgroundTransparency=1,
+    Size=UDim2.new(1,-24,0,22), Position=UDim2.new(0,12,0,128), BackgroundTransparency=1,
 }, Body)
 local function hdr(t,x,w,al)
     return make("TextLabel",{Text=t,Size=UDim2.new(0,w,1,0),Position=UDim2.new(0,x,0,0),
@@ -515,11 +578,11 @@ end
 hdr("#",0,22) hdr("PLAYERS",26,90) hdr("FPS",122,42)
 hdr("PING",170,48) hdr("JOB ID",222,90) hdr("IR",326,28,Enum.TextXAlignment.Center)
 
-make("Frame",{Size=UDim2.new(1,-24,0,1),Position=UDim2.new(0,12,0,122),BackgroundColor3=C.Border,BorderSizePixel=0},Body)
+make("Frame",{Size=UDim2.new(1,-24,0,1),Position=UDim2.new(0,12,0,153),BackgroundColor3=C.Border,BorderSizePixel=0},Body)
 
 -- Lista de Servidores
 local ListFrame = make("ScrollingFrame", {
-    Name="ServerList", Size=UDim2.new(1,-24,1,-192), Position=UDim2.new(0,12,0,127),
+    Name="ServerList", Size=UDim2.new(1,-24,1,-225), Position=UDim2.new(0,12,0,158),
     BackgroundTransparency=1, ScrollBarThickness=4, ScrollBarImageColor3=C.Accent,
     ScrollBarImageTransparency=0.3, BorderSizePixel=0,
     CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y,
