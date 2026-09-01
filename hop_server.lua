@@ -1,9 +1,11 @@
 --[[
-    HOP SERVER v1.4 -- Roube um Ovo (Stealth Edition)
+    HOP SERVER v1.5 -- Roube um Ovo (Resilient Edition)
     -----------------------------------------------------------------------
     - Busca instantanea de servidores publicos (100 servidores ordenados pelo menor numero de players).
     - Design Fluent UI dark com ranking (#1, #2, #3), FPS, Ping e Job ID.
-    - Botao "Ir ao Menor" instantaneo e botao manual por servidor.
+    - Detector de servidor cheio/fechado via TeleportInitFailed com blacklist automatica.
+    - Timeout de 5s para nunca travar a interface em caso de falha de teleporte.
+    - Botao "Ir ao Menor" instantaneo e botao manual por servidor com reset automatico.
     - Arquitetura stealth (cloneref, gethui, nomes randomizados, sem hooks de metametodos).
     - Auto-reload via queue_on_teleport com espera de carregamento completo do jogo.
     - Tecla RightControl para mostrar/ocultar.
@@ -13,7 +15,7 @@ if not game:IsLoaded() then
     game.Loaded:Wait()
 end
 
-print("========== CARREGANDO: HOP SERVER v1.4 (STEALTH) ==========")
+print("========== CARREGANDO: HOP SERVER v1.5 (RESILIENT) ==========")
 
 -- ============================================================
 --  SERVICOS SEGUROS
@@ -42,12 +44,14 @@ print("[HopServer] PlaceId: " .. Config.PlaceId)
 print("[HopServer] JobId:   " .. tostring(game.JobId))
 
 local State = {
-    servers       = {},
-    isScanning    = false,
-    isHopping     = false,
-    uiVisible     = true,
-    minimized     = false,
-    lastRequestAt = 0,
+    servers             = {},
+    failedServers       = {},  -- servidores cheios/fechados ignorados
+    isScanning          = false,
+    isHopping           = false,
+    lastAttemptedJobId  = nil,
+    uiVisible           = true,
+    minimized           = false,
+    lastRequestAt       = 0,
 }
 local MIN_REQUEST_INTERVAL = 4
 
@@ -109,6 +113,15 @@ local function make(cls, props, parent)
     return o
 end
 
+-- Declaracoes adiantadas de UI
+local renderList
+local setStatus
+local InfoText
+local StatusDot
+local ProgBar
+local CountLabel
+local HopBestBtn
+
 -- ============================================================
 --  HTTP GET ROBUSTO (SEM COOKIES DE CONTA)
 -- ============================================================
@@ -142,7 +155,7 @@ local function httpGet(url)
 end
 
 -- ============================================================
---  BUSCA DE SERVIDORES
+--  BUSCA DE SERVIDORES (FILTRA CHEIOS E FALHADOS)
 -- ============================================================
 
 local function fetchServers(onDone)
@@ -196,11 +209,15 @@ local function fetchServers(onDone)
 
         local list = {}
         for _, sv in ipairs(svData) do
-            if sv.id and tostring(sv.id) ~= myJobId then
+            local sId = tostring(sv.id or "")
+            local playing = tonumber(sv.playing) or 0
+            local maxP = tonumber(sv.maxPlayers) or 20
+            -- Ignora servidor atual, servidores que falharam e servidores lotados
+            if sId ~= "" and sId ~= myJobId and not State.failedServers[sId] and playing < maxP then
                 table.insert(list, {
-                    jobId      = tostring(sv.id),
-                    playing    = tonumber(sv.playing)    or 0,
-                    maxPlayers = tonumber(sv.maxPlayers) or 20,
+                    jobId      = sId,
+                    playing    = playing,
+                    maxPlayers = maxP,
                     fps        = math.floor(tonumber(sv.fps)  or 0),
                     ping       = math.floor(tonumber(sv.ping) or 0),
                 })
@@ -216,13 +233,13 @@ local function fetchServers(onDone)
         State.servers    = list
         State.isScanning = false
 
-        print("[HopServer] Sucesso! " .. #list .. " servidores encontrados.")
+        print("[HopServer] Sucesso! " .. #list .. " servidores validos encontrados.")
         if onDone then onDone(list, true) end
     end)
 end
 
 -- ============================================================
---  TELEPORTE & AUTO-RELOAD SEGURO
+--  TELEPORTE & RESILIENCIA DE FALHAS
 -- ============================================================
 
 local function queueAutoReload()
@@ -240,7 +257,7 @@ local function queueAutoReload()
         end)
         if type(q) == "function" then
             q(src)
-            print("[HopServer] Auto-reload configurado com espera de carregamento.")
+            print("[HopServer] Auto-reload configurado.")
         end
     end)
 end
@@ -248,17 +265,63 @@ end
 local function hopTo(jobId, onResult)
     if State.isHopping then return end
     State.isHopping = true
+    State.lastAttemptedJobId = jobId
     queueAutoReload()
+
+    -- Timeout de seguranca: se o teleporte nao acontecer em 5s, libera a UI
+    task.delay(5, function()
+        if State.isHopping then
+            State.isHopping = false
+            if HopBestBtn then
+                HopBestBtn.Text = "[>] Ir ao Menor"
+                HopBestBtn.Active = true
+            end
+            if onResult then onResult(false, "Timeout") end
+        end
+    end)
+
     local placeNum = tonumber(Config.PlaceId) or game.PlaceId
     local ok, err = pcall(function()
         TeleportService:TeleportToPlaceInstance(placeNum, jobId, LocalPlayer)
     end)
     if not ok then
         State.isHopping = false
-        print("[HopServer] Teleporte falhou: " .. tostring(err))
+        print("[HopServer] Teleporte falhou de imediato: " .. tostring(err))
         if onResult then onResult(false, tostring(err)) end
     end
 end
+
+-- Evento do Roblox: detecta quando um servidor esta cheio ou fechado
+pcall(function()
+    TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
+        if player == LocalPlayer then
+            State.isHopping = false
+            local badId = State.lastAttemptedJobId
+            if badId then
+                State.failedServers[badId] = true
+                -- Remove da lista atual em memoria
+                for idx = #State.servers, 1, -1 do
+                    if State.servers[idx].jobId == badId then
+                        table.remove(State.servers, idx)
+                    end
+                end
+                if renderList then renderList(State.servers) end
+            end
+            if HopBestBtn then
+                HopBestBtn.Text = "[>] Ir ao Menor"
+                HopBestBtn.Active = true
+            end
+            local reason = tostring(teleportResult):gsub("Enum.TeleportResult.", "")
+            local msg = "Servidor cheio (" .. reason .. "). Escolha outro ou clique em Ir ao Menor."
+            print("[HopServer] " .. msg)
+            if setStatus then setStatus(msg, Color3.fromRGB(255, 196, 57)) end
+            if InfoText then
+                InfoText.Text = msg
+                InfoText.TextColor3 = Color3.fromRGB(255, 196, 57)
+            end
+        end
+    end)
+end)
 
 -- ============================================================
 --  PALETA DE CORES FLUENT DARK
@@ -411,8 +474,8 @@ local function makeBtn(text, bg, w, order, par)
     return btn
 end
 
-local ScanBtn    = makeBtn("[+] Atualizar",   C.Card,   108, 1, ActionsRow)
-local HopBestBtn = makeBtn("[>] Ir ao Menor", C.Accent, 148, 2, ActionsRow)
+local ScanBtn = makeBtn("[+] Atualizar", C.Card, 108, 1, ActionsRow)
+HopBestBtn    = makeBtn("[>] Ir ao Menor", C.Accent, 148, 2, ActionsRow)
 make("UIStroke",{Color=C.Border,Thickness=1},ScanBtn)
 
 -- InfoBar
@@ -422,13 +485,13 @@ local InfoBar = make("Frame", {
 }, Body)
 make("UICorner",{CornerRadius=UDim.new(0,8)},InfoBar)
 
-local StatusDot = make("Frame", {
+StatusDot = make("Frame", {
     Size=UDim2.new(0,8,0,8), Position=UDim2.new(0,10,0.5,-4),
     BackgroundColor3=C.TextDim, BorderSizePixel=0,
 }, InfoBar)
 make("UICorner",{CornerRadius=UDim.new(0.5,0)},StatusDot)
 
-local InfoText = make("TextLabel", {
+InfoText = make("TextLabel", {
     Text="Buscando...", Size=UDim2.new(1,-30,1,0), Position=UDim2.new(0,24,0,0),
     BackgroundTransparency=1, TextSize=11, Font=Enum.Font.Gotham, TextColor3=C.TextDim,
     TextXAlignment=Enum.TextXAlignment.Left, TextTruncate=Enum.TextTruncate.AtEnd,
@@ -440,7 +503,7 @@ local ProgBG = make("Frame", {
     BackgroundColor3=C.Border, BorderSizePixel=0,
 }, Body)
 make("UICorner",{CornerRadius=UDim.new(0,2)},ProgBG)
-local ProgBar = make("Frame", {Size=UDim2.new(0,0,1,0),BackgroundColor3=C.Accent,BorderSizePixel=0},ProgBG)
+ProgBar = make("Frame", {Size=UDim2.new(0,0,1,0),BackgroundColor3=C.Accent,BorderSizePixel=0},ProgBG)
 make("UICorner",{CornerRadius=UDim.new(0,2)},ProgBar)
 
 -- Cabecalho da lista
@@ -482,7 +545,7 @@ local StatusText = make("TextLabel", {
     TextXAlignment=Enum.TextXAlignment.Left, TextTruncate=Enum.TextTruncate.AtEnd,
 }, StatusBar)
 
-local CountLabel = make("TextLabel", {
+CountLabel = make("TextLabel", {
     Text="- servidores", Size=UDim2.new(0,110,1,0), Position=UDim2.new(1,-118,0,0),
     BackgroundTransparency=1, TextSize=10, Font=Enum.Font.GothamBold, TextColor3=C.Accent,
     TextXAlignment=Enum.TextXAlignment.Right,
@@ -512,14 +575,14 @@ local function rStr(i)
     elseif i==3 then return "#3" else return "#"..i end
 end
 
-local function renderList(servers)
+renderList = function(servers)
     for _, ch in ipairs(ListFrame:GetChildren()) do
         if not ch:IsA("UIListLayout") then ch:Destroy() end
     end
 
     if #servers == 0 then
         make("TextLabel",{
-            Text="Nenhum servidor encontrado.\nClique em [+] Atualizar para buscar.",
+            Text="Nenhum servidor disponivel.\nClique em [+] Atualizar para buscar novos.",
             Size=UDim2.new(1,0,0,70), BackgroundTransparency=1,
             TextSize=11, Font=Enum.Font.Gotham, TextColor3=C.TextDim,
             TextWrapped=true, TextXAlignment=Enum.TextXAlignment.Center, LayoutOrder=1,
@@ -549,7 +612,7 @@ local function renderList(servers)
         make("TextLabel",{Text=sv.playing.."/"..sv.maxPlayers,Size=UDim2.new(0,88,1,0),Position=UDim2.new(0,30,0,0),
             BackgroundTransparency=1,TextSize=13,Font=Enum.Font.GothamBold,TextColor3=pc},Card)
 
-        if sv.playing==0 then
+        if sv.playing == 0 then
             local b=make("Frame",{Size=UDim2.new(0,44,0,18),Position=UDim2.new(0,78,0.5,-9),BackgroundColor3=C.Accent:Lerp(C.BG,0.5),BorderSizePixel=0},Card)
             make("UICorner",{CornerRadius=UDim.new(0,4)},b)
             make("TextLabel",{Text="VAZIO",Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,TextSize=9,Font=Enum.Font.GothamBold,TextColor3=C.Accent},b)
@@ -578,12 +641,17 @@ local function renderList(servers)
         local csv = sv
         GoBtn.MouseButton1Click:Connect(function()
             if State.isHopping then return end
-            StatusText.Text="Conectando a "..csv.jobId:sub(1,8).."..."
-            StatusText.TextColor3=C.Yellow
-            GoBtn.Text="..."; GoBtn.Active=false
+            StatusText.Text = "Conectando a " .. csv.jobId:sub(1,8) .. "..."
+            StatusText.TextColor3 = C.Yellow
+            GoBtn.Text = "..."
+            GoBtn.Active = false
             hopTo(csv.jobId, function(hok, err)
-                GoBtn.Text=">>"; GoBtn.Active=true
-                if not hok then StatusText.Text="Erro: "..tostring(err); StatusText.TextColor3=C.Red end
+                GoBtn.Text = ">>"
+                GoBtn.Active = true
+                if not hok then
+                    StatusText.Text = "Erro: " .. tostring(err)
+                    StatusText.TextColor3 = C.Red
+                end
             end)
         end)
     end
@@ -593,7 +661,7 @@ end
 --  SCAN & REFRESH
 -- ============================================================
 
-local function setStatus(msg, col)
+setStatus = function(msg, col)
     StatusText.Text = msg
     StatusText.TextColor3 = col or C.TextDim
 end
@@ -647,7 +715,11 @@ HopBestBtn.MouseButton1Click:Connect(function()
     if #State.servers > 0 then
         local best = State.servers[1]
         setStatus(string.format("Pulando... [%d/%d players | %d fps]", best.playing, best.maxPlayers, best.fps), C.GreenBr)
+        HopBestBtn.Text = "Pulando..."
+        HopBestBtn.Active = false
         hopTo(best.jobId, function(hok, err)
+            HopBestBtn.Text = "[>] Ir ao Menor"
+            HopBestBtn.Active = true
             if not hok then setStatus("Erro: " .. tostring(err), C.Red) end
         end)
         return
