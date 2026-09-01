@@ -44,72 +44,80 @@ local State = {
 
 -- ============================================================
 --  HTTP GET ROBUSTO
---  Testa cada metodo individualmente via pcall.
---  Printa no console qual falhou e qual funcionou.
+--  Envia o cookie .ROBLOSECURITY para autenticar com a API Roblox.
+--  Sem ele, a API retorna {"errors":[{"code":0}]} apos poucos requests.
+--  Prioridade: request/http_request/syn.request com Cookies=true
+--  Fallback: game:HttpGet (sem cookie, uso limitado)
 -- ============================================================
 
 local function httpGet(url)
-    -- Metodo 1: game:HttpGet  (funciona na maioria dos executores)
-    do
-        local ok, result = pcall(function()
-            return game:HttpGet(url, true)
-        end)
-        if ok and type(result) == "string" and #result > 10 then
-            return result
-        end
-        print("[HopServer] game:HttpGet falhou: " .. tostring(result):sub(1, 120))
-    end
+    local reqOpts = {
+        Url     = url,
+        Method  = "GET",
+        Cookies = true,   -- executor inclui .ROBLOSECURITY automaticamente
+    }
 
-    -- Metodo 2: request()  (Wave, Delta, Codex, etc.)
+    -- Metodo 1: request() com cookies (Delta, Wave, Codex, Fluxus, etc.)
     do
         local fn = nil
         pcall(function()
             if type(request) == "function" then fn = request end
         end)
         if fn then
-            local ok, result = pcall(fn, { Url = url, Method = "GET" })
-            if ok and result and type(result.Body) == "string" and #result.Body > 10 then
-                print("[HopServer] request() funcionou")
-                return result.Body
+            local ok, res = pcall(fn, reqOpts)
+            if ok and res and type(res.Body) == "string" and #res.Body > 5 then
+                return res.Body
             end
-            print("[HopServer] request() falhou: " .. tostring(result):sub(1, 120))
+            local info = ok and tostring(res and res.StatusCode or res) or tostring(res)
+            print("[HopServer] request(Cookies) falhou: " .. info:sub(1,80))
         end
     end
 
-    -- Metodo 3: http_request()  (Fluxus, Krnl, etc.)
+    -- Metodo 2: http_request() com cookies (KRNL, Fluxus)
     do
         local fn = nil
         pcall(function()
             if type(http_request) == "function" then fn = http_request end
         end)
         if fn then
-            local ok, result = pcall(fn, { Url = url, Method = "GET" })
-            if ok and result and type(result.Body) == "string" and #result.Body > 10 then
-                print("[HopServer] http_request() funcionou")
-                return result.Body
+            local ok, res = pcall(fn, reqOpts)
+            if ok and res and type(res.Body) == "string" and #res.Body > 5 then
+                print("[HopServer] http_request(Cookies) funcionou")
+                return res.Body
             end
-            print("[HopServer] http_request() falhou: " .. tostring(result):sub(1, 120))
+            local info = ok and tostring(res and res.StatusCode or res) or tostring(res)
+            print("[HopServer] http_request(Cookies) falhou: " .. info:sub(1,80))
         end
     end
 
-    -- Metodo 4: syn.request()  (Synapse X)
+    -- Metodo 3: syn.request() com cookies (Synapse X)
     do
         local fn = nil
         pcall(function()
             if syn and type(syn.request) == "function" then fn = syn.request end
         end)
         if fn then
-            local ok, result = pcall(fn, { Url = url, Method = "GET" })
-            if ok and result and type(result.Body) == "string" and #result.Body > 10 then
-                print("[HopServer] syn.request() funcionou")
-                return result.Body
+            local ok, res = pcall(fn, reqOpts)
+            if ok and res and type(res.Body) == "string" and #res.Body > 5 then
+                print("[HopServer] syn.request(Cookies) funcionou")
+                return res.Body
             end
-            print("[HopServer] syn.request() falhou: " .. tostring(result):sub(1, 120))
+            local info = ok and tostring(res and res.StatusCode or res) or tostring(res)
+            print("[HopServer] syn.request(Cookies) falhou: " .. info:sub(1,80))
         end
     end
 
-    -- Todos falharam
-    error("Todos os metodos HTTP falharam. Verifique se HTTP esta habilitado nas configuracoes do executor.")
+    -- Fallback: game:HttpGet sem cookie (pode ser bloqueado pela API)
+    do
+        local ok, res = pcall(game.HttpGet, game, url, true)
+        if ok and type(res) == "string" and #res > 5 then
+            print("[HopServer] game:HttpGet funcionou (sem cookie)")
+            return res
+        end
+        print("[HopServer] game:HttpGet falhou: " .. tostring(res):sub(1,80))
+    end
+
+    error("Todos os metodos HTTP falharam. Habilite HTTP nas configuracoes do executor.")
 end
 
 -- ============================================================
