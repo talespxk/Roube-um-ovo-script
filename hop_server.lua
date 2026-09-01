@@ -1,9 +1,10 @@
 --[[
-    HOP SERVER v1.7 -- Roube um Ovo (BFLoader Auto-Load Edition)
+    HOP SERVER v1.8 -- Roube um Ovo (Settings Persistence Edition)
     -----------------------------------------------------------------------
     - Busca instantanea de servidores publicos (100 servidores ordenados pelo menor numero de players).
     - Design Fluent UI dark com ranking (#1, #2, #3), FPS, Ping e Job ID.
-    - Toggle no Menu: Auto-Carregar BFLoader automaticamente apos o Hop.
+    - Toggle no Menu: Auto-Carregar BFLoader automaticamente apos o Hop (com persistencia de configuracao).
+    - Configuracao salva no getgenv() e em arquivo local para manter sua escolha apos o Hop.
     - Detector de servidor cheio/fechado via TeleportInitFailed com blacklist automatica.
     - Timeout de 5s para nunca travar a interface em caso de falha de teleporte.
     - Botao "Ir ao Menor" instantaneo e botao manual por servidor com reset automatico.
@@ -11,7 +12,7 @@
     - Tecla RightControl para mostrar/ocultar.
 ]]
 
-print("========== CARREGANDO: HOP SERVER v1.7 ==========")
+print("========== CARREGANDO: HOP SERVER v1.8 ==========")
 
 -- ============================================================
 --  SERVICOS SEGUROS
@@ -35,10 +36,46 @@ local Config = {
     ToggleKey       = Enum.KeyCode.RightControl,
     SelfURL         = "https://raw.githubusercontent.com/talespxk/Roube-um-ovo-script/refs/heads/main/hop_server.lua",
     BFLoaderURL     = "https://raw.githubusercontent.com/hanniii1/Loader/refs/heads/main/BFLoader.lua",
+    SettingsFile    = "hop_server_settings.json",
 }
 
 print("[HopServer] PlaceId: " .. Config.PlaceId)
 print("[HopServer] JobId:   " .. tostring(game.JobId))
+
+-- ============================================================
+--  PERSISTENCIA DE CONFIGURACOES (MEMORIA & DISCO)
+-- ============================================================
+
+local function loadSavedSettings()
+    local env = (getgenv and getgenv()) or _G
+    if env.HopServer_AutoLoadBFLoader ~= nil then
+        return env.HopServer_AutoLoadBFLoader == true
+    end
+
+    local val = false -- padrao desativado por seguranca
+    pcall(function()
+        if readfile and isfile and isfile(Config.SettingsFile) then
+            local raw = readfile(Config.SettingsFile)
+            local data = HttpService:JSONDecode(raw)
+            if type(data) == "table" and data.autoLoadBFLoader ~= nil then
+                val = (data.autoLoadBFLoader == true)
+            end
+        end
+    end)
+    env.HopServer_AutoLoadBFLoader = val
+    return val
+end
+
+local function saveCurrentSettings(val)
+    local env = (getgenv and getgenv()) or _G
+    env.HopServer_AutoLoadBFLoader = val
+    pcall(function()
+        if writefile then
+            local data = { autoLoadBFLoader = val }
+            writefile(Config.SettingsFile, HttpService:JSONEncode(data))
+        end
+    end)
+end
 
 local State = {
     servers             = {},
@@ -46,12 +83,14 @@ local State = {
     isScanning          = false,
     isHopping           = false,
     lastAttemptedJobId  = nil,
-    autoLoadBFLoader    = true, -- Auto-carregar BFLoader apos o Hop (padrao: ativado)
+    autoLoadBFLoader    = loadSavedSettings(), -- Carrega a escolha salva pelo usuario
     uiVisible           = true,
     minimized           = false,
     lastRequestAt       = 0,
 }
 local MIN_REQUEST_INTERVAL = 4
+
+print("[HopServer] BFLoader auto-load: " .. (State.autoLoadBFLoader and "ATIVADO" or "DESATIVADO"))
 
 -- ============================================================
 --  UTILITARIOS DE SEGURANCA & GUI CONTAINER (STEALTH)
@@ -251,7 +290,7 @@ local function queueAutoReload()
         
         -- 2. Auto-load do BFLoader se a opcao estiver ativada
         if State.autoLoadBFLoader and Config.BFLoaderURL ~= "" then
-            table.insert(scripts, 'task.wait(6) pcall(function() loadstring(game:HttpGet("' .. Config.BFLoaderURL .. '",true))() end)')
+            table.insert(scripts, 'task.wait(7) pcall(function() loadstring(game:HttpGet("' .. Config.BFLoaderURL .. '",true))() end)')
         end
         
         local src = table.concat(scripts, " ")
@@ -525,6 +564,7 @@ end
 
 local function toggleBFLoader()
     State.autoLoadBFLoader = not State.autoLoadBFLoader
+    saveCurrentSettings(State.autoLoadBFLoader)
     updateSwitchVisual()
     local st = State.autoLoadBFLoader and "BFLoader no hop: ATIVADO" or "BFLoader no hop: DESATIVADO"
     if setStatus then setStatus(st, State.autoLoadBFLoader and C.GreenBr or C.TextDim) end
