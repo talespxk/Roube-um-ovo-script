@@ -11,14 +11,13 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 PLACE_ID = "107778070777162"
 PORT = 5000
 
-# Cache para evitar rate-limits
 cache_data = {"timestamp": 0, "servers": []}
-CACHE_TTL = 3.0  # segundos
+CACHE_TTL = 4.0  # segundos de cache normal
 
-def fetch_roblox_servers():
+def fetch_roblox_servers(force=False):
     global cache_data
     now = time.time()
-    if now - cache_data["timestamp"] < CACHE_TTL and cache_data["servers"]:
+    if not force and (now - cache_data["timestamp"] < CACHE_TTL) and cache_data["servers"]:
         return cache_data["servers"]
 
     url = f"https://games.roblox.com/v1/games/{PLACE_ID}/servers/Public?sortOrder=Asc&limit=100"
@@ -32,7 +31,7 @@ def fetch_roblox_servers():
 
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:
             raw = json.loads(resp.read().decode("utf-8"))
             items = raw.get("data", [])
             servers = []
@@ -54,7 +53,7 @@ def fetch_roblox_servers():
     except urllib.error.HTTPError as e:
         if cache_data["servers"]:
             return cache_data["servers"]
-        return {"error": f"HTTP {e.code}: {e.reason}"}
+        return {"error": f"Erro {e.code}: {e.reason}"}
     except Exception as e:
         if cache_data["servers"]:
             return cache_data["servers"]
@@ -65,28 +64,36 @@ HTML_PAGE = r'''<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Steal An Egg - Real-Time Server Hopper</title>
+    <title>Steal An Egg — Pro Server Hopper</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg: #090b11;
-            --surface: #121522;
-            --surface-hover: #191e30;
-            --card: #161a2b;
-            --card-border: #232840;
+            --bg: #07090e;
+            --surface: #0f1422;
+            --surface-glass: rgba(15, 20, 34, 0.75);
+            --card: #141b2d;
+            --card-glass: rgba(20, 27, 45, 0.7);
+            --card-hover: #1a233a;
+            --border: #222c46;
+            --border-glow: rgba(99, 102, 241, 0.35);
+            
             --accent: #6366f1;
-            --accent-hover: #4f46e5;
-            --accent-glow: rgba(99, 102, 241, 0.25);
-            --green: #10b981;
-            --green-glow: rgba(16, 185, 129, 0.2);
-            --yellow: #f59e0b;
-            --red: #ef4444;
+            --accent-light: #818cf8;
+            --accent-glow: rgba(99, 102, 241, 0.35);
+            
+            --emerald: #10b981;
+            --emerald-glow: rgba(16, 185, 129, 0.3);
+            
+            --amber: #f59e0b;
+            --rose: #f43f5e;
+            
             --gold: #fbbf24;
             --silver: #cbd5e1;
             --bronze: #d97706;
-            --text: #f8fafc;
+            
+            --text-main: #f8fafc;
             --text-muted: #94a3b8;
             --text-dim: #64748b;
         }
@@ -95,26 +102,47 @@ HTML_PAGE = r'''<!DOCTYPE html>
             box-sizing: border-box;
             margin: 0;
             padding: 0;
+            user-select: none;
         }
 
         body {
-            font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
-            background: var(--bg);
-            color: var(--text);
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
             min-height: 100vh;
             display: flex;
             flex-direction: column;
+            overflow-x: hidden;
             background-image: 
-                radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.15), transparent),
-                radial-gradient(ellipse 60% 40% at 100% 100%, rgba(16, 185, 129, 0.08), transparent);
+                radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.18), transparent 45%),
+                radial-gradient(circle at 90% 90%, rgba(16, 185, 129, 0.12), transparent 40%),
+                radial-gradient(circle at 10% 80%, rgba(244, 63, 94, 0.08), transparent 40%);
             background-attachment: fixed;
         }
 
+        /* AMBIENT MESH */
+        .ambient-glow {
+            position: fixed;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100vw;
+            height: 100vh;
+            background-image: 
+                linear-gradient(to right, rgba(255,255,255,0.015) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255,255,255,0.015) 1px, transparent 1px);
+            background-size: 40px 40px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
         .container {
-            max-width: 1200px;
+            max-width: 1280px;
             width: 100%;
             margin: 0 auto;
-            padding: 24px 20px;
+            padding: 32px 24px;
+            position: relative;
+            z-index: 1;
             flex: 1;
         }
 
@@ -124,467 +152,690 @@ HTML_PAGE = r'''<!DOCTYPE html>
             align-items: center;
             justify-content: space-between;
             padding-bottom: 24px;
-            border-bottom: 1px solid var(--card-border);
+            border-bottom: 1px solid var(--border);
             margin-bottom: 28px;
             flex-wrap: wrap;
-            gap: 16px;
+            gap: 20px;
         }
 
         .brand {
             display: flex;
             align-items: center;
-            gap: 14px;
+            gap: 16px;
         }
 
-        .brand-icon {
-            width: 44px;
-            height: 44px;
-            background: linear-gradient(135deg, var(--accent), #818cf8);
-            border-radius: 12px;
+        .brand-logo {
+            width: 52px;
+            height: 52px;
+            background: linear-gradient(135deg, #4338ca, #6366f1);
+            border-radius: 16px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 22px;
-            box-shadow: 0 0 24px var(--accent-glow);
+            font-size: 26px;
+            box-shadow: 0 0 30px var(--accent-glow);
+            border: 1px solid rgba(255, 255, 255, 0.15);
         }
 
-        .brand-text h1 {
-            font-size: 22px;
-            font-weight: 800;
+        .brand-meta h1 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 24px;
+            font-weight: 700;
             letter-spacing: -0.5px;
-            background: linear-gradient(90deg, #fff, #cbd5e1);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
 
-        .brand-text p {
+        .brand-badge {
+            font-size: 11px;
+            font-weight: 800;
+            background: rgba(99, 102, 241, 0.2);
+            color: var(--accent-light);
+            border: 1px solid rgba(99, 102, 241, 0.4);
+            padding: 2px 8px;
+            border-radius: 6px;
+            letter-spacing: 0.5px;
+        }
+
+        .brand-meta p {
             font-size: 13px;
             color: var(--text-muted);
-            margin-top: 2px;
+            margin-top: 4px;
         }
 
-        .header-actions {
+        .header-controls {
             display: flex;
             align-items: center;
             gap: 12px;
         }
 
-        .status-pill {
+        .live-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: var(--surface-glass);
+            border: 1px solid var(--border);
+            padding: 10px 16px;
+            border-radius: 999px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
+            backdrop-filter: blur(10px);
+        }
+
+        .pulse-dot {
+            width: 9px;
+            height: 9px;
+            background: var(--emerald);
+            border-radius: 50%;
+            box-shadow: 0 0 12px var(--emerald);
+            animation: pulse-ring 2s infinite ease-out;
+        }
+
+        @keyframes pulse-ring {
+            0% { transform: scale(0.9); opacity: 0.8; box-shadow: 0 0 6px var(--emerald); }
+            50% { transform: scale(1.3); opacity: 1; box-shadow: 0 0 16px var(--emerald); }
+            100% { transform: scale(0.9); opacity: 0.8; box-shadow: 0 0 6px var(--emerald); }
+        }
+
+        /* REFRESH BUTTON */
+        .btn-refresh {
+            background: linear-gradient(135deg, var(--card), var(--surface));
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            font-size: 13px;
+            font-weight: 700;
+            padding: 10px 18px;
+            border-radius: 12px;
+            cursor: pointer;
             display: flex;
             align-items: center;
             gap: 8px;
-            background: var(--surface);
-            border: 1px solid var(--card-border);
-            padding: 8px 14px;
-            border-radius: 999px;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-refresh:hover {
+            border-color: var(--accent);
+            background: var(--surface-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px var(--accent-glow);
+        }
+
+        .btn-refresh:active {
+            transform: translateY(0);
+        }
+
+        .btn-refresh .icon-sync {
+            display: inline-block;
+            transition: transform 0.4s ease;
+        }
+
+        .btn-refresh.spinning .icon-sync {
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            100% { transform: rotate(360deg); }
+        }
+
+        /* METRICS ROW */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            margin-bottom: 28px;
+        }
+
+        .metric-card {
+            background: var(--card-glass);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 18px 22px;
+            backdrop-filter: blur(12px);
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.25s ease;
+        }
+
+        .metric-card:hover {
+            border-color: rgba(255, 255, 255, 0.15);
+            transform: translateY(-2px);
+        }
+
+        .metric-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+        }
+
+        .metric-icon.emerald { background: rgba(16, 185, 129, 0.15); color: var(--emerald); border: 1px solid rgba(16, 185, 129, 0.25); }
+        .metric-icon.indigo  { background: rgba(99, 102, 241, 0.15); color: var(--accent-light); border: 1px solid rgba(99, 102, 241, 0.25); }
+        .metric-icon.amber   { background: rgba(245, 158, 11, 0.15); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.25); }
+        .metric-icon.rose    { background: rgba(244, 63, 94, 0.15); color: var(--rose); border: 1px solid rgba(244, 63, 94, 0.25); }
+
+        .metric-info h3 {
             font-size: 12px;
-            font-weight: 600;
-            color: var(--text-muted);
+            font-weight: 700;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
         }
 
-        .dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: var(--green);
-            box-shadow: 0 0 10px var(--green);
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0% { transform: scale(0.95); opacity: 0.8; }
-            50% { transform: scale(1.2); opacity: 1; box-shadow: 0 0 14px var(--green); }
-            100% { transform: scale(0.95); opacity: 0.8; }
+        .metric-info .val {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 24px;
+            font-weight: 800;
+            color: var(--text-main);
+            margin-top: 2px;
         }
 
         /* HERO CARD */
-        .hero {
-            background: linear-gradient(135deg, rgba(22, 26, 43, 0.9), rgba(30, 36, 60, 0.8));
-            border: 1px solid rgba(99, 102, 241, 0.35);
-            border-radius: 20px;
-            padding: 28px;
+        .hero-banner {
+            background: linear-gradient(135deg, rgba(20, 27, 48, 0.95), rgba(30, 40, 70, 0.85));
+            border: 1px solid rgba(99, 102, 241, 0.4);
+            border-radius: 22px;
+            padding: 30px 34px;
             margin-bottom: 28px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             gap: 24px;
-            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-            backdrop-filter: blur(12px);
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+            position: relative;
+            overflow: hidden;
             flex-wrap: wrap;
         }
 
-        .hero-content h2 {
-            font-size: 20px;
+        .hero-banner::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -30%;
+            width: 160%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.12) 0%, transparent 60%);
+            pointer-events: none;
+        }
+
+        .hero-text {
+            max-width: 650px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .hero-text h2 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 22px;
             font-weight: 700;
+            color: #fff;
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 12px;
         }
 
-        .hero-content p {
+        .hero-text p {
             color: var(--text-muted);
             font-size: 14px;
-            margin-top: 6px;
-            max-width: 580px;
-            line-height: 1.5;
+            line-height: 1.6;
+            margin-top: 8px;
         }
 
-        .btn-hero {
-            background: linear-gradient(135deg, var(--green), #059669);
-            color: white;
+        .hero-action {
+            position: relative;
+            z-index: 1;
+        }
+
+        .btn-hop-hero {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: #ffffff;
+            font-family: 'Space Grotesk', sans-serif;
             font-weight: 700;
-            font-size: 15px;
-            padding: 14px 28px;
-            border-radius: 12px;
+            font-size: 16px;
+            padding: 16px 32px;
+            border-radius: 14px;
             border: none;
             cursor: pointer;
             display: flex;
             align-items: center;
-            gap: 10px;
-            box-shadow: 0 4px 20px var(--green-glow);
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            text-decoration: none;
+            gap: 12px;
+            box-shadow: 0 8px 28px var(--emerald-glow);
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
-        .btn-hero:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 28px rgba(16, 185, 129, 0.35);
-            filter: brightness(1.08);
+        .btn-hop-hero:hover {
+            transform: translateY(-3px) scale(1.02);
+            box-shadow: 0 12px 36px rgba(16, 185, 129, 0.45);
+            filter: brightness(1.1);
         }
 
-        .btn-hero:active {
-            transform: translateY(0);
+        .btn-hop-hero:active {
+            transform: translateY(0) scale(0.99);
         }
 
-        /* FILTERS & CONTROLS */
-        .controls {
+        /* TOOLBAR */
+        .toolbar {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 14px;
-            margin-bottom: 20px;
+            gap: 16px;
+            margin-bottom: 22px;
             flex-wrap: wrap;
         }
 
-        .filter-group {
+        .filter-pills {
             display: flex;
             align-items: center;
-            gap: 8px;
             background: var(--surface);
-            border: 1px solid var(--card-border);
+            border: 1px solid var(--border);
             padding: 4px;
-            border-radius: 12px;
+            border-radius: 14px;
+            gap: 4px;
         }
 
-        .filter-btn {
+        .pill-btn {
             background: transparent;
             border: none;
             color: var(--text-muted);
-            font-weight: 600;
             font-size: 13px;
-            padding: 8px 14px;
-            border-radius: 8px;
+            font-weight: 600;
+            padding: 8px 16px;
+            border-radius: 10px;
             cursor: pointer;
-            transition: all 0.15s;
+            transition: all 0.2s;
         }
 
-        .filter-btn:hover {
-            color: var(--text);
+        .pill-btn:hover {
+            color: #fff;
             background: rgba(255, 255, 255, 0.04);
         }
 
-        .filter-btn.active {
+        .pill-btn.active {
             background: var(--card);
-            color: var(--text);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-            border: 1px solid var(--card-border);
+            color: #fff;
+            border: 1px solid var(--border);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
         }
 
-        .stats-summary {
+        .search-box {
             display: flex;
             align-items: center;
-            gap: 16px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 8px 14px;
+            gap: 10px;
+            min-width: 280px;
+            transition: border-color 0.2s;
+        }
+
+        .search-box:focus-within {
+            border-color: var(--accent);
+            box-shadow: 0 0 16px var(--accent-glow);
+        }
+
+        .search-box input {
+            background: transparent;
+            border: none;
+            outline: none;
+            color: var(--text-main);
             font-size: 13px;
-            color: var(--text-muted);
+            width: 100%;
         }
 
-        .stat-badge {
-            color: var(--green);
-            font-weight: 700;
+        .search-box input::placeholder {
+            color: var(--text-dim);
         }
 
-        /* SERVER GRID */
-        .servers-grid {
+        /* SERVER CARDS */
+        .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-            gap: 14px;
+            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+            gap: 16px;
         }
 
         .server-card {
-            background: var(--card);
-            border: 1px solid var(--card-border);
-            border-radius: 14px;
-            padding: 16px;
+            background: var(--card-glass);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 20px;
             display: flex;
             flex-direction: column;
-            gap: 12px;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            gap: 14px;
             position: relative;
-            overflow: hidden;
+            backdrop-filter: blur(12px);
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         .server-card:hover {
-            border-color: rgba(99, 102, 241, 0.4);
-            transform: translateY(-2px);
-            background: var(--surface-hover);
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+            border-color: var(--border-glow);
+            transform: translateY(-3px);
+            background: var(--card-hover);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
         }
 
-        .card-top {
+        .card-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
         }
 
-        .rank-badge {
+        .rank-tag {
+            font-family: 'Space Grotesk', sans-serif;
             font-size: 12px;
             font-weight: 800;
-            padding: 4px 10px;
-            border-radius: 6px;
+            padding: 5px 12px;
+            border-radius: 8px;
             display: inline-flex;
             align-items: center;
-            gap: 4px;
+            gap: 6px;
             background: rgba(255, 255, 255, 0.05);
             color: var(--text-dim);
         }
 
-        .rank-1 { background: rgba(251, 191, 36, 0.15); color: var(--gold); border: 1px solid rgba(251, 191, 36, 0.3); }
-        .rank-2 { background: rgba(203, 213, 225, 0.15); color: var(--silver); border: 1px solid rgba(203, 213, 225, 0.3); }
-        .rank-3 { background: rgba(217, 119, 6, 0.15); color: var(--bronze); border: 1px solid rgba(217, 119, 6, 0.3); }
+        .rank-gold   { background: rgba(251, 191, 36, 0.18); color: var(--gold); border: 1px solid rgba(251, 191, 36, 0.35); }
+        .rank-silver { background: rgba(203, 213, 225, 0.18); color: var(--silver); border: 1px solid rgba(203, 213, 225, 0.35); }
+        .rank-bronze { background: rgba(217, 119, 6, 0.18); color: var(--bronze); border: 1px solid rgba(217, 119, 6, 0.35); }
 
-        .players-pill {
+        .player-badge {
             font-size: 13px;
             font-weight: 800;
-            padding: 4px 10px;
+            padding: 5px 12px;
             border-radius: 999px;
             display: flex;
             align-items: center;
             gap: 6px;
         }
 
-        .players-1 {
-            background: rgba(16, 185, 129, 0.15);
-            color: var(--green);
-            border: 1px solid rgba(16, 185, 129, 0.3);
+        .p-emerald { background: rgba(16, 185, 129, 0.18); color: var(--emerald); border: 1px solid rgba(16, 185, 129, 0.35); }
+        .p-amber   { background: rgba(245, 158, 11, 0.18); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.35); }
+
+        /* PROGRESS BAR */
+        .bar-wrap {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.06);
+            border-radius: 999px;
+            overflow: hidden;
         }
 
-        .players-low {
-            background: rgba(245, 158, 11, 0.15);
-            color: var(--yellow);
-            border: 1px solid rgba(245, 158, 11, 0.3);
+        .bar-fill {
+            height: 100%;
+            border-radius: 999px;
+            transition: width 0.4s ease;
         }
 
-        .card-meta {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            font-size: 12px;
-            color: var(--text-muted);
-        }
-
-        .meta-item {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-
-        .meta-item span {
-            font-weight: 600;
-            color: var(--text);
-        }
-
-        .job-row {
+        .card-stats {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            background: rgba(0, 0, 0, 0.25);
-            padding: 6px 10px;
-            border-radius: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.03);
+            font-size: 12px;
+            color: var(--text-muted);
+            background: rgba(0, 0, 0, 0.2);
+            padding: 8px 12px;
+            border-radius: 10px;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .stat-item strong {
+            color: var(--text-main);
+            font-weight: 700;
+        }
+
+        .id-box {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            padding: 8px 12px;
+            border-radius: 10px;
             font-family: 'JetBrains Mono', monospace;
             font-size: 11px;
             color: var(--text-dim);
         }
 
-        .btn-copy {
+        .btn-copy-id {
             background: transparent;
             border: none;
-            color: var(--accent);
-            cursor: pointer;
+            color: var(--accent-light);
+            font-weight: 700;
             font-size: 11px;
-            font-weight: 600;
+            cursor: pointer;
             padding: 2px 6px;
             border-radius: 4px;
             transition: all 0.15s;
         }
 
-        .btn-copy:hover {
+        .btn-copy-id:hover {
             background: var(--accent-glow);
             color: #fff;
         }
 
-        .card-actions {
-            margin-top: 4px;
-        }
-
-        .btn-join {
+        .btn-connect {
             width: 100%;
-            background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+            background: linear-gradient(135deg, var(--accent), var(--accent-hover, #4f46e5));
             color: white;
+            font-family: 'Space Grotesk', sans-serif;
             font-weight: 700;
-            font-size: 13px;
-            padding: 10px 16px;
-            border-radius: 9px;
+            font-size: 14px;
+            padding: 12px;
+            border-radius: 12px;
             border: none;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
             gap: 8px;
-            transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-            text-decoration: none;
-        }
-
-        .btn-join:hover {
-            filter: brightness(1.12);
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
             box-shadow: 0 4px 16px var(--accent-glow);
         }
 
-        .btn-join:active {
-            transform: scale(0.98);
+        .btn-connect:hover {
+            filter: brightness(1.15);
+            transform: translateY(-1px);
+            box-shadow: 0 6px 22px rgba(99, 102, 241, 0.5);
+        }
+
+        .btn-connect:active {
+            transform: translateY(0);
         }
 
         /* LOADING & EMPTY */
-        .loading-state, .empty-state {
+        .state-msg {
             grid-column: 1 / -1;
             text-align: center;
-            padding: 60px 20px;
+            padding: 80px 20px;
             color: var(--text-muted);
         }
 
         .spinner {
-            width: 36px;
-            height: 36px;
-            border: 3px solid var(--card-border);
+            width: 42px;
+            height: 42px;
+            border: 3px solid var(--border);
             border-top-color: var(--accent);
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
             margin: 0 auto 16px;
         }
 
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
         /* TOAST */
-        .toast {
+        .toast-popup {
             position: fixed;
-            bottom: 24px;
-            right: 24px;
-            background: var(--surface);
+            bottom: 28px;
+            right: 28px;
+            background: rgba(15, 20, 34, 0.92);
             border: 1px solid var(--accent);
             color: #fff;
-            padding: 12px 20px;
-            border-radius: 12px;
-            font-size: 13px;
+            padding: 14px 22px;
+            border-radius: 14px;
+            font-size: 14px;
             font-weight: 600;
-            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
             display: flex;
             align-items: center;
-            gap: 10px;
-            transform: translateY(100px);
+            gap: 12px;
+            transform: translateY(120px);
             opacity: 0;
-            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-            z-index: 1000;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            backdrop-filter: blur(14px);
+            z-index: 9999;
         }
 
-        .toast.show {
+        .toast-popup.visible {
             transform: translateY(0);
             opacity: 1;
         }
     </style>
 </head>
 <body>
+    <div class="ambient-glow"></div>
+
     <div class="container">
         <header>
             <div class="brand">
-                <div class="brand-icon">🥚</div>
-                <div class="brand-text">
-                    <h1>Steal An Egg — Server Hopper</h1>
-                    <p>Monitoramento e conexão instantânea em servidores de 1 player</p>
+                <div class="brand-logo">🥚</div>
+                <div class="brand-meta">
+                    <h1>
+                        Steal An Egg 
+                        <span class="brand-badge">PRO HOPPER</span>
+                    </h1>
+                    <p>Busca ao vivo de servidores com 1 jogador e conexão direta via protocolo oficial</p>
                 </div>
             </div>
-            <div class="header-actions">
-                <div class="status-pill">
-                    <span class="dot"></span>
-                    <span id="refresh-status">Atualizando a cada 8s</span>
+            <div class="header-controls">
+                <div class="live-status">
+                    <span class="pulse-dot"></span>
+                    <span id="status-label">Online (Tempo Real)</span>
                 </div>
-                <button class="filter-btn active" id="manual-refresh-btn" onclick="loadServers()">🔄 Atualizar</button>
+                <button class="btn-refresh" id="refresh-btn" onclick="manualRefresh()">
+                    <span class="icon-sync">🔄</span>
+                    <span id="refresh-text">Atualizar</span>
+                </button>
             </div>
         </header>
 
-        <section class="hero" id="hero-section">
-            <div class="hero-content">
-                <h2>⚡ Conexão Rápida: Servidor Mais Vazio</h2>
-                <p>Clique no botão ao lado para iniciar o Roblox diretamente no servidor com a menor quantidade de jogadores disponível agora.</p>
+        <!-- CARDS DE METRICAS -->
+        <section class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-icon emerald">🎯</div>
+                <div class="metric-info">
+                    <h3>Servidores 1-Player</h3>
+                    <div class="val" id="m-one">0</div>
+                </div>
             </div>
-            <button class="btn-hero" id="best-server-btn" onclick="joinBestServer()">
-                <span>🚀 Entrar no Menor (#1)</span>
-            </button>
+            <div class="metric-card">
+                <div class="metric-icon indigo">🌐</div>
+                <div class="metric-info">
+                    <h3>Total Monitorado</h3>
+                    <div class="val" id="m-total">0</div>
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-icon amber">⚡</div>
+                <div class="metric-info">
+                    <h3>Menor Latência</h3>
+                    <div class="val" id="m-ping">0 ms</div>
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-icon rose">⏱️</div>
+                <div class="metric-info">
+                    <h3>Última Leitura</h3>
+                    <div class="val" id="m-time">--:--:--</div>
+                </div>
+            </div>
         </section>
 
-        <div class="controls">
-            <div class="filter-group">
-                <button class="filter-btn active" onclick="setFilter('1', this)">Apenas 1 Player</button>
-                <button class="filter-btn" onclick="setFilter('low', this)">≤ 3 Players</button>
-                <button class="filter-btn" onclick="setFilter('all', this)">Todos</button>
+        <!-- BANNER DE CONEXAO RAPIDA -->
+        <section class="hero-banner">
+            <div class="hero-text">
+                <h2>⚡ Conexão Direta: Servidor Mais Vazio (#1)</h2>
+                <p>Abra o Roblox de forma legítima e instantânea no servidor com a menor quantidade de pessoas online agora, sem riscos de banimento ou kicks de anti-cheat.</p>
             </div>
-            <div class="stats-summary">
-                <span>Servidores encontrados: <strong class="stat-badge" id="total-count">0</strong></span>
-                <span>Servidores com 1 player: <strong class="stat-badge" id="one-player-count">0</strong></span>
+            <div class="hero-action">
+                <button class="btn-hop-hero" onclick="joinBestServer()">
+                    <span>🚀 Entrar no Menor Servidor (#1)</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- BARRA DE CONTROLES & FILTROS -->
+        <div class="toolbar">
+            <div class="filter-pills">
+                <button class="pill-btn active" onclick="setFilter('1', this)">Apenas 1 Player</button>
+                <button class="pill-btn" onclick="setFilter('low', this)">≤ 3 Players</button>
+                <button class="pill-btn" onclick="setFilter('all', this)">Todos os Servidores</button>
+            </div>
+            <div class="search-box">
+                <span>🔍</span>
+                <input type="text" id="search-input" placeholder="Buscar por Job ID ou Ping..." oninput="renderServers()">
             </div>
         </div>
 
-        <div class="servers-grid" id="servers-grid">
-            <div class="loading-state">
+        <!-- GRID DE SERVIDORES -->
+        <div class="grid" id="servers-grid">
+            <div class="state-msg">
                 <div class="spinner"></div>
-                <p>Buscando servidores em tempo real na API oficial do Roblox...</p>
+                <p>Consultando servidores ativos na API oficial do Roblox...</p>
             </div>
         </div>
     </div>
 
-    <div class="toast" id="toast"></div>
+    <div class="toast-popup" id="toast"></div>
 
     <script>
         const PLACE_ID = "107778070777162";
         let allServers = [];
         let currentFilter = '1';
-        let refreshInterval = null;
+        let isFetching = false;
+
+        // Feedback sonoro sutil via Web Audio API (opcional)
+        function playBeep() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(640, ctx.currentTime);
+                gain.gain.setValueAtTime(0.04, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.08);
+            } catch (e) {}
+        }
 
         function showToast(msg, icon = '✓') {
             const t = document.getElementById('toast');
-            t.innerHTML = `<span>${icon}</span> <span>${msg}</span>`;
-            t.classList.add('show');
-            setTimeout(() => t.classList.remove('show'), 2800);
+            t.innerHTML = `<span style="font-size: 18px;">${icon}</span> <span>${msg}</span>`;
+            t.classList.add('visible');
+            setTimeout(() => t.classList.remove('visible'), 3000);
         }
 
         function launchRoblox(jobId) {
+            playBeep();
             showToast('Iniciando o Roblox no servidor ' + jobId.substring(0, 8) + '...', '🚀');
+            
             // 1. Aciona protocolo nativo no navegador do usuário
             const uri = `roblox://experiences/start?placeId=${PLACE_ID}&gameInstanceId=${jobId}`;
             window.location.href = uri;
 
-            // 2. Notifica o backend Python para acionar via OS se desejado
+            // 2. Notifica o backend Python para acionar via OS também
             fetch('/api/join', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -594,13 +845,14 @@ HTML_PAGE = r'''<!DOCTYPE html>
 
         function joinBestServer() {
             if (!allServers || allServers.length === 0) {
-                showToast('Nenhum servidor carregado ainda. Aguarde...', '⚠️');
+                showToast('Carregando servidores... tente em 1 segundo.', '⚠️');
                 return;
             }
             launchRoblox(allServers[0].id);
         }
 
         function copyJobId(id) {
+            playBeep();
             navigator.clipboard.writeText(id).then(() => {
                 showToast('Job ID copiado com sucesso!', '📋');
             }).catch(() => {
@@ -608,34 +860,75 @@ HTML_PAGE = r'''<!DOCTYPE html>
             });
         }
 
-        function setFilter(f, btn) {
-            currentFilter = f;
-            document.querySelectorAll('.filter-group .filter-btn').forEach(b => b.classList.remove('active'));
+        function setFilter(filter, btn) {
+            playBeep();
+            currentFilter = filter;
+            document.querySelectorAll('.filter-pills .pill-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             renderServers();
         }
 
-        async function loadServers() {
+        async function fetchServers(force = false) {
+            if (isFetching) return;
+            isFetching = true;
+
+            const refBtn = document.getElementById('refresh-btn');
+            const refTxt = document.getElementById('refresh-text');
+            if (force) {
+                refBtn.classList.add('spinning');
+                refTxt.textContent = 'Buscando...';
+            }
+
             try {
-                const res = await fetch('/api/servers');
+                const url = force ? `/api/servers?force=1&t=${Date.now()}` : `/api/servers?t=${Date.now()}`;
+                const res = await fetch(url);
                 const data = await res.json();
+                
                 if (data.error) {
-                    showToast('Erro na API: ' + data.error, '❌');
-                    return;
+                    showToast('Erro ao buscar: ' + data.error, '❌');
+                } else if (Array.isArray(data)) {
+                    allServers = data;
+                    renderServers();
+                    updateMetrics();
+                    if (force) {
+                        showToast(`${allServers.length} servidores atualizados em tempo real!`, '⚡');
+                    }
                 }
-                allServers = Array.isArray(data) ? data : [];
-                renderServers();
             } catch (err) {
                 console.error(err);
+            } finally {
+                isFetching = false;
+                if (force) {
+                    setTimeout(() => {
+                        refBtn.classList.remove('spinning');
+                        refTxt.textContent = 'Atualizar';
+                    }, 400);
+                }
             }
+        }
+
+        function manualRefresh() {
+            playBeep();
+            fetchServers(true);
+        }
+
+        function updateMetrics() {
+            document.getElementById('m-total').textContent = allServers.length;
+            const oneCount = allServers.filter(s => s.playing === 1).length;
+            document.getElementById('m-one').textContent = oneCount;
+
+            if (allServers.length > 0) {
+                const lowestPing = Math.min(...allServers.map(s => s.ping || 999));
+                document.getElementById('m-ping').textContent = (lowestPing === 999 ? '0' : lowestPing) + ' ms';
+            }
+
+            const now = new Date();
+            document.getElementById('m-time').textContent = now.toTimeString().split(' ')[0];
         }
 
         function renderServers() {
             const grid = document.getElementById('servers-grid');
-            document.getElementById('total-count').textContent = allServers.length;
-            
-            const oneCount = allServers.filter(s => s.playing === 1).length;
-            document.getElementById('one-player-count').textContent = oneCount;
+            const searchVal = (document.getElementById('search-input').value || '').trim().toLowerCase();
 
             let filtered = allServers;
             if (currentFilter === '1') {
@@ -644,10 +937,14 @@ HTML_PAGE = r'''<!DOCTYPE html>
                 filtered = allServers.filter(s => s.playing <= 3);
             }
 
+            if (searchVal) {
+                filtered = filtered.filter(s => s.id.toLowerCase().includes(searchVal) || String(s.ping).includes(searchVal));
+            }
+
             if (filtered.length === 0) {
                 grid.innerHTML = `
-                    <div class="empty-state">
-                        <p>Nenhum servidor corresponde ao filtro selecionado no momento.</p>
+                    <div class="state-msg">
+                        <p>Nenhum servidor encontrado para o filtro atual.</p>
                     </div>
                 `;
                 return;
@@ -656,39 +953,55 @@ HTML_PAGE = r'''<!DOCTYPE html>
             grid.innerHTML = filtered.map((s, index) => {
                 const rank = index + 1;
                 let rankClass = '';
-                if (rank === 1) rankClass = 'rank-1';
-                else if (rank === 2) rankClass = 'rank-2';
-                else if (rank === 3) rankClass = 'rank-3';
+                let rankIcon = '';
+                if (rank === 1) { rankClass = 'rank-gold'; rankIcon = '👑 '; }
+                else if (rank === 2) { rankClass = 'rank-silver'; rankIcon = '🥈 '; }
+                else if (rank === 3) { rankClass = 'rank-bronze'; rankIcon = '🥉 '; }
 
-                const playerClass = s.playing === 1 ? 'players-1' : (s.playing <= 3 ? 'players-low' : '');
+                const pClass = s.playing === 1 ? 'p-emerald' : 'p-amber';
+                const fillPercent = Math.max(10, Math.min(100, Math.round((s.playing / s.maxPlayers) * 100)));
+                const barColor = s.playing === 1 ? 'var(--emerald)' : (s.playing <= 3 ? 'var(--amber)' : 'var(--rose)');
+
+                const pingColor = s.ping < 50 ? 'var(--emerald)' : (s.ping < 120 ? 'var(--amber)' : 'var(--rose)');
 
                 return `
                     <div class="server-card">
-                        <div class="card-top">
-                            <span class="rank-badge ${rankClass}">#${rank} RANK</span>
-                            <span class="players-pill ${playerClass}">👤 ${s.playing}/${s.maxPlayers} Jogadores</span>
+                        <div class="card-header">
+                            <span class="rank-tag ${rankClass}">${rankIcon}#${rank} RANK</span>
+                            <span class="player-badge ${pClass}">👤 ${s.playing}/${s.maxPlayers} Jogadores</span>
                         </div>
-                        <div class="card-meta">
-                            <div class="meta-item">FPS: <span>${s.fps}</span></div>
-                            <div class="meta-item">Ping: <span>${s.ping}ms</span></div>
+
+                        <div class="bar-wrap">
+                            <div class="bar-fill" style="width: ${fillPercent}%; background: ${barColor};"></div>
                         </div>
-                        <div class="job-row">
-                            <span>${s.id.substring(0, 16)}...</span>
-                            <button class="btn-copy" onclick="copyJobId('${s.id}')">Copiar ID</button>
+
+                        <div class="card-stats">
+                            <div class="stat-item">
+                                <span>Latência:</span>
+                                <strong style="color: ${pingColor};">${s.ping}ms</strong>
+                            </div>
+                            <div class="stat-item">
+                                <span>FPS:</span>
+                                <strong style="color: var(--emerald);">${s.fps}</strong>
+                            </div>
                         </div>
-                        <div class="card-actions">
-                            <button class="btn-join" onclick="launchRoblox('${s.id}')">
-                                ▶ Conectar Instantâneo
-                            </button>
+
+                        <div class="id-box">
+                            <span>${s.id.substring(0, 18)}...</span>
+                            <button class="btn-copy-id" onclick="copyJobId('${s.id}')">Copiar ID</button>
                         </div>
+
+                        <button class="btn-connect" onclick="launchRoblox('${s.id}')">
+                            ▶ Conectar Instantâneo
+                        </button>
                     </div>
                 `;
             }).join('');
         }
 
-        // Início
-        loadServers();
-        refreshInterval = setInterval(loadServers, 8000);
+        // Auto-refresh a cada 8 segundos
+        fetchServers(true);
+        setInterval(() => fetchServers(false), 8000);
     </script>
 </body>
 </html>
@@ -704,8 +1017,9 @@ class ServerHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(HTML_PAGE.encode("utf-8"))
-        elif self.path == "/api/servers":
-            servers = fetch_roblox_servers()
+        elif self.path.startswith("/api/servers"):
+            force = ("force=1" in self.path) or ("force=true" in self.path)
+            servers = fetch_roblox_servers(force=force)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -739,7 +1053,7 @@ def run_server():
     server = HTTPServer(("127.0.0.1", PORT), ServerHandler)
     print(f"\n=======================================================")
     print(f" [OK] STEAL AN EGG - PAINEL HOPPER EM TEMPO REAL INICIADO")
-    print(f" Acesse no navegador: http://localhost:{PORT}")
+    print(f" Acesse no seu navegador: http://localhost:{PORT}")
     print(f"=======================================================\n")
     try:
         webbrowser.open(f"http://localhost:{PORT}")
