@@ -1055,6 +1055,15 @@ HTML_PAGE = r'''<!DOCTYPE html>
 </html>
 '''
 
+def find_roblox_exe():
+    appdata = os.environ.get("LOCALAPPDATA", "")
+    versions_dir = os.path.join(appdata, "Roblox", "Versions")
+    if os.path.exists(versions_dir):
+        for root, dirs, files in os.walk(versions_dir):
+            if "RobloxPlayerBeta.exe" in files:
+                return os.path.join(root, "RobloxPlayerBeta.exe")
+    return None
+
 class ServerHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
@@ -1085,8 +1094,12 @@ class ServerHandler(BaseHTTPRequestHandler):
                 data = json.loads(raw)
                 job_id = data.get("jobId", "")
                 if job_id:
-                    cmd = f'start "" "roblox://experiences/start?placeId={PLACE_ID}&gameInstanceId={job_id}"'
-                    subprocess.Popen(cmd, shell=True)
+                    uri = f"roblox://experiences/start?placeId={PLACE_ID}&gameInstanceId={job_id}"
+                    exe = find_roblox_exe()
+                    if exe and os.path.isfile(exe):
+                        subprocess.Popen([exe, uri])
+                    else:
+                        subprocess.Popen(f'start "" "{uri}"', shell=True)
             except Exception:
                 pass
             self.send_response(200)
