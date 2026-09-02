@@ -1095,6 +1095,8 @@ class ServerHandler(BaseHTTPRequestHandler):
                 job_id = data.get("jobId", "")
                 if job_id:
                     uri = f"roblox://experiences/start?placeId={PLACE_ID}&gameInstanceId={job_id}"
+                    subprocess.run("taskkill /f /im RobloxPlayerBeta.exe", shell=True, capture_output=True)
+                    time.sleep(0.3)
                     exe = find_roblox_exe()
                     if exe and os.path.isfile(exe):
                         subprocess.Popen([exe, uri])
