@@ -819,15 +819,10 @@ HTML_PAGE = r'''<!DOCTYPE html>
         }
 
         function launchRoblox(jobId) {
-            showToast(`Conectando ao servidor ${jobId.substring(0, 8)}...`);
-            const uri = `roblox://experiences/start?placeId=${PLACE_ID}&gameInstanceId=${jobId}`;
-            window.location.href = uri;
-
-            fetch('/api/join', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ jobId: jobId })
-            }).catch(() => {});
+            showToast(`Abrindo Roblox para conectar a ${jobId.substring(0, 8)}...`);
+            const url = `https://www.roblox.com/games/${PLACE_ID}/Steal-An-Egg?jobId=${jobId}`;
+            window.open(url, '_blank');
+            navigator.clipboard.writeText(`Roblox.GameLauncher.joinGameInstance(${PLACE_ID}, "${jobId}");`).catch(() => {});
         }
 
         function joinBestServer() {
@@ -1095,8 +1090,6 @@ class ServerHandler(BaseHTTPRequestHandler):
                 job_id = data.get("jobId", "")
                 if job_id:
                     uri = f"roblox://experiences/start?placeId={PLACE_ID}&gameInstanceId={job_id}"
-                    subprocess.run("taskkill /f /im RobloxPlayerBeta.exe", shell=True, capture_output=True)
-                    time.sleep(0.3)
                     exe = find_roblox_exe()
                     if exe and os.path.isfile(exe):
                         subprocess.Popen([exe, uri])

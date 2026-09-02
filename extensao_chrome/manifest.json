@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Steal An Egg - Quick Server Hopper",
+  "version": "1.0",
+  "description": "Encontra e conecta instantaneamente no menor servidor de Steal An Egg através do launcher oficial do Roblox.",
+  "permissions": [
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://www.roblox.com/*",
+    "https://games.roblox.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.roblox.com/games/107778070777162/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
