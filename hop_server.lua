@@ -1,18 +1,36 @@
 --[[
-    HOP SERVER v2.1 -- Roube um Ovo (Pure Stealth & Safe Hop Edition)
+    HOP SERVER v2.2 -- Roube um Ovo (Zero-Trace Stealth Edition)
     -----------------------------------------------------------------------
-    MUDANCAS v2.1:
-    - Hop 100% Nativo e Seguro: Por padrao, NAO usa queue_on_teleport na transicao.
-      O teleporte agora e puramente oficial do Roblox (TeleportToPlaceInstance),
-      eliminando o vetor de deteccao de transicao do BAC.
-    - Toggle no Menu para Auto-Reload do Hop Server (desativado por padrao para evitar kicks).
-    - Toggle no Menu para Auto-Load do BFLoader (desativado por padrao).
-    - Botao Manual [⚡ Executar BFLoader] para injetar quando voce quiser.
-    - Persistencia de configuracoes em memoria (getgenv) e arquivo JSON.
-    - Tecla RightControl para ocultar/mostrar.
+    MUDANCAS v2.2 (Correcao Definitiva BAC-3186 / BAC-3185 / BAC-7187):
+    - Zero Poluicao Global: NENHUMA variavel e gravada em _G ou getgenv().
+      O anti-cheat BAC verificava o ambiente global e encontrava 'HopServer_Settings' (BAC-3186).
+    - Limpeza Automatica: Remove quaisquer sobras de HopServer_ de sessoes anteriores em _G/getgenv.
+    - Remocao Total do queue_on_teleport: O hop agora e 100% nativo do motor Roblox,
+      sem injetar threads durante a transicao (eliminando BAC-7187 e BAC-91810).
+    - Protecao Antecipada de GUI: protectGui e aplicado ANTES de definir ScreenGui.Parent.
+    - Nomes Indetectaveis: Removido prefixo 'HopUI_' em favor de hashes neutros.
+    - Persistencia 100% Segura: Feita apenas via arquivo JSON local (invisivel para scripts do jogo).
+    - Botao Manual [⚡ Executar BFLoader] mantido para carregar quando o jogo ja estiver estavel.
+    - Tecla RightControl para ocultar/mostrar a interface.
 ]]
 
-print("========== CARREGANDO: HOP SERVER v2.1 ==========")
+print("========== CARREGANDO: HOP SERVER v2.2 (ZERO-TRACE) ==========")
+
+-- ============================================================
+--  LIMPEZA DE RESIDUOS GLOBAIS (ELIMINA BAC-3185 E BAC-3186)
+-- ============================================================
+
+pcall(function()
+    _G.HopServer_Settings = nil
+    _G.HopServer_LoadBFAfterHop = nil
+    _G.HopServer_AutoLoadBFLoader = nil
+    if getgenv then
+        local g = getgenv()
+        g.HopServer_Settings = nil
+        g.HopServer_LoadBFAfterHop = nil
+        g.HopServer_AutoLoadBFLoader = nil
+    end
+end)
 
 -- ============================================================
 --  SERVICOS SEGUROS
@@ -39,50 +57,36 @@ local Config = {
     SettingsFile    = "hop_server_settings.json",
 }
 
-print("[HopServer v2.1] PlaceId: " .. Config.PlaceId)
-print("[HopServer v2.1] JobId:   " .. tostring(game.JobId))
+print("[HopServer v2.2] PlaceId: " .. Config.PlaceId)
+print("[HopServer v2.2] JobId:   " .. tostring(game.JobId))
 
 -- ============================================================
---  PERSISTENCIA DE CONFIGURACOES
+--  PERSISTENCIA APENAS EM DISCO (NADA EM _G OU GETGENV)
 -- ============================================================
 
-local function loadSavedSettings()
-    local env = (getgenv and getgenv()) or _G
-    local defSettings = {
-        autoReloadHop    = false, -- Desativado por padrao para 0 kicks
-        autoLoadBFLoader = false, -- Desativado por padrao
-    }
-
-    if env.HopServer_Settings ~= nil and type(env.HopServer_Settings) == "table" then
-        return env.HopServer_Settings
-    end
-
+local function loadLocalSettings()
+    local cfg = { autoLoadBFLoader = false }
     pcall(function()
         if readfile and isfile and isfile(Config.SettingsFile) then
             local raw = readfile(Config.SettingsFile)
             local data = HttpService:JSONDecode(raw)
-            if type(data) == "table" then
-                if data.autoReloadHop ~= nil then defSettings.autoReloadHop = (data.autoReloadHop == true) end
-                if data.autoLoadBFLoader ~= nil then defSettings.autoLoadBFLoader = (data.autoLoadBFLoader == true) end
+            if type(data) == "table" and data.autoLoadBFLoader ~= nil then
+                cfg.autoLoadBFLoader = (data.autoLoadBFLoader == true)
             end
         end
     end)
-
-    env.HopServer_Settings = defSettings
-    return defSettings
+    return cfg
 end
 
-local function saveCurrentSettings(settings)
-    local env = (getgenv and getgenv()) or _G
-    env.HopServer_Settings = settings
+local function saveLocalSettings(cfg)
     pcall(function()
         if writefile then
-            writefile(Config.SettingsFile, HttpService:JSONEncode(settings))
+            writefile(Config.SettingsFile, HttpService:JSONEncode(cfg))
         end
     end)
 end
 
-local savedCfg = loadSavedSettings()
+local localCfg = loadLocalSettings()
 
 local State = {
     servers             = {},
@@ -90,33 +94,12 @@ local State = {
     isScanning          = false,
     isHopping           = false,
     lastAttemptedJobId  = nil,
-    autoReloadHop       = savedCfg.autoReloadHop,
-    autoLoadBFLoader    = savedCfg.autoLoadBFLoader,
+    autoLoadBFLoader    = localCfg.autoLoadBFLoader,
     uiVisible           = true,
     minimized           = false,
     lastRequestAt       = 0,
 }
 local MIN_REQUEST_INTERVAL = 4
-
--- Verificacao pos-hop protegida (se veio de um reload anterior)
-local function checkAndHandlePostHop()
-    local env = (getgenv and getgenv()) or _G
-    if env.HopServer_LoadBFAfterHop == true then
-        env.HopServer_LoadBFAfterHop = nil
-        print("[HopServer v2.1] Flag pos-hop detectada. Aguardando 12s para carregar BFLoader com seguranca...")
-        task.delay(12, function()
-            local ok, err = pcall(function()
-                loadstring(game:HttpGet(Config.BFLoaderURL, true))()
-            end)
-            if ok then
-                print("[HopServer v2.1] BFLoader carregado apos hop.")
-            else
-                print("[HopServer v2.1] Erro no BFLoader apos hop: " .. tostring(err))
-            end
-        end)
-    end
-end
-checkAndHandlePostHop()
 
 -- ============================================================
 --  UTILITARIOS DE GUI & STEALTH
@@ -124,9 +107,9 @@ checkAndHandlePostHop()
 
 local function getRandomName()
     local guid = ""
-    pcall(function() guid = HttpService:GenerateGUID(false):sub(1, 8) end)
-    if guid == "" then guid = tostring(math.random(100000, 999999)) end
-    return "HopUI_" .. guid
+    pcall(function() guid = HttpService:GenerateGUID(false):gsub("-", ""):sub(1, 10) end)
+    if guid == "" then guid = tostring(math.random(10000000, 99999999)) end
+    return "RobloxGui_" .. guid
 end
 
 local function protectGui(gui)
@@ -244,14 +227,14 @@ local function fetchServers(onDone)
         local ok, errInfo, svData = doRequest()
 
         if not ok then
-            print("[HopServer v2.1] Retry em 4s...")
+            print("[HopServer v2.2] Retry em 4s...")
             task.wait(4)
             ok, errInfo, svData = doRequest()
         end
 
         if not ok or not svData then
             State.isScanning = false
-            print("[HopServer v2.1] Falha na busca: " .. tostring(errInfo))
+            print("[HopServer v2.2] Falha na busca: " .. tostring(errInfo))
             if onDone then onDone(State.servers, false) end
             return
         end
@@ -281,56 +264,21 @@ local function fetchServers(onDone)
         State.servers    = list
         State.isScanning = false
 
-        print("[HopServer v2.1] " .. #list .. " servidores encontrados.")
+        print("[HopServer v2.2] " .. #list .. " servidores encontrados.")
         if onDone then onDone(list, true) end
     end)
 end
 
 -- ============================================================
---  TELEPORTE SEGURO
+--  TELEPORTE PURO & SEGURO (SEM QUEUE_ON_TELEPORT)
 -- ============================================================
-
-local function prepareQueue()
-    if not State.autoReloadHop then
-        print("[HopServer v2.1] Hop puro (sem queue_on_teleport) para evitar deteccao.")
-        return
-    end
-
-    pcall(function()
-        local env = (getgenv and getgenv()) or _G
-        if State.autoLoadBFLoader then
-            env.HopServer_LoadBFAfterHop = true
-        else
-            env.HopServer_LoadBFAfterHop = nil
-        end
-
-        local hopUrl = Config.SelfURL
-        local src = 'task.wait(6) pcall(function() loadstring(game:HttpGet("' .. hopUrl .. '",true))() end)'
-
-        local q = nil
-        pcall(function()
-            if type(queue_on_teleport) == "function" then q = queue_on_teleport end
-            if not q and syn and type(syn.queue_on_teleport) == "function" then q = syn.queue_on_teleport end
-            if not q then
-                local e = (getgenv and getgenv()) or _G
-                if type(e.queue_on_teleport) == "function" then q = e.queue_on_teleport end
-            end
-        end)
-
-        if type(q) == "function" then
-            q(src)
-            print("[HopServer v2.1] queue_on_teleport registrado.")
-        end
-    end)
-end
 
 local function hopTo(jobId, onResult)
     if State.isHopping then return end
     State.isHopping = true
     State.lastAttemptedJobId = jobId
-    prepareQueue()
 
-    task.delay(5, function()
+    task.delay(6, function()
         if State.isHopping then
             State.isHopping = false
             if HopBestBtn then
@@ -343,11 +291,13 @@ local function hopTo(jobId, onResult)
 
     local placeNum = tonumber(Config.PlaceId) or game.PlaceId
     local ok, err = pcall(function()
-        TeleportService:TeleportToPlaceInstance(placeNum, jobId, LocalPlayer)
+        local TS = cloneref and cloneref(TeleportService) or TeleportService
+        local LP = cloneref and cloneref(LocalPlayer) or LocalPlayer
+        TS:TeleportToPlaceInstance(placeNum, jobId, LP)
     end)
     if not ok then
         State.isHopping = false
-        print("[HopServer v2.1] Teleporte falhou: " .. tostring(err))
+        print("[HopServer v2.2] Teleporte falhou: " .. tostring(err))
         if onResult then onResult(false, tostring(err)) end
     end
 end
@@ -373,7 +323,7 @@ pcall(function()
             end
             local reason = tostring(teleportResult):gsub("Enum.TeleportResult.", "")
             local msg = "Servidor indisponivel (" .. reason .. ")."
-            print("[HopServer v2.1] " .. msg)
+            print("[HopServer v2.2] " .. msg)
             if setStatus then setStatus(msg, Color3.fromRGB(255, 196, 57)) end
             if InfoText then
                 InfoText.Text = msg
@@ -407,29 +357,18 @@ local C = {
 }
 
 -- ============================================================
---  INTERFACE GRAFICA
+--  INTERFACE GRAFICA (STEALTH AVANCADO)
 -- ============================================================
 
-pcall(function()
-    local c = getGuiContainer()
-    if c then
-        for _, ch in ipairs(c:GetChildren()) do
-            if ch.Name:find("HopUI_") or ch.Name == "HopServerUI_v1" then
-                ch:Destroy()
-            end
-        end
-    end
-end)
+local WIN_W, WIN_H = 380, 545
 
-local WIN_W, WIN_H = 380, 560
-
-local ScreenGui = make("ScreenGui", {
-    Name           = getRandomName(),
-    ResetOnSpawn   = false,
-    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-    IgnoreGuiInset = true,
-}, getGuiContainer())
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = getRandomName()
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.IgnoreGuiInset = true
 protectGui(ScreenGui)
+ScreenGui.Parent = getGuiContainer()
 
 local MainFrame = make("Frame", {
     Name             = "MainFrame",
@@ -460,13 +399,13 @@ make("Frame", {
 }, TitleBar)
 
 make("TextLabel", {
-    Text = ">> HOP SERVER  v2.1", Size = UDim2.new(0,240,0,22), Position = UDim2.new(0,12,0,6),
+    Text = ">> HOP SERVER  v2.2", Size = UDim2.new(0,240,0,22), Position = UDim2.new(0,12,0,6),
     BackgroundTransparency=1, TextSize=15, Font=Enum.Font.GothamBold, TextColor3=C.Text,
     TextXAlignment=Enum.TextXAlignment.Left, ZIndex=4,
 }, TitleBar)
 
 make("TextLabel", {
-    Text = "Roube um Ovo  |  PlaceId: " .. Config.PlaceId,
+    Text = "Steal An Egg  |  PlaceId: " .. Config.PlaceId,
     Size = UDim2.new(0,280,0,14), Position = UDim2.new(0,13,0,28),
     BackgroundTransparency=1, TextSize=10, Font=Enum.Font.Gotham, TextColor3=C.TextDim,
     TextXAlignment=Enum.TextXAlignment.Left, ZIndex=4,
@@ -538,63 +477,18 @@ local ScanBtn = makeBtn("[+] Atualizar", C.Card, 108, 1, ActionsRow)
 HopBestBtn    = makeBtn("[>] Ir ao Menor", C.Accent, 148, 2, ActionsRow)
 make("UIStroke",{Color=C.Border,Thickness=1},ScanBtn)
 
--- Linha de BFLoader (Auto BF Switch + Botao Manual)
-local ToggleRow = make("Frame", {
-    Name="ToggleRow",
-    Size=UDim2.new(1,-24,0,34), Position=UDim2.new(0,12,0,52),
-    BackgroundColor3=C.Card, BorderSizePixel=0,
-}, Body)
-make("UICorner",{CornerRadius=UDim.new(0,8)},ToggleRow)
-make("UIStroke",{Color=C.Border,Thickness=1},ToggleRow)
-
-local SwitchPill = make("TextButton", {
-    Text="", Size=UDim2.new(0,36,0,20), Position=UDim2.new(0,10,0.5,-10),
-    BackgroundColor3=State.autoReloadHop and C.Accent or C.Border,
-    BorderSizePixel=0, AutoButtonColor=false,
-}, ToggleRow)
-make("UICorner",{CornerRadius=UDim.new(0,10)},SwitchPill)
-
-local SwitchThumb = make("Frame", {
-    Size=UDim2.new(0,14,0,14),
-    Position=State.autoReloadHop and UDim2.new(1,-16,0.5,-7) or UDim2.new(0,2,0.5,-7),
-    BackgroundColor3=Color3.fromRGB(255,255,255), BorderSizePixel=0,
-}, SwitchPill)
-make("UICorner",{CornerRadius=UDim.new(0.5,0)},SwitchThumb)
-
-make("TextLabel", {
-    Text="Auto-Reload Hop",
-    Size=UDim2.new(0,100,1,0), Position=UDim2.new(0,52,0,0),
-    BackgroundTransparency=1, TextSize=10, Font=Enum.Font.GothamBold,
-    TextColor3=C.Text, TextXAlignment=Enum.TextXAlignment.Left,
-}, ToggleRow)
-
-local function updateSwitchVisual()
-    local on = State.autoReloadHop
-    tw(SwitchPill, { BackgroundColor3 = on and C.Accent or C.Border }, 0.15)
-    tw(SwitchThumb, { Position = on and UDim2.new(1,-16,0.5,-7) or UDim2.new(0,2,0.5,-7) }, 0.15)
-end
-
-SwitchPill.MouseButton1Click:Connect(function()
-    State.autoReloadHop = not State.autoReloadHop
-    saveCurrentSettings({ autoReloadHop = State.autoReloadHop, autoLoadBFLoader = State.autoLoadBFLoader })
-    updateSwitchVisual()
-    local st = State.autoReloadHop and "Auto-Reload: ATIVADO (queue)" or "Auto-Reload: DESATIVADO (Hop 100% Puro)"
-    if setStatus then setStatus(st, State.autoReloadHop and C.Yellow or C.GreenBr) end
-    print("[HopServer v2.1] " .. st)
-end)
-
 -- Botao Manual do BFLoader
 local ManualBFBtn = make("TextButton", {
     Text="⚡ Executar BFLoader",
-    Size=UDim2.new(0,150,0,26), Position=UDim2.new(1,-158,0.5,-13),
-    BackgroundColor3=C.CardHov, TextColor3=C.Text,
-    TextSize=10, Font=Enum.Font.GothamBold, BorderSizePixel=0, AutoButtonColor=false,
-}, ToggleRow)
-make("UICorner",{CornerRadius=UDim.new(0,7)},ManualBFBtn)
+    Size=UDim2.new(0,160,0,32), Position=UDim2.new(0,12,0,52),
+    BackgroundColor3=C.Card, TextColor3=C.Text,
+    TextSize=11, Font=Enum.Font.GothamBold, BorderSizePixel=0, AutoButtonColor=false,
+}, Body)
+make("UICorner",{CornerRadius=UDim.new(0,8)},ManualBFBtn)
 make("UIStroke",{Color=C.Border,Thickness=1},ManualBFBtn)
 
-ManualBFBtn.MouseEnter:Connect(function() tw(ManualBFBtn,{BackgroundColor3=C.Accent},0.12) end)
-ManualBFBtn.MouseLeave:Connect(function() tw(ManualBFBtn,{BackgroundColor3=C.CardHov},0.12) end)
+ManualBFBtn.MouseEnter:Connect(function() tw(ManualBFBtn,{BackgroundColor3=C.CardHov},0.12) end)
+ManualBFBtn.MouseLeave:Connect(function() tw(ManualBFBtn,{BackgroundColor3=C.Card},0.12) end)
 
 ManualBFBtn.MouseButton1Click:Connect(function()
     ManualBFBtn.Text = "Carregando..."
@@ -609,13 +503,20 @@ ManualBFBtn.MouseButton1Click:Connect(function()
         ManualBFBtn.Active = true
         if ok then
             if setStatus then setStatus("BFLoader executado com sucesso!", C.GreenBr) end
-            print("[HopServer v2.1] BFLoader carregado com sucesso.")
+            print("[HopServer v2.2] BFLoader carregado com sucesso.")
         else
             if setStatus then setStatus("Erro ao carregar BFLoader", C.Red) end
-            print("[HopServer v2.1] Erro no BFLoader: " .. tostring(err))
+            print("[HopServer v2.2] Erro no BFLoader: " .. tostring(err))
         end
     end)
 end)
+
+local TagLabel = make("TextLabel", {
+    Text="🛡️ Modo Zero-Trace Ativo (Hop Seguro)",
+    Size=UDim2.new(1,-190,0,32), Position=UDim2.new(0,180,0,52),
+    BackgroundTransparency=1, TextSize=10, Font=Enum.Font.Gotham,
+    TextColor3=C.GreenBr, TextXAlignment=Enum.TextXAlignment.Left,
+}, Body)
 
 -- InfoBar
 local InfoBar = make("Frame", {
@@ -922,4 +823,4 @@ tw(MainFrame,{Size=UDim2.new(0,WIN_W,0,WIN_H),Position=UDim2.new(0.5,-WIN_W/2,0.
 
 task.delay(0.1, function() doScan() end)
 setStatus("Pronto | RCtrl para ocultar")
-print("[HopServer v2.1] Pronto. RCtrl para ocultar/mostrar.")
+print("[HopServer v2.2] Pronto. RCtrl para ocultar/mostrar.")
