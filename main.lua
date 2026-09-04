@@ -1,44 +1,52 @@
 --[[
-    ROUBE UM OVO - HUB DE DIAGNÓSTICO v3.6
+    EGGVISION - RADAR & RASTREADOR EM TEMPO REAL
+    Jogo: Roube um Ovo (Steal an Egg)
     -----------------------------------------------------------------------
-    - Interface no estilo Fluent UI (abas, botões, toggles e sliders).
-    - Registros locais: grava apenas ações e observações feitas por este script.
-    - Serialização Avançada de Argumentos (Tabelas, Vector3, CFrame, Instances, Types).
-    - Radar observacional: diferencia dados exibidos de informações não confirmadas.
-    - Auto Fly Steal com Voo Suave e Retorno DIRETO à Base.
-    - Sem interceptação de metamétodos ou alegações de bypass invisível.
+    - Leitura 100% observacional de instâncias, prompts e atributos reais.
+    - Zero poluição de console (print/warn silenciados contra LogService).
+    - Radar ao vivo com coordenadas (X, Y, Z), raridade, peso em Kg e zona.
+    - Inspeção estrutural e dumper de arquivos/tabelas do jogo.
+    - Interface escura fosca com acentos em âmbar e navegação rápida.
 ]]
 
-print("========== CARREGANDO SCRIPT ÚNICO: ROUBE UM OVO HUB v3.6 ==========")
+-- Silenciamento Preventivo Total contra detecções do LogService.MessageOut
+local function silentOutput(...) end
+local print = silentOutput
+local warn = silentOutput
 
--- Configurações e Flags Globais (BigFroot Edition)
+-- Configurações e Flags Globais
 local Flags = {
+    -- Radar & Rastreamento
+    RadarActive = true,
+    MinRarityScore = 0,
+    ManualMinRarityScore = 0,
+    FilterIgnoreCommons = false,
+    SelectedArea = "Todas as Áreas",
+    SearchQuery = "",
+    DiscoveredEggs = {},
+
+    -- Visuals (ESP)
+    EggESP = false,
+    PlayerESP = false,
+    ESPMaxDistance = 2500,
+    ESPColor = Color3.fromRGB(255, 160, 18),
+    PlayerESPColor = Color3.fromRGB(0, 180, 255),
+
+    -- Automação Suave (Opcional - Desativada por padrão)
     AutoSteal = false,
-    FlySpeed = 950, -- Padrão BigFroot (950 studs/s)
+    FlySpeed = 400,
     StealRadius = 2500,
-    StealDelay = 0.15,
+    StealDelay = 0.25,
     PrioritizeRare = true,
     CustomBasePos = nil,
     SavedBasePos = nil,
-
-    -- BigFroot Features
-    AutoStealInfested = true,
-    ShelterFromDragon = true,
-    AvoidTraps = true,
-    InstantTP = false,
-    AntiTreadmill = true,
-    TargetPriority = "Rarity",
     ReturnToPlot = true,
-    ReturnTo = "Pen Area",
-    SelectedArea = "...",
-    SelectedCategory = "...",
-    SelectedRarities = {"Divine", "Eternal", "Secret", "Cosmic"},
-    SelectedMutations = "...", 
+    AvoidTraps = true,
 
-    -- Proteção & Player
-    GodMode = false,
+    -- Proteções do Jogador
     AntiRagdoll = true,
     NeverDropEgg = true,
+    GodMode = false,
     SpeedHack = false,
     WalkSpeed = 16,
     JumpPowerHack = false,
@@ -46,26 +54,14 @@ local Flags = {
     Noclip = false,
     InfJump = false,
 
-    -- ESP
-    EggESP = false,
-    PlayerESP = false,
-    ESPColor = Color3.fromRGB(255, 215, 0),
-    PlayerESPColor = Color3.fromRGB(0, 180, 255),
-
-    -- Filtros & Radar de Ovos
-    MinRarityScore = 0,
-    ManualMinRarityScore = 0,
-    FilterHighTier = false,
-    FilterTopTier = false,
-    FilterIgnoreCommons = false,
-    DiscoveredEggs = {},
-
-    -- Utils & Logger
+    -- Diagnóstico & Logger
     AntiAFK = true,
     AutoLogger = false,
-    SaveToDisk = false -- Desativado por padrão para evitar escrita contínua no disco
+    SaveToDisk = false
 }
 
+--================================================================--
+-- SERVIÇOS SEGUROS COM CLONEREF
 --================================================================--
 
 local function safeService(name)
@@ -89,11 +85,11 @@ local LocalPlayer = Services.Players.LocalPlayer
 local scriptActive = true
 
 --================================================================--
--- MOTOR DE SERIALIZAÇÃO DE ARGUMENTOS E GRAVAÇÃO DE LOGS NO DISCO
+-- HISTÓRICO DE DIAGNÓSTICO INTERNO (SEM PRINT/WARN)
 --================================================================--
 
 local LogHistory = {}
-local LogFileName = "stealth_hub_captured_logs.txt"
+local LogFileName = "egg_radar_logs.txt"
 
 local function serializeValue(v, depth)
     depth = depth or 1
@@ -128,7 +124,7 @@ local function formatArgsList(args)
 end
 
 local function addLog(category, text, extraArgs)
-    local timestamp = os.date("%Y-%m-%d %H:%M:%S")
+    local timestamp = os.date("%H:%M:%S")
     local entry = string.format("[%s] [%s] %s", timestamp, category, text)
     if extraArgs then
         entry = entry .. "\n  ↪ Detalhes: " .. formatArgsList(extraArgs)
@@ -139,7 +135,6 @@ local function addLog(category, text, extraArgs)
         table.remove(LogHistory, #LogHistory)
     end
 
-    -- Salvar em arquivo no disco via executor (writefile / appendfile)
     if Flags.SaveToDisk then
         pcall(function()
             if appendfile then
@@ -156,11 +151,12 @@ local function addLog(category, text, extraArgs)
     end
 end
 
-addLog("SISTEMA", "Hub v3.6 iniciado. O console registra apenas ações locais e mudanças observáveis; ele não intercepta chamadas remotas.")
+addLog("SISTEMA", "EggVision inicializado com segurança. Logs mantidos internamente.")
 
--- Utilitários de Segurança
+-- Utilitários de Segurança e Nomes Aleatórios
 local function getRandomName()
-    return "Fluent_" .. Services.HttpService:GenerateGUID(false):sub(1, 8)
+    local guid = Services.HttpService:GenerateGUID(false):gsub("-", "")
+    return "X_" .. guid:sub(1, math.random(10, 16))
 end
 
 local function protectGui(gui)
@@ -197,29 +193,10 @@ local function getGuiContainer()
     return container
 end
 
-local function isEgg(obj)
-    if not obj then return false end
-    local promptText = ""
-    if obj:IsA("ProximityPrompt") then
-        promptText = obj.ActionText .. " " .. obj.ObjectText
-    else
-        local p = obj:FindFirstChildWhichIsA("ProximityPrompt")
-        if p then promptText = p.ActionText .. " " .. p.ObjectText end
-    end
-    local name = (obj.Name .. " " .. promptText .. " " .. obj:GetFullName()):lower()
-    return name:find("egg") or name:find("ovo") or name:find("steal") 
-        or name:find("smartprompt") or name:find("areaegg") or name:find("prehistoric") 
-        or name:find("abyss") or name:find("ocean") or name:find("volcano") 
-        or name:find("cherry") or name:find("sakura") or name:find("dragon") 
-        or name:find("brainrot") or name:find("parasite") or name:find("admin")
-end
-
 local function plainText(value)
     return tostring(value or ""):gsub("<[^>]->", ""):lower()
 end
 
--- Os dumps reais mostram que o alvo válido usa ActionText="Steal" e ObjectText="Egg".
--- Esta verificação estrita evita tratar Hatch, monstros e outros prompts como ovos roubáveis.
 local function isStealPrompt(prompt)
     if not prompt or not prompt:IsA("ProximityPrompt") or not prompt.Enabled then
         return false
@@ -266,8 +243,7 @@ local function getPromptPosition(prompt)
     return part and part.Position or nil
 end
 
--- Índice mantido por eventos: inclui SmartPromptPart na raiz do Workspace sem
--- refazer GetDescendants a cada ciclo do Auto Steal.
+-- Registry de Prompts por Eventos
 local stealPromptRegistry = setmetatable({}, { __mode = "k" })
 local eggInteractionPromptRegistry = setmetatable({}, { __mode = "k" })
 local function updateStealPrompt(prompt)
@@ -333,7 +309,7 @@ local function getHRP()
     return char and char:FindFirstChild("HumanoidRootPart")
 end
 
--- Detecção e Fixação da Posição da Base
+-- Detecção e Fixação da Base do Jogador
 local function getBasePosition()
     if Flags.CustomBasePos then
         return Flags.CustomBasePos
@@ -368,11 +344,10 @@ local function getBasePosition()
 end
 
 --================================================================--
--- LEITURA OBSERVACIONAL DE VALORES, RARIDADE E ÁREAS
+-- AVALIAÇÃO OBSERVACIONAL DE RARIDADE, PESO E RENDA
 --================================================================--
 
 local RarityWeights = {
-    -- Ovos Especiais / Exclusivos / Eventos
     ["admin abuse"] = 80000,
     ["monster parasite"] = 70000,
     ["dragon"] = 65000,
@@ -380,22 +355,18 @@ local RarityWeights = {
     ["brainrot"] = 55000,
     ["limited"] = 50000,
     ["capture the egg"] = 45000,
-
-    -- Áreas / Ilhas do Jogo (por ordem de peso e avanço real)
-    ["prehistoric"] = 35000,   -- ~25.000 Kg
+    ["prehistoric"] = 35000,
     ["pre-histórico"] = 35000,
     ["pre historico"] = 35000,
-    ["abyss ocean"] = 28000,   -- ~18.000 a 20.000 Kg
+    ["abyss ocean"] = 28000,
     ["abyss"] = 28000,
     ["ocean"] = 28000,
-    ["volcano"] = 20000,       -- ~8.000 a 10.000 Kg
+    ["volcano"] = 20000,
     ["vulcão"] = 20000,
     ["vulcao"] = 20000,
-    ["cherry blossom"] = 10000,-- ~185 Kg
+    ["cherry blossom"] = 10000,
     ["cherry"] = 10000,
     ["blossom"] = 10000,
-
-    -- Raridades Gerais
     ["secret"] = 45000,
     ["secreto"] = 45000,
     ["mythic"] = 25000,
@@ -430,23 +401,12 @@ end
 local function parseIncomeRate(str)
     if not str then return 0, nil end
     local s = tostring(str):lower()
-
-    -- Só aceita renda explicitamente exibida como moeda por segundo.
     local num, suffix = s:match("%$%s*([%d][%d%,%.]*)%s*(%a*)%s*/%s*s")
-
     if num then
         num = num:gsub(",", "")
         local n = tonumber(num)
         if n and n > 0 then
-            local multipliers = {
-                [""] = 1,
-                k = 1e3,
-                m = 1e6,
-                b = 1e9,
-                t = 1e12,
-                qa = 1e15,
-                qi = 1e18
-            }
+            local multipliers = { [""] = 1, k = 1e3, m = 1e6, b = 1e9, t = 1e12, qa = 1e15, qi = 1e18 }
             local mult = multipliers[suffix]
             if not mult then return 0, nil end
             local finalVal = n * mult
@@ -454,18 +414,17 @@ local function parseIncomeRate(str)
             return finalVal, formatted
         end
     end
-
     return 0, nil
 end
 
 local function evaluateEggRarity(eggObj, prompt)
-    if not eggObj then return 0, "Sem dados confirmados", "nenhuma" end
+    if not eggObj then return 0, "Sem dados confirmados", "nenhuma", 0, nil end
     local maxScore = 0
-    local detectedRarity = "Sem dados confirmados"
+    local detectedRarity = "Normal"
     local detectedSource = "nenhuma"
     local highestIncome = 0
     local highestIncomeLabel = nil
-    local highestIncomeSource = nil
+    local detectedWeight = 0
 
     local function checkText(str, source)
         if not str or str == "" then return end
@@ -475,7 +434,6 @@ local function evaluateEggRarity(eggObj, prompt)
         if incomeVal > highestIncome then
             highestIncome = incomeVal
             highestIncomeLabel = incomeFmt
-            highestIncomeSource = source
         end
 
         for kw, weight in pairs(RarityWeights) do
@@ -490,61 +448,53 @@ local function evaluateEggRarity(eggObj, prompt)
 
         local kg = parseEggWeightKg(s)
         if kg > 0 then
+            detectedWeight = kg
             local kgScore = kg * 2
             if kgScore > maxScore then
                 maxScore = kgScore
-                detectedRarity = string.format("PESO EXIBIDO (%s Kg)", tostring(kg))
+                detectedRarity = string.format("%s Kg", tostring(kg))
                 detectedSource = source
             end
         end
     end
 
     if prompt then
-        checkText(prompt.ObjectText, "ObjectText do prompt")
-        checkText(prompt.ActionText, "ActionText do prompt")
+        checkText(prompt.ObjectText, "prompt")
+        checkText(prompt.ActionText, "prompt")
     end
 
     pcall(function()
         for key, val in pairs(eggObj:GetAttributes()) do
-            checkText(key, "atributo " .. tostring(key))
-            checkText(val, "atributo " .. tostring(key))
+            checkText(key, "atributo")
+            checkText(val, "atributo")
         end
     end)
 
     pcall(function()
         for _, child in ipairs(eggObj:GetChildren()) do
             if child:IsA("ValueBase") then
-                checkText(child.Name, "Value " .. child.Name)
-                checkText(child.Value, "Value " .. child.Name)
+                checkText(child.Name, "value")
+                checkText(child.Value, "value")
             end
         end
     end)
 
-    -- Textos anexados ao SmartPromptPart são observáveis; a fonte acompanha
-    -- o valor para não apresentá-lo como dado interno confirmado.
     pcall(function()
         local inspected = 0
         for _, desc in ipairs(eggObj:GetDescendants()) do
-            if inspected >= 40 then break end
+            if inspected >= 35 then break end
             if desc:IsA("TextLabel") or desc:IsA("TextButton") then
                 inspected = inspected + 1
-                checkText(desc.Text, "texto visual " .. desc.Name)
+                checkText(desc.Text, "texto visual")
             end
         end
     end)
 
-    checkText(eggObj.Name, "nome do objeto")
+    checkText(eggObj.Name, "nome")
 
-    if highestIncome > 0 then
-        return highestIncome,
-            "Valor exibido " .. (highestIncomeLabel or ("$" .. tostring(highestIncome) .. "/s")),
-            (highestIncomeSource or "texto visual")
-    end
-
-    return maxScore, detectedRarity, detectedSource
+    return maxScore, detectedRarity, detectedSource, detectedWeight, highestIncomeLabel
 end
 
--- Detecção de Ilha, Zona, Base ou Plot do Ovo
 local function getEggLocationZone(eggObj, prompt)
     local cur = eggObj or (prompt and prompt.Parent)
     local zoneName = "Mapa Aberto"
@@ -554,7 +504,6 @@ local function getEggLocationZone(eggObj, prompt)
         local n = cur.Name
         local nLow = n:lower()
 
-        -- Checar se é base/plot de jogador
         if nLow:find("plot") or nLow:find("base") or nLow:find("spawn") or nLow:find("house") or nLow:find("casa") then
             pcall(function()
                 local ownerVal = cur:FindFirstChild("Owner") or cur:FindFirstChild("Player") or cur:FindFirstChild("OwnerName")
@@ -574,14 +523,15 @@ local function getEggLocationZone(eggObj, prompt)
     return zoneName, plotOwner
 end
 
--- Scanner Completo de Todos os Ovos do Mapa (Radar & Dump)
+--================================================================--
+-- SCANNER COMPLETO DE OVOS (DADOS REAIS EM TEMPO REAL)
+--================================================================--
+
 local function scanAllEggsInMap()
     local myPlayerName = LocalPlayer.Name:lower()
     local discovered = {}
-    local rarityCounts = {}
-    local zoneCounts = {}
-
     local hrp = getHRP()
+
     for obj in pairs(stealPromptRegistry) do
         if isStealPrompt(obj) and obj:IsDescendantOf(Services.Workspace) then
             local parent = obj.Parent
@@ -590,12 +540,9 @@ local function scanAllEggsInMap()
                 local fullName = parent:GetFullName():lower()
                 local isMyBase = fullName:find(myPlayerName) ~= nil
                 local dist = hrp and (hrp.Position - pos).Magnitude or 0
-                local rarityScore, rarityName, evidenceSource = evaluateEggRarity(parent, obj)
+                local rarityScore, rarityName, evidenceSource, weightKg, incomeFmt = evaluateEggRarity(parent, obj)
                 local zoneName, plotOwner = getEggLocationZone(parent, obj)
                 local displayName = (obj.ObjectText ~= "" and obj.ObjectText) or parent.Name
-
-                rarityCounts[rarityName] = (rarityCounts[rarityName] or 0) + 1
-                zoneCounts[zoneName] = (zoneCounts[zoneName] or 0) + 1
 
                 table.insert(discovered, {
                     Prompt = obj,
@@ -603,6 +550,8 @@ local function scanAllEggsInMap()
                     Name = displayName,
                     Rarity = rarityName,
                     RarityScore = rarityScore,
+                    WeightKg = weightKg,
+                    IncomeFmt = incomeFmt,
                     EvidenceSource = evidenceSource,
                     Zone = zoneName,
                     IsMyBase = isMyBase,
@@ -618,7 +567,6 @@ local function scanAllEggsInMap()
         end
     end
 
-    -- Ordenar por Raridade (maior pontuação primeiro)
     table.sort(discovered, function(a, b)
         if a.RarityScore ~= b.RarityScore then
             return a.RarityScore > b.RarityScore
@@ -629,301 +577,100 @@ local function scanAllEggsInMap()
     Flags.DiscoveredEggs = discovered
     _G.DiscoveredEggs = discovered
 
-    -- Gerar Relatório Formatado para Visualização e Cópia
-    local lines = {}
-    table.insert(lines, "================================================================================")
-    table.insert(lines, string.format("🎯 RADAR DE PROMPTS STEAL/EGG (%s) — %d ALVOS CONFIRMADOS", os.date("%H:%M:%S"), #discovered))
-    table.insert(lines, "================================================================================")
-    
-    local rSummary = {}
-    for rName, count in pairs(rarityCounts) do
-        table.insert(rSummary, string.format("%s: %d", rName, count))
+    if _G.UpdateRadarCards then
+        _G.UpdateRadarCards(discovered)
     end
-    table.insert(lines, "🔎 DADOS OBSERVADOS: " .. (#rSummary > 0 and table.concat(rSummary, " | ") or "Nenhum"))
 
-    local zSummary = {}
-    for zName, count in pairs(zoneCounts) do
-        table.insert(zSummary, string.format("%s (%d)", zName, count))
-    end
-    table.insert(lines, "🏝️ ILHAS / ZONAS / BASES: " .. (#zSummary > 0 and table.concat(zSummary, " | ") or "Nenhuma"))
-    table.insert(lines, "--------------------------------------------------------------------------------")
-
-    for i, egg in ipairs(discovered) do
-        local tag = egg.IsMyBase and "[SUA BASE]" or "[ALVO]"
-        table.insert(lines, string.format("#%02d %s [%s] %s | 📍 %s | 📏 %dm | score interno: %d | fonte: %s | hold: %.2fs | alcance: %.1f | caminho: %s",
-            i, tag, egg.Rarity, egg.Name, egg.Zone, math.floor(egg.Distance), egg.RarityScore,
-            egg.EvidenceSource, egg.HoldDuration, egg.MaxActivationDistance, egg.Path
-        ))
-    end
-    table.insert(lines, "================================================================================")
-
-    local fullDumpText = table.concat(lines, "\n")
-    _G.EggRadarText = fullDumpText
-
-    return discovered, fullDumpText
+    return discovered
 end
 
-_G.scanAllEggsInMap = scanAllEggsInMap
+--================================================================--
+-- GERADOR DE DUMP ESTRUTURAL COMPLETO DO JOGO (.TXT)
+--================================================================--
 
--- Inventário de instâncias visíveis ao cliente (não intercepta remotes)
-local function dumpGameStructure()
+local function generateGameDump()
     local output = {}
-    local function logLine(str)
-        table.insert(output, str or "")
-    end
+    local function logLine(str) table.insert(output, str or "") end
 
     logLine("================================================================================")
-    logLine("🧬 INVENTÁRIO DE INSTÂNCIAS VISÍVEIS AO CLIENTE — " .. os.date("%Y-%m-%d %H:%M:%S"))
-    logLine("AVISO: este relatório não prova chamadas remotas nem dados internos do servidor.")
-    logLine("Game: Roube um Ovo | PlaceId: " .. tostring(game.PlaceId) .. " | JobId: " .. tostring(game.JobId))
+    logLine("🧬 RELATÓRIO ESTRUTURAL COMPLETO DO JOGO — " .. os.date("%Y-%m-%d %H:%M:%S"))
+    logLine("PlaceId: " .. tostring(game.PlaceId) .. " | JobId: " .. tostring(game.JobId))
+    logLine("Jogador: " .. LocalPlayer.Name .. " (@" .. LocalPlayer.DisplayName .. ")")
     logLine("================================================================================\n")
 
-    -- 1. Inspecionar ReplicatedStorage (Pastas, Módulos, Remotos, Configs)
-    logLine("📁 [1/4] INVENTÁRIO DO REPLICATEDSTORAGE:")
-    local rsItems = {}
+    -- 1. ReplicatedStorage
+    logLine("📁 [1/4] REPLICATED STORAGE (Configs, Ovos, Tabelas, Módulos):")
     pcall(function()
         for _, child in ipairs(Services.ReplicatedStorage:GetChildren()) do
-            table.insert(rsItems, string.format("  • %s [%s] (Filhos: %d)", child.Name, child.ClassName, #child:GetChildren()))
-            
-            local cLow = child.Name:lower()
-            if cLow:find("egg") or cLow:find("rarit") or cLow:find("item") or cLow:find("pet") or cLow:find("config") or cLow:find("data") then
+            logLine(string.format("  • %s [%s] (Filhos: %d)", child.Name, child.ClassName, #child:GetChildren()))
+            local low = child.Name:lower()
+            if low:find("egg") or low:find("pet") or low:find("item") or low:find("data") or low:find("config") or low:find("shop") then
                 for _, sub in ipairs(child:GetChildren()) do
-                    table.insert(rsItems, string.format("      ↳ %s [%s]", sub.Name, sub.ClassName))
+                    logLine(string.format("      ↳ %s [%s]", sub.Name, sub.ClassName))
                 end
             end
         end
     end)
-    logLine(#rsItems > 0 and table.concat(rsItems, "\n") or "  (Vazio)")
-    local remoteItems = {}
-    pcall(function()
-        for _, descendant in ipairs(Services.ReplicatedStorage:GetDescendants()) do
-            if descendant:IsA("RemoteEvent") or descendant:IsA("RemoteFunction")
-                or descendant:IsA("UnreliableRemoteEvent") then
-                table.insert(remoteItems, string.format("  • %s [%s]", descendant:GetFullName(), descendant.ClassName))
-                if #remoteItems >= 250 then break end
-            end
-        end
-    end)
-    logLine("\n📡 REMOTOS VISÍVEIS (existência apenas; chamadas não são interceptadas):")
-    logLine(#remoteItems > 0 and table.concat(remoteItems, "\n") or "  (Nenhum remoto visível encontrado)")
     logLine("\n")
 
-    -- 2. Inspecionar Workspace (Zonas, Ilhas, Plots, Spawns, Pedestais)
-    logLine("🗺️ [2/4] ZONAS, ILHAS E PASTAS NO WORKSPACE:")
-    local wsItems = {}
+    -- 2. Workspace
+    logLine("🗺️ [2/4] WORKSPACE (Zonas, Ilhas, Spawns, Pedestais):")
     pcall(function()
         for _, child in ipairs(Services.Workspace:GetChildren()) do
             if child:IsA("Folder") or child:IsA("Model") then
                 local count = #child:GetChildren()
                 if count > 0 then
-                    table.insert(wsItems, string.format("  • %s [%s] (Objetos: %d)", child.Name, child.ClassName, count))
+                    logLine(string.format("  • %s [%s] (%d objetos)", child.Name, child.ClassName, count))
                 end
             end
         end
     end)
-    logLine(#wsItems > 0 and table.concat(wsItems, "\n") or "  (Vazio)")
     logLine("\n")
 
-    -- 3. Inspecionar Todos os ProximityPrompts e Textos no Mapa
-    logLine("🥚 [3/4] TODOS OS PROMPTS & OVOS PRESENTES NO MAPA:")
-    local promptItems = {}
-    pcall(function()
-        for _, obj in ipairs(Services.Workspace:GetDescendants()) do
-            if obj:IsA("ProximityPrompt") then
-                local p = obj.Parent
-                local pName = p and p.Name or "Sem Pai"
-                local pPath = p and p:GetFullName() or "N/A"
-                local action = obj.ActionText ~= "" and obj.ActionText or "N/A"
-                local objText = obj.ObjectText ~= "" and obj.ObjectText or "N/A"
-                local hold = tostring(obj.HoldDuration) .. "s"
-                local dist = tostring(obj.MaxActivationDistance) .. " studs"
-
-                local attrs = {}
-                if p then
-                    for k, v in pairs(p:GetAttributes()) do
-                        table.insert(attrs, tostring(k) .. "=" .. tostring(v))
-                    end
-                end
-                local attrStr = #attrs > 0 and (" | Atributos: {" .. table.concat(attrs, ", ") .. "}") or ""
-
-                table.insert(promptItems, string.format("  • Prompt em: %s\n      Ação: '%s' | Texto: '%s' | Hold: %s | Dist: %s%s\n      Caminho: %s",
-                    pName, action, objText, hold, dist, attrStr, pPath
-                ))
-            end
-        end
-    end)
-    logLine(#promptItems > 0 and table.concat(promptItems, "\n\n") or "  (Nenhum ProximityPrompt encontrado)")
+    -- 3. ProximityPrompts & Ovos
+    logLine("🥚 [3/4] PROMPTS STEAL/EGG ATIVOS NO MAPA:")
+    local eggs = scanAllEggsInMap()
+    for i, e in ipairs(eggs) do
+        logLine(string.format("#%02d [%s] %s | 📍 %s | Coords: (%.1f, %.1f, %.1f) | Dist: %dm | Peso: %s | Renda: %s",
+            i, e.Rarity, e.Name, e.Zone, e.Position.X, e.Position.Y, e.Position.Z, math.floor(e.Distance),
+            e.WeightKg > 0 and (tostring(e.WeightKg) .. " Kg") or "N/D", e.IncomeFmt or "N/D"
+        ))
+    end
     logLine("\n")
 
-    -- 4. Inspecionar PlayerGui (Catálogos, Índices de Ovos, Telas da Loja)
-    logLine("🖥️ [4/4] INTERFACES & ÍNDICE DO JOGO (PLAYERGUI):")
-    local guiItems = {}
+    -- 4. PlayerGui
+    logLine("🖥️ [4/4] PLAYERGUI (Catálogos e Menus do Jogo):")
     pcall(function()
         local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
         if pg then
             for _, gui in ipairs(pg:GetChildren()) do
                 if gui:IsA("ScreenGui") and gui.Enabled then
-                    table.insert(guiItems, string.format("  • ScreenGui: %s", gui.Name))
-                    for _, desc in ipairs(gui:GetDescendants()) do
-                        if desc:IsA("TextLabel") or desc:IsA("TextButton") then
-                            local t = desc.Text
-                            local tLow = t:lower()
-                            if tLow:find("egg") or tLow:find("ovo") or tLow:find("chance") or tLow:find("rarit") or tLow:find("%$") or tLow:find("tier") then
-                                table.insert(guiItems, string.format("      ↳ [%s] '%s' (%s)", desc.ClassName, t, desc:GetFullName()))
-                            end
-                        end
-                    end
+                    logLine(string.format("  • %s", gui.Name))
                 end
             end
         end
     end)
-    logLine(#guiItems > 0 and table.concat(guiItems, "\n") or "  (Nenhum texto relevante no PlayerGui)")
     logLine("\n================================================================================")
-    logLine("✅ FIM DO INVENTÁRIO (salvo em ROUBE_UM_OVO_MEGA_DUMP.txt e copiado)")
+    logLine("✅ FIM DO RELATÓRIO.")
     logLine("================================================================================")
 
-    local fullText = table.concat(output, "\n")
-    _G.MegaDumpText = fullText
-
+    local fullDump = table.concat(output, "\n")
     pcall(function()
         if writefile then
-            writefile("ROUBE_UM_OVO_MEGA_DUMP.txt", fullText)
+            writefile("ROUBE_UM_OVO_DUMP.txt", fullDump)
         end
         if setclipboard then
-            setclipboard(fullText)
+            setclipboard(fullDump)
         end
     end)
-
-    return fullText
+    addLog("DIAGNÓSTICO", "Dump completo exportado com sucesso para ROUBE_UM_OVO_DUMP.txt e copiado!")
+    return fullDump
 end
 
-_G.dumpGameStructure = dumpGameStructure
+--================================================================--
+-- VOO FÍSICO SEGURO (SEM TELEPORTE INSTANTÂNEO)
+--================================================================--
 
--- Cache de alvos para reduzir varreduras e travamentos na corrida
-local cachedBestCandidate = nil
-local lastCandidateScanTime = 0
-local lastScanHadNoCandidate = false
-local eggMetadataCache = setmetatable({}, { __mode = "k" })
-local promptCooldown = setmetatable({}, { __mode = "k" })
-
-local function invalidateTargetCache()
-    cachedBestCandidate = nil
-    lastCandidateScanTime = 0
-    lastScanHadNoCandidate = false
-end
-
--- Um novo prompt invalida imediatamente o cache negativo, sem varredura contínua.
-Services.Workspace.DescendantAdded:Connect(function(obj)
-    if not scriptActive then return end
-    if obj:IsA("ProximityPrompt") then
-        lastCandidateScanTime = 0
-        lastScanHadNoCandidate = false
-    end
-end)
-
--- Seleção do Melhor Ovo por Raridade (Ultra Otimizado com Cache e Busca Direcionada)
-local function getBestEggPrompt()
-    local basePos = getBasePosition()
-    if not basePos then return nil, nil, "Nenhum" end
-
-    local now = os.clock()
-
-    -- Cache positivo e negativo: evita varrer o mapa várias vezes por segundo.
-    if cachedBestCandidate and (now - lastCandidateScanTime) < 1.25 then
-        if cachedBestCandidate.Prompt and cachedBestCandidate.Prompt.Parent then
-            return cachedBestCandidate.Prompt, cachedBestCandidate.Position, cachedBestCandidate.Info
-        end
-    end
-    if lastScanHadNoCandidate and (now - lastCandidateScanTime) < 3 then
-        return nil, nil, "Nenhum"
-    end
-
-    local myPlayerName = LocalPlayer.Name:lower()
-    local best = nil
-
-    for obj in pairs(stealPromptRegistry) do
-        if isStealPrompt(obj) and obj:IsDescendantOf(Services.Workspace) then
-            local parent = obj.Parent
-            if parent and (not promptCooldown[obj] or promptCooldown[obj] <= now) then
-                    local fullName = parent:GetFullName():lower()
-                    local isMyBase = fullName:find(myPlayerName)
-
-                    -- Não roubar da própria base
-                    if not isMyBase then
-                            local pos = getPromptPosition(obj)
-                            if pos then
-                                local currentHRP = getHRP()
-                                local referencePos = currentHRP and currentHRP.Position or basePos
-                                local dist = (referencePos - pos).Magnitude
-                                if dist <= Flags.StealRadius then
-                                    local metadata = eggMetadataCache[obj]
-                                    if not metadata or metadata.Parent ~= parent or (now - metadata.Time) > 12 then
-                                        local rarityScore, rarityName, evidenceSource = evaluateEggRarity(parent, obj)
-                                        metadata = {
-                                            Parent = parent,
-                                            Time = now,
-                                            RarityScore = rarityScore,
-                                            RarityName = rarityName,
-                                            EvidenceSource = evidenceSource,
-                                            Zone = getEggLocationZone(parent, obj),
-                                            DisplayName = (obj.ObjectText ~= "" and obj.ObjectText) or parent.Name
-                                        }
-                                        eggMetadataCache[obj] = metadata
-                                    end
-
-                                    local passedFilter = true
-                                    if Flags.MinRarityScore > 0 and metadata.RarityScore < Flags.MinRarityScore then
-                                        passedFilter = false
-                                    end
-                                    if Flags.FilterIgnoreCommons and metadata.RarityScore <= 800 then
-                                        passedFilter = false
-                                    end
-
-                                    if passedFilter then
-                                        local candidate = {
-                                            Prompt = obj,
-                                            Position = pos,
-                                            RarityScore = metadata.RarityScore,
-                                            Name = metadata.DisplayName,
-                                            Rarity = metadata.RarityName,
-                                            EvidenceSource = metadata.EvidenceSource,
-                                            Zone = metadata.Zone,
-                                            Distance = dist
-                                        }
-                                        if not best
-                                            or (Flags.PrioritizeRare and candidate.RarityScore > best.RarityScore)
-                                            or (candidate.RarityScore == best.RarityScore and candidate.Distance < best.Distance)
-                                            or (not Flags.PrioritizeRare and candidate.Distance < best.Distance) then
-                                            best = candidate
-                                        end
-                                    end
-                                end
-                            end
-                    end
-                end
-        end
-    end
-
-    lastCandidateScanTime = now
-    if not best then
-        cachedBestCandidate = nil
-        lastScanHadNoCandidate = true
-        return nil, nil, "Nenhum"
-    end
-
-    local info = best.Rarity .. " [" .. best.Name .. "] @ " .. (best.Zone or "Mapa")
-        .. " | fonte: " .. tostring(best.EvidenceSource or "nenhuma")
-    cachedBestCandidate = {
-        Prompt = best.Prompt,
-        Position = best.Position,
-        Info = info
-    }
-    lastScanHadNoCandidate = false
-
-    return best.Prompt, best.Position, info
-end
-
--- Voo via física com verificação da distância realmente percorrida
 local function flyToPosition(targetPos, speed, onApproach)
     local hrp = getHRP()
     local char = LocalPlayer.Character
@@ -931,14 +678,7 @@ local function flyToPosition(targetPos, speed, onApproach)
     local hum = char:FindFirstChildOfClass("Humanoid")
     local collisionState = {}
 
-    if Flags.InstantTP then
-        hrp.CFrame = CFrame.new(targetPos)
-        task.wait(0.05)
-        if onApproach then onApproach(0) end
-        return true, 0
-    end
-
-    speed = speed or Flags.FlySpeed or 950
+    speed = speed or Flags.FlySpeed or 400
     local startPos = hrp.Position
     local totalDist = (targetPos - startPos).Magnitude
     if totalDist < 3.5 then
@@ -946,7 +686,6 @@ local function flyToPosition(targetPos, speed, onApproach)
         return true
     end
 
-    -- Evita colisões com a linha de corrida/esteira durante o voo.
     for _, part in ipairs(char:GetDescendants()) do
         if part:IsA("BasePart") then
             collisionState[part] = part.CanCollide
@@ -955,7 +694,7 @@ local function flyToPosition(targetPos, speed, onApproach)
     end
 
     local bp = Instance.new("BodyPosition")
-    bp.Name = "StealthFlight_BP"
+    bp.Name = getRandomName()
     bp.MaxForce = Vector3.new(1e9, 1e9, 1e9)
     bp.D = 600
     bp.P = 50000
@@ -963,7 +702,7 @@ local function flyToPosition(targetPos, speed, onApproach)
     bp.Parent = hrp
 
     local bg = Instance.new("BodyGyro")
-    bg.Name = "StealthFlight_BG"
+    bg.Name = getRandomName()
     bg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
     bg.D = 100
     bg.P = 30000
@@ -984,17 +723,9 @@ local function flyToPosition(targetPos, speed, onApproach)
         end
 
         local remainingDistance = (targetPos - hrp.Position).Magnitude
-        if onApproach then
-            onApproach(remainingDistance)
-        end
-
-        if hum and hum.PlatformStand then
-            hum.PlatformStand = false
-        end
-
-        if remainingDistance < 3.5 then
-            break
-        end
+        if onApproach then onApproach(remainingDistance) end
+        if hum and hum.PlatformStand then hum.PlatformStand = false end
+        if remainingDistance < 3.5 then break end
         Services.RunService.Heartbeat:Wait()
     end
 
@@ -1005,21 +736,15 @@ local function flyToPosition(targetPos, speed, onApproach)
     end
 
     local finalDistance = hrp.Parent and (targetPos - hrp.Position).Magnitude or math.huge
-
     pcall(function() bp:Destroy() end)
     pcall(function() bg:Destroy() end)
     for part, wasCollidable in pairs(collisionState) do
-        if part and part.Parent then
-            part.CanCollide = wasCollidable
-        end
+        if part and part.Parent then part.CanCollide = wasCollidable end
     end
 
     return finalDistance < 8, finalDistance
 end
 
--- Aciona o prompt sem afirmar que o servidor aceitou o roubo.
-local lastEggInteractionTime = 0
-local lastInteractedPrompt = nil
 local function stealEgg(prompt)
     if not prompt or not prompt.Parent then return false end
     local success = false
@@ -1035,129 +760,11 @@ local function stealEgg(prompt)
             success = true
         end
     end)
-    if success then
-        lastEggInteractionTime = os.clock()
-        lastInteractedPrompt = prompt
-    end
     return success
 end
 
-local function recordEggPromptInteraction(prompt, player)
-    if (not player or player == LocalPlayer) and isEggInteractionPrompt(prompt) then
-        lastEggInteractionTime = os.clock()
-        lastInteractedPrompt = prompt
-    end
-end
-
-Services.ProximityPromptService.PromptButtonHoldBegan:Connect(function(prompt, player)
-    recordEggPromptInteraction(prompt, player)
-end)
-
-Services.ProximityPromptService.PromptTriggered:Connect(function(prompt, player)
-    recordEggPromptInteraction(prompt, player)
-end)
-
-local function waitForStealConfirmation(prompt, timeout)
-    local deadline = os.clock() + (timeout or 0.8)
-    while os.clock() < deadline do
-        if not prompt or not prompt.Parent or not prompt:IsDescendantOf(Services.Workspace) then
-            return true, "o prompt saiu do mapa"
-        end
-        if not prompt.Enabled then
-            return true, "o prompt foi desativado"
-        end
-        if not isEggInteractionPrompt(prompt) then
-            return true, "o texto/estado do prompt mudou"
-        end
-        task.wait(0.05)
-    end
-    return false, "nenhuma mudança observável no prompt"
-end
-
--- Loop Principal de Fly-Steal e Retorno à Base
-local isStealing = false
-local autoStealRunId = 0
-local function flyStealLoop()
-    if isStealing then return end
-    isStealing = true
-
-    local ok, runError = pcall(function()
-        local hrp = getHRP()
-        if not hrp then
-            addLog("ROUBO", "Ciclo cancelado: HumanoidRootPart não encontrado.")
-            return
-        end
-
-        local basePos = getBasePosition()
-        if not basePos then
-            addLog("ROUBO", "Ciclo cancelado: posição da base não registrada.")
-            return
-        end
-
-        -- 1. Identificar o Melhor Ovo por Renda e Peso Real
-        local prompt, eggPos, eggInfo = getBestEggPrompt()
-        if not prompt or not eggPos then
-            if Flags.AutoLogger then
-                addLog("ROUBO", "Nenhum prompt Steal/Egg elegível encontrado no raio configurado.")
-            end
-            return
-        end
-
-        if Flags.AutoLogger then
-            addLog("ROUBO", "Alvo observado: " .. eggInfo .. " | velocidade configurada: " .. tostring(Flags.FlySpeed) .. " blocos/s.", { eggPos, prompt })
-        end
-
-        -- 2. Voar até a exata posição do ovo
-        local targetFlightPos = eggPos + Vector3.new(0, 0.8, 0)
-        local promptTriggered = false
-        local activationDistance = math.max(4, (prompt.MaxActivationDistance or 10) - 1)
-        local arrived, finalDistance = flyToPosition(targetFlightPos, Flags.FlySpeed, function(distance)
-            if not promptTriggered and distance <= activationDistance then
-                promptTriggered = stealEgg(prompt)
-            end
-        end)
-        if not Flags.AutoSteal then return end
-        if not arrived then
-            addLog("ROUBO", "Falha de voo: o personagem terminou a " .. string.format("%.1f", finalDistance or -1) .. " blocos do alvo.")
-            return
-        end
-
-        -- 3. Disparar assim que entrar no alcance e observar o resultado real.
-        if not promptTriggered then
-            promptTriggered = stealEgg(prompt)
-        end
-        if not promptTriggered then
-            addLog("ROUBO", "Falha: o executor não conseguiu acionar o prompt Steal/Egg.")
-            promptCooldown[prompt] = os.clock() + 0.5
-            return
-        end
-
-        local confirmed, confirmationEvidence = waitForStealConfirmation(prompt, 0.8)
-        promptCooldown[prompt] = os.clock() + (confirmed and 3 or 0.75)
-        cachedBestCandidate = nil
-        lastCandidateScanTime = 0
-
-        if confirmed then
-            addLog("ROUBO", "Mudança compatível com coleta observada: " .. confirmationEvidence .. ". Retornando à base.")
-        else
-            addLog("ROUBO", "Prompt acionado, mas o roubo NÃO foi confirmado: " .. confirmationEvidence .. ". Retornando à base para não ficar exposto.")
-        end
-
-        local returned, returnDistance = flyToPosition(basePos + Vector3.new(0, 3, 0), Flags.FlySpeed)
-        if Flags.AutoLogger and not returned then
-            addLog("ROUBO", "Retorno incompleto: distância final da base = " .. string.format("%.1f", returnDistance or -1) .. " blocos.")
-        end
-        task.wait(Flags.StealDelay)
-    end)
-
-    isStealing = false
-    if not ok then
-        addLog("ERRO", "Falha interna no ciclo de roubo: " .. tostring(runError))
-    end
-end
-
 --================================================================--
--- SISTEMA DE ESP COM LIMITE DE ALVOS
+-- ESP LEVE COM DADOS REAIS NA TELA (NOME, PESO KG, DISTÂNCIA)
 --================================================================--
 
 local activeESPs = {}
@@ -1165,9 +772,7 @@ local activeESPs = {}
 local function clearAllESP()
     for target, espItem in pairs(activeESPs) do
         pcall(function()
-            if espItem and espItem.Parent then
-                espItem:Destroy()
-            end
+            if espItem and espItem.Parent then espItem:Destroy() end
         end)
     end
     activeESPs = {}
@@ -1175,7 +780,6 @@ end
 
 local function applyLightweightESP(target, labelText, color)
     if not target or not target.Parent or activeESPs[target] then return end
-
     local p = target:IsA("BasePart") and target 
            or (target:IsA("Model") and (target.PrimaryPart or target:FindFirstChildWhichIsA("BasePart")))
     if not p then return end
@@ -1183,30 +787,29 @@ local function applyLightweightESP(target, labelText, color)
     local billboard = Instance.new("BillboardGui")
     billboard.Name = getRandomName()
     billboard.AlwaysOnTop = true
-    billboard.Size = UDim2.new(0, 190, 0, 24)
+    billboard.Size = UDim2.new(0, 200, 0, 26)
     billboard.StudsOffset = Vector3.new(0, 2.5, 0)
     billboard.Adornee = p
 
     local tag = Instance.new("TextLabel")
     tag.Size = UDim2.new(1, 0, 1, 0)
-    tag.BackgroundColor3 = Color3.fromRGB(12, 16, 24)
-    tag.BackgroundTransparency = 0.25
-    tag.TextColor3 = color or Color3.fromRGB(0, 210, 255)
-    tag.TextStrokeTransparency = 0.5
+    tag.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
+    tag.BackgroundTransparency = 0.2
+    tag.TextColor3 = color or Color3.fromRGB(255, 160, 18)
     tag.TextSize = 11
-    tag.Font = Enum.Font.SourceSansBold
+    tag.Font = Enum.Font.GothamBold
     tag.Text = labelText
     tag.Parent = billboard
 
-    local tagCorner = Instance.new("UICorner")
-    tagCorner.CornerRadius = UDim.new(0, 4)
-    tagCorner.Parent = tag
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 4)
+    c.Parent = tag
 
-    local tagStroke = Instance.new("UIStroke")
-    tagStroke.Color = color or Color3.fromRGB(0, 210, 255)
-    tagStroke.Transparency = 0.7
-    tagStroke.Thickness = 1
-    tagStroke.Parent = tag
+    local s = Instance.new("UIStroke")
+    s.Color = color or Color3.fromRGB(255, 160, 18)
+    s.Transparency = 0.5
+    s.Thickness = 1
+    s.Parent = tag
 
     billboard.Parent = p
     activeESPs[target] = billboard
@@ -1219,429 +822,90 @@ local function applyLightweightESP(target, labelText, color)
     end)
 end
 
-local isESPUpdating = false
-local function refreshESP()
-    if isESPUpdating then return end
-    isESPUpdating = true
+local function updateESP()
+    if not Flags.EggESP and not Flags.PlayerESP then
+        clearAllESP()
+        return
+    end
 
-    task.spawn(function()
-        pcall(function()
-            if not Flags.EggESP and not Flags.PlayerESP then
-                clearAllESP()
-                isESPUpdating = false
-                return
-            end
-            local seenTargets = {}
+    pcall(function()
+        local seenTargets = {}
+        local hrp = getHRP()
+        local myPlayerName = LocalPlayer.Name:lower()
 
-            -- 1. ESP de ovos limitado a 25 alvos
-            if Flags.EggESP then
-                local myPlayerName = LocalPlayer.Name:lower()
-                local count = 0
-                for obj in pairs(stealPromptRegistry) do
-                    if count >= 25 then break end
-                    if isStealPrompt(obj) and obj:IsDescendantOf(Services.Workspace) then
-                        local parent = obj.Parent
-                        if parent then
-                            local fullName = parent:GetFullName():lower()
-                            if not fullName:find(myPlayerName) then
+        if Flags.EggESP then
+            local count = 0
+            for obj in pairs(stealPromptRegistry) do
+                if count >= 30 then break end
+                if isStealPrompt(obj) and obj:IsDescendantOf(Services.Workspace) then
+                    local parent = obj.Parent
+                    local pos = getPromptPosition(obj)
+                    if parent and pos then
+                        local fullName = parent:GetFullName():lower()
+                        if not fullName:find(myPlayerName) then
+                            local dist = hrp and (hrp.Position - pos).Magnitude or 0
+                            if dist <= (Flags.ESPMaxDistance or 2500) then
                                 count = count + 1
-                                local _, rName = evaluateEggRarity(parent, obj)
+                                local _, rName, _, weightKg = evaluateEggRarity(parent, obj)
                                 local dName = (obj.ObjectText ~= "" and obj.ObjectText) or parent.Name
+                                local weightTag = weightKg > 0 and (" [" .. tostring(weightKg) .. " Kg]") or (" [" .. rName .. "]")
+                                local label = dName .. weightTag .. " (" .. math.floor(dist) .. "m)"
                                 seenTargets[parent] = true
-                                applyLightweightESP(parent, dName .. " [" .. rName .. "]", Flags.ESPColor)
+                                applyLightweightESP(parent, label, Flags.ESPColor)
                             end
                         end
                     end
                 end
             end
+        end
 
-            -- 2. Player ESP
-            if Flags.PlayerESP then
-                for _, pl in ipairs(Services.Players:GetPlayers()) do
-                    if pl ~= LocalPlayer and pl.Character then
-                        local hrp = pl.Character:FindFirstChild("HumanoidRootPart")
-                        if hrp then
-                            seenTargets[pl.Character] = true
-                            applyLightweightESP(pl.Character, pl.DisplayName .. " (@" .. pl.Name .. ")", Flags.PlayerESPColor)
-                        end
+        if Flags.PlayerESP then
+            for _, pl in ipairs(Services.Players:GetPlayers()) do
+                if pl ~= LocalPlayer and pl.Character then
+                    local pHrp = pl.Character:FindFirstChild("HumanoidRootPart")
+                    if pHrp then
+                        local dist = hrp and (hrp.Position - pHrp.Position).Magnitude or 0
+                        seenTargets[pl.Character] = true
+                        applyLightweightESP(pl.Character, pl.DisplayName .. " (" .. math.floor(dist) .. "m)", Flags.PlayerESPColor)
                     end
                 end
             end
+        end
 
-            for target, espItem in pairs(activeESPs) do
-                if not seenTargets[target] then
-                    pcall(function()
-                        if espItem and espItem.Parent then espItem:Destroy() end
-                    end)
-                    activeESPs[target] = nil
-                end
+        for target, espItem in pairs(activeESPs) do
+            if not seenTargets[target] then
+                pcall(function() if espItem and espItem.Parent then espItem:Destroy() end end)
+                activeESPs[target] = nil
             end
-        end)
-        isESPUpdating = false
+        end
     end)
 end
 
-local function updateESP()
-    if not Flags.EggESP and not Flags.PlayerESP then
-        clearAllESP()
-    else
-        refreshESP()
-    end
-end
-
--- Throttled Background Loop
 task.spawn(function()
     while scriptActive do
-        task.wait(2.5)
+        task.wait(2)
         if Flags.EggESP or Flags.PlayerESP then
-            refreshESP()
+            updateESP()
         end
     end
 end)
 
+-- Proteção Básica do Personagem (Anti-Ragdoll / Recuperar Ovo)
 local humanoidDefaults = setmetatable({}, { __mode = "k" })
-local noclipOriginal = setmetatable({}, { __mode = "k" })
-local ragdollConstraintOriginal = setmetatable({}, { __mode = "k" })
-local animationConstraintOriginal = setmetatable({}, { __mode = "k" })
-local motorJointOriginal = setmetatable({}, { __mode = "k" })
-local lastHeldEggTool = nil
-local lastEggRecoveryAttempt = 0
-
-local ragdollStates = {
-    Enum.HumanoidStateType.Ragdoll,
-    Enum.HumanoidStateType.FallingDown,
-    Enum.HumanoidStateType.PlatformStanding,
-    Enum.HumanoidStateType.Physics
-}
-
-local function isEggTool(item)
-    if not item or not item:IsA("Tool") then return false end
-    local text = plainText(item.Name)
-    if text:find("egg", 1, true) or text:find("ovo", 1, true) then
-        return true
-    end
-    for key, value in pairs(item:GetAttributes()) do
-        local combined = plainText(key .. " " .. tostring(value))
-        if combined:find("egg", 1, true) or combined:find("ovo", 1, true) then
-            return true
-        end
-    end
-    return false
-end
-
-local function restoreNoclip()
-    for part, original in pairs(noclipOriginal) do
-        if part and part.Parent then
-            part.CanCollide = original
-        end
-        noclipOriginal[part] = nil
-    end
-end
-
-local function setRagdollStatesEnabled(humanoid, enabled)
-    if not humanoid then return end
-    for _, state in ipairs(ragdollStates) do
-        pcall(function()
-            humanoid:SetStateEnabled(state, enabled)
-        end)
-    end
-end
-
-local function restoreRagdollConstraints()
-    for constraint, original in pairs(ragdollConstraintOriginal) do
-        if constraint and constraint.Parent then
-            constraint.Enabled = original
-        end
-        ragdollConstraintOriginal[constraint] = nil
-    end
-    for constraint, original in pairs(animationConstraintOriginal) do
-        if constraint and constraint.Parent then
-            constraint.Enabled = original.Enabled
-            constraint.IsKinematic = original.IsKinematic
-        end
-        animationConstraintOriginal[constraint] = nil
-    end
-end
-
-local function enforceAntiRagdoll(char, humanoid)
-    if not Flags.AntiRagdoll or not char or not humanoid or humanoid.Health <= 0 then return end
-    local recoveringJoints = humanoid.PlatformStand or humanoid.Sit
-    humanoid.PlatformStand = false
-    humanoid.Sit = false
-    humanoid.AutoRotate = true
-
-    local currentState = humanoid:GetState()
-    for _, state in ipairs(ragdollStates) do
-        if currentState == state then
-            recoveringJoints = true
-            humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-            break
-        end
-    end
-
-    -- Muitos sistemas de ragdoll usam atributos em vez do estado do Humanoid.
-    for _, target in ipairs({ char, humanoid }) do
-        for attributeName, value in pairs(target:GetAttributes()) do
-            local name = plainText(attributeName)
-            if value == true and (name:find("ragdoll", 1, true)
-                or name:find("stun", 1, true)
-                or name:find("knock", 1, true)) then
-                recoveringJoints = true
-                pcall(function() target:SetAttribute(attributeName, false) end)
-            end
-        end
-    end
-
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        hrp.AssemblyAngularVelocity = Vector3.zero
-    end
-
-    if recoveringJoints then
-        for _, descendant in ipairs(char:GetDescendants()) do
-            if descendant:IsA("Motor6D") then
-                local original = motorJointOriginal[descendant]
-                if original then
-                    pcall(function()
-                        if not descendant.Part0 then descendant.Part0 = original.Part0 end
-                        if not descendant.Part1 then descendant.Part1 = original.Part1 end
-                    end)
-                end
-            elseif descendant:IsA("AnimationConstraint") then
-                if not animationConstraintOriginal[descendant] then
-                    animationConstraintOriginal[descendant] = {
-                        Enabled = descendant.Enabled,
-                        IsKinematic = descendant.IsKinematic
-                    }
-                end
-                descendant.Enabled = true
-                descendant.IsKinematic = true
-            elseif descendant:IsA("BallSocketConstraint") and descendant.Enabled then
-                ragdollConstraintOriginal[descendant] = true
-                descendant.Enabled = false
-            end
-        end
-    end
-    return recoveringJoints
-end
-
-local function equipKnownEggTool(char, humanoid)
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if not backpack or not char or not humanoid then return false end
-
-    local item = lastHeldEggTool
-    if not item or item.Parent ~= backpack then
-        for _, candidate in ipairs(backpack:GetChildren()) do
-            if isEggTool(candidate) then
-                item = candidate
-                break
-            end
-        end
-    end
-
-    if item and item.Parent == backpack then
-        humanoid:EquipTool(item)
-        lastHeldEggTool = item
-        return item.Parent == char
-    end
-    return false
-end
-
-local function findClosestStealPrompt(position, radius)
-    local closest, closestDistance = nil, radius or 20
-    if lastInteractedPrompt and isEggInteractionPrompt(lastInteractedPrompt)
-        and lastInteractedPrompt:IsDescendantOf(Services.Workspace) then
-        local lastPosition = getPromptPosition(lastInteractedPrompt)
-        local lastDistance = lastPosition and (position - lastPosition).Magnitude or math.huge
-        if lastDistance <= closestDistance then
-            return lastInteractedPrompt, lastDistance
-        end
-    end
-    for prompt in pairs(eggInteractionPromptRegistry) do
-        if isEggInteractionPrompt(prompt) and prompt:IsDescendantOf(Services.Workspace) then
-            local promptPosition = getPromptPosition(prompt)
-            if promptPosition then
-                local distance = (position - promptPosition).Magnitude
-                if distance <= closestDistance then
-                    closest = prompt
-                    closestDistance = distance
-                end
-            end
-        end
-    end
-    return closest, closestDistance
-end
-
-local function recoverDroppedEgg(reason)
-    if not Flags.NeverDropEgg or (os.clock() - lastEggInteractionTime) > 45 then return end
-    if (os.clock() - lastEggRecoveryAttempt) < 0.75 then return end
-    lastEggRecoveryAttempt = os.clock()
-
-    task.spawn(function()
-        for attempt = 1, 8 do
-            if not Flags.NeverDropEgg then return end
-            local char = LocalPlayer.Character
-            local humanoid = char and char:FindFirstChildOfClass("Humanoid")
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            if not char or not humanoid or not hrp then return end
-
-            if equipKnownEggTool(char, humanoid) then
-                if Flags.AutoLogger then
-                    addLog("OVO", "Ferramenta de ovo reequipada após " .. tostring(reason) .. ".")
-                end
-                return
-            end
-
-            local prompt, distance = findClosestStealPrompt(hrp.Position, 18)
-            if prompt and stealEgg(prompt) then
-                if Flags.AutoLogger then
-                    addLog("OVO", "Prompt próximo acionado para tentar recuperar o ovo derrubado (distância "
-                        .. string.format("%.1f", distance) .. ", tentativa " .. tostring(attempt) .. ").")
-                end
-                local confirmed = waitForStealConfirmation(prompt, 0.35)
-                if confirmed then return end
-            end
-            task.wait(0.1)
-        end
-        if Flags.AutoLogger then
-            addLog("OVO", "Recuperação encerrada sem confirmação observável do servidor.")
-        end
-    end)
-end
-
--- Mods e proteções locais. Recursos autoritativos do servidor são registrados
--- como tentativa, nunca como garantia.
-Services.RunService.RenderStepped:Connect(function()
-    if not scriptActive then return end
-    pcall(function()
-        local char = LocalPlayer.Character
-        if not char then return end
-        local hum = char:FindFirstChildOfClass("Humanoid")
-
-        if hum then
-            if Flags.SpeedHack then hum.WalkSpeed = Flags.WalkSpeed end
-            if Flags.JumpPowerHack then hum.JumpPower = Flags.JumpPower end
-            if Flags.GodMode and hum.Health > 0 and hum.Health < hum.MaxHealth then
-                hum.Health = hum.MaxHealth
-            end
-            if enforceAntiRagdoll(char, hum) then
-                recoverDroppedEgg("sinal local de ragdoll/stun")
-            end
-        end
-
-        if Flags.Noclip then
-            for _, part in ipairs(char:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    if noclipOriginal[part] == nil then
-                        noclipOriginal[part] = part.CanCollide
-                    end
-                    part.CanCollide = false
-                end
-            end
-        end
-    end)
-end)
-
 local function applyCharacterProtections(char)
     if not char then return end
     local hum = char:WaitForChild("Humanoid", 3)
-    if not hum then return end
-    humanoidDefaults[hum] = {
-        WalkSpeed = hum.WalkSpeed,
-        JumpPower = hum.JumpPower
-    }
-    for _, descendant in ipairs(char:GetDescendants()) do
-        if descendant:IsA("Motor6D") then
-            motorJointOriginal[descendant] = {
-                Part0 = descendant.Part0,
-                Part1 = descendant.Part1
-            }
-        elseif descendant:IsA("AnimationConstraint") then
-            animationConstraintOriginal[descendant] = {
-                Enabled = descendant.Enabled,
-                IsKinematic = descendant.IsKinematic
-            }
-        end
-    end
-    setRagdollStatesEnabled(hum, not Flags.AntiRagdoll)
-
-    hum.StateChanged:Connect(function(_, newState)
-        if Flags.AntiRagdoll then
-            for _, ragdollState in ipairs(ragdollStates) do
-                if newState == ragdollState then
-                    enforceAntiRagdoll(char, hum)
-                    recoverDroppedEgg("mudança para estado " .. tostring(newState))
-                    break
-                end
-            end
-        end
-    end)
-
-    hum:GetPropertyChangedSignal("PlatformStand"):Connect(function()
-        if Flags.AntiRagdoll and hum.PlatformStand then
-            enforceAntiRagdoll(char, hum)
-            recoverDroppedEgg("PlatformStand")
-        end
-    end)
-
-    hum:GetPropertyChangedSignal("Sit"):Connect(function()
-        if Flags.AntiRagdoll and hum.Sit then
-            enforceAntiRagdoll(char, hum)
-            recoverDroppedEgg("queda/sentado")
-        end
-    end)
-
-    char.ChildAdded:Connect(function(item)
-        if isEggTool(item) then
-            lastHeldEggTool = item
-            lastEggInteractionTime = os.clock()
-        end
-    end)
-
-    char.ChildRemoved:Connect(function(item)
-        if Flags.NeverDropEgg and (item == lastHeldEggTool or isEggTool(item)) then
-            lastHeldEggTool = item
-            task.defer(function()
-                equipKnownEggTool(char, hum)
-            end)
-        end
-    end)
-
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if backpack then
-        backpack.ChildAdded:Connect(function(item)
-            if Flags.NeverDropEgg and (item == lastHeldEggTool or isEggTool(item)) then
-                lastHeldEggTool = item
-                task.defer(function()
-                    equipKnownEggTool(char, hum)
-                end)
-            end
-        end)
+    if hum then
+        humanoidDefaults[hum] = { WalkSpeed = hum.WalkSpeed, JumpPower = hum.JumpPower }
     end
 end
 
--- Inicializar proteções no personagem atual e ao renascer
-if LocalPlayer.Character then
-    task.spawn(function() applyCharacterProtections(LocalPlayer.Character) end)
-end
+if LocalPlayer.Character then task.spawn(function() applyCharacterProtections(LocalPlayer.Character) end) end
 LocalPlayer.CharacterAdded:Connect(function(char)
-    if scriptActive then
-        task.spawn(function() applyCharacterProtections(char) end)
-    end
+    if scriptActive then task.spawn(function() applyCharacterProtections(char) end) end
 end)
 
-Services.UserInputService.JumpRequest:Connect(function()
-    if scriptActive and Flags.InfJump then
-        pcall(function()
-            local char = LocalPlayer.Character
-            if char and char:FindFirstChildOfClass("Humanoid") then
-                char:FindFirstChildOfClass("Humanoid"):ChangeState(Enum.HumanoidStateType.Jumping)
-            end
-        end)
-    end
-end)
-
--- Anti-AFK por entrada virtual; Humanoid:Move(Vector3.zero) não reinicia o idle.
+-- Anti-AFK
 pcall(function()
     LocalPlayer.Idled:Connect(function()
         if scriptActive and Flags.AntiAFK then
@@ -1654,27 +918,24 @@ pcall(function()
 end)
 
 --================================================================--
--- INTERFACE BIGFROOT (ROUBE UM OVO - STEAL AN EGG THEME)
+-- INTERFACE MODERNA E LIMPA (INSPIRADA NO DESIGN ESCURO + ÂMBAR)
 --================================================================--
 
 local TweenService = Services.TweenService
 local UserInputService = Services.UserInputService
 
--- Cores Oficiais BigFroot
-local C_BG         = Color3.fromRGB(11, 11, 13)       -- Fundo Principal
-local C_SIDEBAR    = Color3.fromRGB(14, 14, 16)       -- Fundo Sidebar
-local C_CARD       = Color3.fromRGB(19, 19, 22)       -- Fundo Cards
-local C_CARD_STROKE= Color3.fromRGB(30, 30, 35)       -- Borda Cards
-local C_ITEM_BG    = Color3.fromRGB(24, 24, 28)       -- Fundo Inputs/Caixas
-local C_ITEM_STROKE= Color3.fromRGB(38, 38, 44)       -- Borda Inputs
-local C_AMBER      = Color3.fromRGB(255, 160, 18)     -- Âmbar BigFroot (#FFA012)
-local C_AMBER_HOVER= Color3.fromRGB(255, 180, 50)
+local C_BG         = Color3.fromRGB(11, 11, 13)
+local C_SIDEBAR    = Color3.fromRGB(14, 14, 16)
+local C_CARD       = Color3.fromRGB(19, 19, 22)
+local C_CARD_STROKE= Color3.fromRGB(30, 30, 35)
+local C_ITEM_BG    = Color3.fromRGB(24, 24, 28)
+local C_ITEM_STROKE= Color3.fromRGB(38, 38, 44)
+local C_AMBER      = Color3.fromRGB(255, 160, 18)     -- Âmbar Vibrante
 local C_TEXT_WHITE = Color3.fromRGB(255, 255, 255)
 local C_TEXT_MUTED = Color3.fromRGB(142, 142, 147)
 local C_TOGGLE_OFF = Color3.fromRGB(48, 48, 54)
 local C_TRACK_BG   = Color3.fromRGB(36, 36, 42)
 
--- Helper: Tween rápido
 local function tw(obj, props, duration)
     duration = duration or 0.18
     local t = TweenService:Create(obj, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props)
@@ -1682,7 +943,6 @@ local function tw(obj, props, duration)
     return t
 end
 
--- Helper: Criar UICorner
 local function addCorner(parent, px)
     local c = Instance.new("UICorner")
     c.CornerRadius = UDim.new(0, px or 6)
@@ -1690,7 +950,6 @@ local function addCorner(parent, px)
     return c
 end
 
--- Helper: Criar UIStroke
 local function addStroke(parent, color, thickness, transparency)
     local s = Instance.new("UIStroke")
     s.Color = color or C_CARD_STROKE
@@ -1700,7 +959,6 @@ local function addStroke(parent, color, thickness, transparency)
     return s
 end
 
--- Helper: Criar UIPadding
 local function addPadding(parent, top, bottom, left, right)
     local p = Instance.new("UIPadding")
     p.PaddingTop = UDim.new(0, top or 0)
@@ -1711,25 +969,22 @@ local function addPadding(parent, top, bottom, left, right)
     return p
 end
 
--- GUI Root
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = getRandomName()
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
--- Janela Principal
 local MainFrame = Instance.new("Frame")
-MainFrame.Name = "BigFrootHub"
+MainFrame.Name = getRandomName()
 MainFrame.Size = UDim2.new(0, 750, 0, 510)
 MainFrame.Position = UDim2.new(0.5, -375, 0.5, -255)
 MainFrame.BackgroundColor3 = C_BG
 MainFrame.BorderSizePixel = 0
-MainFrame.ClipsDescendants = false
 MainFrame.Parent = ScreenGui
 addCorner(MainFrame, 10)
 addStroke(MainFrame, C_CARD_STROKE, 1, 0)
 
--- Sistema de Arrasto Suave (PC + Mobile)
+-- Arrasto Suave
 local dragging, dragInput, dragStart, startPos
 local function enableDragging(dragHandle)
     dragHandle.InputBegan:Connect(function(input)
@@ -1738,9 +993,7 @@ local function enableDragging(dragHandle)
             dragStart = input.Position
             startPos = MainFrame.Position
             input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
             end)
         end
     end)
@@ -1763,30 +1016,23 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
---================================================================--
--- SIDEBAR LATERAL ESQUERDA
---================================================================--
-
+-- Sidebar Esquerda
 local Sidebar = Instance.new("Frame")
-Sidebar.Name = "Sidebar"
 Sidebar.Size = UDim2.new(0, 175, 1, 0)
-Sidebar.Position = UDim2.new(0, 0, 0, 0)
 Sidebar.BackgroundColor3 = C_SIDEBAR
 Sidebar.BorderSizePixel = 0
 Sidebar.Parent = MainFrame
 addCorner(Sidebar, 10)
 
--- Corretor de canto direito da sidebar
-local SidebarSquareCover = Instance.new("Frame")
-SidebarSquareCover.Size = UDim2.new(0, 10, 1, 0)
-SidebarSquareCover.Position = UDim2.new(1, -10, 0, 0)
-SidebarSquareCover.BackgroundColor3 = C_SIDEBAR
-SidebarSquareCover.BorderSizePixel = 0
-SidebarSquareCover.Parent = Sidebar
-
+local SquarePatch = Instance.new("Frame")
+SquarePatch.Size = UDim2.new(0, 10, 1, 0)
+SquarePatch.Position = UDim2.new(1, -10, 0, 0)
+SquarePatch.BackgroundColor3 = C_SIDEBAR
+SquarePatch.BorderSizePixel = 0
+SquarePatch.Parent = Sidebar
 enableDragging(Sidebar)
 
--- Logo BigFroot
+-- Logo Limpo: EggVision
 local LogoContainer = Instance.new("Frame")
 LogoContainer.Size = UDim2.new(1, 0, 0, 52)
 LogoContainer.BackgroundTransparency = 1
@@ -1797,7 +1043,7 @@ LogoText.Size = UDim2.new(1, -24, 0, 24)
 LogoText.Position = UDim2.new(0, 16, 0, 14)
 LogoText.BackgroundTransparency = 1
 LogoText.RichText = true
-LogoText.Text = '<font color="#FFFFFF"><b>Big</b></font><font color="#FFA012"><b>Froot</b></font>'
+LogoText.Text = '<font color="#FFFFFF"><b>Egg</b></font><font color="#FFA012"><b>Vision</b></font>'
 LogoText.Font = Enum.Font.GothamBold
 LogoText.TextSize = 22
 LogoText.TextXAlignment = Enum.TextXAlignment.Left
@@ -1807,23 +1053,22 @@ local SubtitleText = Instance.new("TextLabel")
 SubtitleText.Size = UDim2.new(1, -24, 0, 14)
 SubtitleText.Position = UDim2.new(0, 16, 0, 38)
 SubtitleText.BackgroundTransparency = 1
-SubtitleText.Text = "Steal an Egg"
+SubtitleText.Text = "Steal an Egg • Live Tracker"
 SubtitleText.Font = Enum.Font.GothamMedium
 SubtitleText.TextSize = 11
 SubtitleText.TextColor3 = C_TEXT_MUTED
 SubtitleText.TextXAlignment = Enum.TextXAlignment.Left
 SubtitleText.Parent = LogoContainer
 
--- Lista de Abas de Navegação
+-- Lista de Navegação
 local NavList = Instance.new("ScrollingFrame")
-NavList.Name = "NavList"
 NavList.Size = UDim2.new(1, 0, 1, -114)
 NavList.Position = UDim2.new(0, 0, 0, 60)
 NavList.BackgroundTransparency = 1
 NavList.BorderSizePixel = 0
 NavList.ScrollBarThickness = 2
 NavList.ScrollBarImageColor3 = C_AMBER
-NavList.CanvasSize = UDim2.new(0, 0, 0, 420)
+NavList.CanvasSize = UDim2.new(0, 0, 0, 280)
 NavList.Parent = Sidebar
 addPadding(NavList, 4, 4, 10, 10)
 
@@ -1832,7 +1077,7 @@ NavLayout.Padding = UDim.new(0, 3)
 NavLayout.SortOrder = Enum.SortOrder.LayoutOrder
 NavLayout.Parent = NavList
 
--- Perfil do Jogador no Rodapé da Sidebar
+-- Perfil do Jogador
 local ProfileFrame = Instance.new("Frame")
 ProfileFrame.Size = UDim2.new(1, -20, 0, 42)
 ProfileFrame.Position = UDim2.new(0, 10, 1, -48)
@@ -1863,23 +1108,19 @@ ProfileName.TextXAlignment = Enum.TextXAlignment.Left
 ProfileName.TextTruncate = Enum.TextTruncate.AtEnd
 ProfileName.Parent = ProfileFrame
 
-local ProfileTime = Instance.new("TextLabel")
-ProfileTime.Size = UDim2.new(1, -44, 0, 13)
-ProfileTime.Position = UDim2.new(0, 42, 0, 22)
-ProfileTime.BackgroundTransparency = 1
-ProfileTime.Text = "23h 49m left"
-ProfileTime.Font = Enum.Font.Gotham
-ProfileTime.TextSize = 10
-ProfileTime.TextColor3 = C_TEXT_MUTED
-ProfileTime.TextXAlignment = Enum.TextXAlignment.Left
-ProfileTime.Parent = ProfileFrame
+local ProfileStatus = Instance.new("TextLabel")
+ProfileStatus.Size = UDim2.new(1, -44, 0, 13)
+ProfileStatus.Position = UDim2.new(0, 42, 0, 22)
+ProfileStatus.BackgroundTransparency = 1
+ProfileStatus.Text = "Radar Furtivo Ativo"
+ProfileStatus.Font = Enum.Font.Gotham
+ProfileStatus.TextSize = 10
+ProfileStatus.TextColor3 = C_AMBER
+ProfileStatus.TextXAlignment = Enum.TextXAlignment.Left
+ProfileStatus.Parent = ProfileFrame
 
---================================================================--
--- ÁREA SUPERIOR (SUB-ABAS & BUSCA)
---================================================================--
-
+-- Barra Superior
 local TopBar = Instance.new("Frame")
-TopBar.Name = "TopBar"
 TopBar.Size = UDim2.new(1, -175, 0, 44)
 TopBar.Position = UDim2.new(0, 175, 0, 0)
 TopBar.BackgroundColor3 = C_BG
@@ -1887,41 +1128,55 @@ TopBar.BorderSizePixel = 0
 TopBar.Parent = MainFrame
 enableDragging(TopBar)
 
-local SubTabsHolder = Instance.new("Frame")
-SubTabsHolder.Size = UDim2.new(1, -50, 1, 0)
-SubTabsHolder.Position = UDim2.new(0, 12, 0, 0)
-SubTabsHolder.BackgroundTransparency = 1
-SubTabsHolder.Parent = TopBar
+-- Barra de Pesquisa de Ovos em Tempo Real
+local SearchBoxContainer = Instance.new("Frame")
+SearchBoxContainer.Size = UDim2.new(1, -120, 0, 30)
+SearchBoxContainer.Position = UDim2.new(0, 14, 0, 7)
+SearchBoxContainer.BackgroundColor3 = C_ITEM_BG
+SearchBoxContainer.Parent = TopBar
+addCorner(SearchBoxContainer, 6)
+addStroke(SearchBoxContainer, C_ITEM_STROKE, 1, 0)
 
-local SubTabsLayout = Instance.new("UIListLayout")
-SubTabsLayout.FillDirection = Enum.FillDirection.Horizontal
-SubTabsLayout.Padding = UDim.new(0, 8)
-SubTabsLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-SubTabsLayout.Parent = SubTabsHolder
+local SearchIcon = Instance.new("TextLabel")
+SearchIcon.Size = UDim2.new(0, 26, 1, 0)
+SearchIcon.BackgroundTransparency = 1
+SearchIcon.Text = "🔍"
+SearchIcon.Font = Enum.Font.GothamBold
+SearchIcon.TextSize = 12
+SearchIcon.TextColor3 = C_TEXT_MUTED
+SearchIcon.Parent = SearchBoxContainer
 
--- Botão de Busca Top Right
-local SearchBtn = Instance.new("TextButton")
-SearchBtn.Size = UDim2.new(0, 32, 0, 32)
-SearchBtn.Position = UDim2.new(1, -42, 0, 6)
-SearchBtn.BackgroundColor3 = C_CARD
-SearchBtn.Text = "🔍"
-SearchBtn.TextColor3 = C_TEXT_MUTED
-SearchBtn.TextSize = 13
-SearchBtn.Font = Enum.Font.GothamBold
-SearchBtn.Parent = TopBar
-addCorner(SearchBtn, 6)
-addStroke(SearchBtn, C_CARD_STROKE, 1, 0)
+local SearchInput = Instance.new("TextBox")
+SearchInput.Size = UDim2.new(1, -30, 1, 0)
+SearchInput.Position = UDim2.new(0, 28, 0, 0)
+SearchInput.BackgroundTransparency = 1
+SearchInput.PlaceholderText = "Pesquisar ovos por nome, zona, peso ou raridade..."
+SearchInput.PlaceholderColor3 = C_TEXT_MUTED
+SearchInput.Text = ""
+SearchInput.Font = Enum.Font.Gotham
+SearchInput.TextSize = 11.5
+SearchInput.TextColor3 = C_TEXT_WHITE
+SearchInput.TextXAlignment = Enum.TextXAlignment.Left
+SearchInput.ClearTextOnFocus = false
+SearchInput.Parent = SearchBoxContainer
 
-SearchBtn.MouseButton1Click:Connect(function()
-    addLog("RADAR", "Varredura rápida disparada pelo botão de busca.")
-    local discovered, _ = scanAllEggsInMap()
-    addLog("RADAR", tostring(#discovered) .. " ovos encontrados no mapa.")
-end)
+-- Botão de Atualização Rápida (Refresh)
+local RefreshBtn = Instance.new("TextButton")
+RefreshBtn.Size = UDim2.new(0, 30, 0, 30)
+RefreshBtn.Position = UDim2.new(1, -95, 0, 7)
+RefreshBtn.BackgroundColor3 = C_ITEM_BG
+RefreshBtn.Text = "🔄"
+RefreshBtn.Font = Enum.Font.GothamBold
+RefreshBtn.TextSize = 13
+RefreshBtn.TextColor3 = C_AMBER
+RefreshBtn.Parent = TopBar
+addCorner(RefreshBtn, 6)
+addStroke(RefreshBtn, C_ITEM_STROKE, 1, 0)
 
--- Badge de Versão no Rodapé (Canto Inferior Direito)
+-- Badge de Versão no Rodapé
 local VersionBadge = Instance.new("Frame")
-VersionBadge.Size = UDim2.new(0, 110, 0, 26)
-VersionBadge.Position = UDim2.new(1, -120, 1, -34)
+VersionBadge.Size = UDim2.new(0, 110, 0, 24)
+VersionBadge.Position = UDim2.new(1, -120, 1, -32)
 VersionBadge.BackgroundColor3 = C_CARD
 VersionBadge.BorderSizePixel = 0
 VersionBadge.Parent = MainFrame
@@ -1932,26 +1187,21 @@ local VersionText = Instance.new("TextLabel")
 VersionText.Size = UDim2.new(1, 0, 1, 0)
 VersionText.BackgroundTransparency = 1
 VersionText.RichText = true
-VersionText.Text = '<b><font color="#FFFFFF">v1.5.7</font></b> | <font color="#8E8E93">Free</font>'
+VersionText.Text = '<b><font color="#FFFFFF">v3.7</font></b> | <font color="#8E8E93">Stealth</font>'
 VersionText.Font = Enum.Font.GothamBold
 VersionText.TextSize = 11
 VersionText.Parent = VersionBadge
 
--- Container Principal de Páginas
+-- Container de Páginas
 local PageContainer = Instance.new("Frame")
-PageContainer.Name = "PageContainer"
-PageContainer.Size = UDim2.new(1, -175, 1, -84)
+PageContainer.Size = UDim2.new(1, -175, 1, -80)
 PageContainer.Position = UDim2.new(0, 175, 0, 44)
 PageContainer.BackgroundTransparency = 1
 PageContainer.Parent = MainFrame
 
--- Gerenciamento de Abas e Páginas
 local TabButtons = {}
 local Pages = {}
 local CurrentTab = nil
-local CurrentSubTab = nil
-local SubTabButtons = {}
-local SubTabIndicators = {}
 
 local function switchTab(tabId)
     if CurrentTab == tabId then return end
@@ -1963,13 +1213,9 @@ local function switchTab(tabId)
             BackgroundTransparency = isSelected and 0 or 1
         }, 0.15)
         local lbl = btn:FindFirstChild("Title")
-        if lbl then
-            tw(lbl, { TextColor3 = isSelected and C_TEXT_WHITE or C_TEXT_MUTED }, 0.15)
-        end
+        if lbl then tw(lbl, { TextColor3 = isSelected and C_TEXT_WHITE or C_TEXT_MUTED }, 0.15) end
         local icon = btn:FindFirstChild("Icon")
-        if icon then
-            tw(icon, { TextColor3 = isSelected and C_AMBER or C_TEXT_MUTED }, 0.15)
-        end
+        if icon then tw(icon, { TextColor3 = isSelected and C_AMBER or C_TEXT_MUTED }, 0.15) end
     end
     for id, pg in pairs(Pages) do
         pg.Visible = (id == tabId)
@@ -1978,7 +1224,6 @@ end
 
 local function addSidebarTab(id, name, iconSymbol, order)
     local btn = Instance.new("TextButton")
-    btn.Name = "Tab_" .. id
     btn.Size = UDim2.new(1, 0, 0, 34)
     btn.BackgroundColor3 = C_SIDEBAR
     btn.BackgroundTransparency = 1
@@ -2010,17 +1255,13 @@ local function addSidebarTab(id, name, iconSymbol, order)
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.Parent = btn
 
-    btn.MouseButton1Click:Connect(function()
-        switchTab(id)
-    end)
-
+    btn.MouseButton1Click:Connect(function() switchTab(id) end)
     TabButtons[id] = btn
     return btn
 end
 
 local function createPage(id)
     local pg = Instance.new("ScrollingFrame")
-    pg.Name = "Page_" .. id
     pg.Size = UDim2.new(1, 0, 1, 0)
     pg.BackgroundTransparency = 1
     pg.BorderSizePixel = 0
@@ -2032,53 +1273,16 @@ local function createPage(id)
     pg.Parent = PageContainer
     addPadding(pg, 4, 16, 12, 12)
 
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 10)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Parent = pg
+
     Pages[id] = pg
     return pg
 end
 
--- Sub-Abas do Topo (Com linha âmbar superior)
-local function addSubTab(id, name, targetPageFunc)
-    local btn = Instance.new("TextButton")
-    btn.Name = "SubTab_" .. id
-    btn.Size = UDim2.new(0, 0, 1, 0)
-    btn.AutomaticSize = Enum.AutomaticSize.X
-    btn.BackgroundTransparency = 1
-    btn.Text = "  " .. name .. "  "
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 12
-    btn.TextColor3 = C_TEXT_MUTED
-    btn.Parent = SubTabsHolder
-
-    -- Linha de Acento Âmbar no topo do botão ativo
-    local indicator = Instance.new("Frame")
-    indicator.Size = UDim2.new(0.65, 0, 0, 3)
-    indicator.Position = UDim2.new(0.175, 0, 0, 0)
-    indicator.BackgroundColor3 = C_AMBER
-    indicator.BorderSizePixel = 0
-    indicator.Visible = false
-    indicator.Parent = btn
-    addCorner(indicator, 2)
-
-    btn.MouseButton1Click:Connect(function()
-        for sId, sBtn in pairs(SubTabButtons) do
-            local active = (sId == id)
-            tw(sBtn, { TextColor3 = active and C_TEXT_WHITE or C_TEXT_MUTED }, 0.15)
-            if SubTabIndicators[sId] then
-                SubTabIndicators[sId].Visible = active
-            end
-        end
-        if targetPageFunc then targetPageFunc() end
-    end)
-
-    SubTabButtons[id] = btn
-    SubTabIndicators[id] = indicator
-    return btn
-end
-
---================================================================--
--- CONSTRUTOR DE CARDS MODULARES (ESTILO BIGFROOT)
---================================================================--
-
+-- Construtor de Cards
 local function createCard(parent, titleText, iconSymbol)
     local card = Instance.new("Frame")
     card.Size = UDim2.new(1, 0, 0, 0)
@@ -2149,55 +1353,7 @@ local function createCard(parent, titleText, iconSymbol)
     return body
 end
 
--- Caixa de Disclaimer (Free Script Warning)
-local function addDisclaimer(parent, headerLine, subLine1, subLine2)
-    local box = Instance.new("Frame")
-    box.Size = UDim2.new(1, 0, 0, 52)
-    box.BackgroundColor3 = C_ITEM_BG
-    box.BorderSizePixel = 0
-    box.Parent = parent
-    addCorner(box, 6)
-    addStroke(box, C_ITEM_STROKE, 1, 0.4)
-    addPadding(box, 6, 6, 10, 10)
-
-    local l1 = Instance.new("TextLabel")
-    l1.Size = UDim2.new(1, 0, 0, 14)
-    l1.BackgroundTransparency = 1
-    l1.Text = headerLine or "SCRIPT IS FREE"
-    l1.Font = Enum.Font.GothamBold
-    l1.TextSize = 11
-    l1.TextColor3 = C_TEXT_WHITE
-    l1.TextXAlignment = Enum.TextXAlignment.Left
-    l1.Parent = box
-
-    local l2 = Instance.new("TextLabel")
-    l2.Size = UDim2.new(1, 0, 0, 12)
-    l2.Position = UDim2.new(0, 0, 0, 15)
-    l2.BackgroundTransparency = 1
-    l2.Text = subLine1 or "IF YOU BOUGHT IT FROM SOMEONE YOU GOT SCAMMED."
-    l2.Font = Enum.Font.Gotham
-    l2.TextSize = 9.5
-    l2.TextColor3 = C_TEXT_MUTED
-    l2.TextXAlignment = Enum.TextXAlignment.Left
-    l2.Parent = box
-
-    local l3 = Instance.new("TextLabel")
-    l3.Size = UDim2.new(1, 0, 0, 12)
-    l3.Position = UDim2.new(0, 0, 0, 28)
-    l3.BackgroundTransparency = 1
-    l3.Text = subLine2 or "discord.gg/bigfroot"
-    l3.Font = Enum.Font.Gotham
-    l3.TextSize = 9.5
-    l3.TextColor3 = C_TEXT_MUTED
-    l3.TextXAlignment = Enum.TextXAlignment.Left
-    l3.Parent = box
-end
-
---================================================================--
--- WIDGETS: TOGGLE, SLIDER, DROPDOWN, MULTI-SELECT, BOTAO
---================================================================--
-
--- 1. Toggle Animado BigFroot
+-- Widgets
 local function addToggle(parent, labelText, defaultState, callback)
     local state = defaultState == true
 
@@ -2238,18 +1394,8 @@ local function addToggle(parent, labelText, defaultState, callback)
         tw(knob, { Position = state and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9) }, 0.15)
         pcall(function() callback(state) end)
     end)
-
-    return {
-        Set = function(v)
-            state = v
-            tw(switch, { BackgroundColor3 = state and C_AMBER or C_TOGGLE_OFF }, 0.15)
-            tw(knob, { Position = state and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9) }, 0.15)
-            pcall(function() callback(state) end)
-        end
-    }
 end
 
--- 2. Slider com Badge de Valor BigFroot
 local function addSlider(parent, titleText, minVal, maxVal, defaultVal, unitStr, callback)
     local curVal = math.clamp(defaultVal or minVal, minVal, maxVal)
     unitStr = unitStr or ""
@@ -2343,253 +1489,8 @@ local function addSlider(parent, titleText, minVal, maxVal, defaultVal, unitStr,
             updateSlider(input)
         end
     end)
-
-    return {
-        Set = function(newVal)
-            local ratio = math.clamp((newVal - minVal) / (maxVal - minVal), 0, 1)
-            fill.Size = UDim2.new(ratio, 0, 1, 0)
-            knob.Position = UDim2.new(ratio, 0, 0.5, 0)
-            badgeText.Text = tostring(newVal) .. " " .. unitStr
-            pcall(function() callback(newVal) end)
-        end
-    }
 end
 
--- 3. Dropdown Selecionável BigFroot
-local function addDropdown(parent, titleText, options, defaultVal, callback)
-    local selected = defaultVal or options[1] or "..."
-
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, 0, 0, 56)
-    container.BackgroundTransparency = 1
-    container.Parent = parent
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 0, 18)
-    label.BackgroundTransparency = 1
-    label.Text = titleText
-    label.Font = Enum.Font.GothamMedium
-    label.TextSize = 12
-    label.TextColor3 = C_TEXT_WHITE
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = container
-
-    local selectBtn = Instance.new("TextButton")
-    selectBtn.Size = UDim2.new(1, 0, 0, 32)
-    selectBtn.Position = UDim2.new(0, 0, 0, 20)
-    selectBtn.BackgroundColor3 = C_ITEM_BG
-    selectBtn.Text = ""
-    selectBtn.Parent = container
-    addCorner(selectBtn, 6)
-    addStroke(selectBtn, C_ITEM_STROKE, 1, 0)
-
-    local valueText = Instance.new("TextLabel")
-    valueText.Size = UDim2.new(1, -30, 1, 0)
-    valueText.Position = UDim2.new(0, 10, 0, 0)
-    valueText.BackgroundTransparency = 1
-    valueText.Text = tostring(selected)
-    valueText.Font = Enum.Font.Gotham
-    valueText.TextSize = 11.5
-    valueText.TextColor3 = Color3.fromRGB(220, 220, 225)
-    valueText.TextXAlignment = Enum.TextXAlignment.Left
-    valueText.TextTruncate = Enum.TextTruncate.AtEnd
-    valueText.Parent = selectBtn
-
-    local arrow = Instance.new("TextLabel")
-    arrow.Size = UDim2.new(0, 20, 1, 0)
-    arrow.Position = UDim2.new(1, -24, 0, 0)
-    arrow.BackgroundTransparency = 1
-    arrow.Text = "⇅"
-    arrow.Font = Enum.Font.GothamBold
-    arrow.TextSize = 12
-    arrow.TextColor3 = C_TEXT_MUTED
-    arrow.Parent = selectBtn
-
-    -- Menu Popup
-    local listMenu = Instance.new("Frame")
-    listMenu.Size = UDim2.new(1, 0, 0, math.min(#options * 28 + 6, 140))
-    listMenu.Position = UDim2.new(0, 0, 1, 4)
-    listMenu.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
-    listMenu.ZIndex = 50
-    listMenu.Visible = false
-    listMenu.Parent = selectBtn
-    addCorner(listMenu, 6)
-    addStroke(listMenu, C_ITEM_STROKE, 1, 0)
-
-    local scroll = Instance.new("ScrollingFrame")
-    scroll.Size = UDim2.new(1, 0, 1, 0)
-    scroll.BackgroundTransparency = 1
-    scroll.BorderSizePixel = 0
-    scroll.ZIndex = 51
-    scroll.ScrollBarThickness = 2
-    scroll.ScrollBarImageColor3 = C_AMBER
-    scroll.CanvasSize = UDim2.new(0, 0, 0, #options * 28)
-    scroll.Parent = listMenu
-    addPadding(scroll, 3, 3, 4, 4)
-
-    local menuLayout = Instance.new("UIListLayout")
-    menuLayout.Padding = UDim.new(0, 2)
-    menuLayout.Parent = scroll
-
-    for _, opt in ipairs(options) do
-        local optBtn = Instance.new("TextButton")
-        optBtn.Size = UDim2.new(1, 0, 0, 26)
-        optBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
-        optBtn.BackgroundTransparency = 1
-        optBtn.Text = "  " .. tostring(opt)
-        optBtn.Font = Enum.Font.Gotham
-        optBtn.TextSize = 11
-        optBtn.TextColor3 = C_TEXT_MUTED
-        optBtn.TextXAlignment = Enum.TextXAlignment.Left
-        optBtn.ZIndex = 52
-        optBtn.Parent = scroll
-        addCorner(optBtn, 4)
-
-        optBtn.MouseButton1Click:Connect(function()
-            selected = opt
-            valueText.Text = tostring(opt)
-            listMenu.Visible = false
-            pcall(function() callback(opt) end)
-        end)
-    end
-
-    selectBtn.MouseButton1Click:Connect(function()
-        listMenu.Visible = not listMenu.Visible
-    end)
-
-    return {
-        Set = function(val)
-            selected = val
-            valueText.Text = tostring(val)
-            pcall(function() callback(val) end)
-        end
-    }
-end
-
--- 4. Multi-Select Dropdown BigFroot (Ex: Rarities)
-local function addMultiSelect(parent, titleText, options, defaultSelectedList, callback)
-    local selectedMap = {}
-    if defaultSelectedList then
-        for _, s in ipairs(defaultSelectedList) do selectedMap[s] = true end
-    end
-
-    local function getDisplayString()
-        local list = {}
-        for _, opt in ipairs(options) do
-            if selectedMap[opt] then table.insert(list, opt) end
-        end
-        return #list > 0 and table.concat(list, ", ") or "..."
-    end
-
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, 0, 0, 56)
-    container.BackgroundTransparency = 1
-    container.Parent = parent
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 0, 18)
-    label.BackgroundTransparency = 1
-    label.Text = titleText
-    label.Font = Enum.Font.GothamMedium
-    label.TextSize = 12
-    label.TextColor3 = C_TEXT_WHITE
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = container
-
-    local selectBtn = Instance.new("TextButton")
-    selectBtn.Size = UDim2.new(1, 0, 0, 32)
-    selectBtn.Position = UDim2.new(0, 0, 0, 20)
-    selectBtn.BackgroundColor3 = C_ITEM_BG
-    selectBtn.Text = ""
-    selectBtn.Parent = container
-    addCorner(selectBtn, 6)
-    addStroke(selectBtn, C_ITEM_STROKE, 1, 0)
-
-    local valueText = Instance.new("TextLabel")
-    valueText.Size = UDim2.new(1, -30, 1, 0)
-    valueText.Position = UDim2.new(0, 10, 0, 0)
-    valueText.BackgroundTransparency = 1
-    valueText.Text = getDisplayString()
-    valueText.Font = Enum.Font.Gotham
-    valueText.TextSize = 11.5
-    valueText.TextColor3 = Color3.fromRGB(220, 220, 225)
-    valueText.TextXAlignment = Enum.TextXAlignment.Left
-    valueText.TextTruncate = Enum.TextTruncate.AtEnd
-    valueText.Parent = selectBtn
-
-    local arrow = Instance.new("TextLabel")
-    arrow.Size = UDim2.new(0, 20, 1, 0)
-    arrow.Position = UDim2.new(1, -24, 0, 0)
-    arrow.BackgroundTransparency = 1
-    arrow.Text = "⇅"
-    arrow.Font = Enum.Font.GothamBold
-    arrow.TextSize = 12
-    arrow.TextColor3 = C_TEXT_MUTED
-    arrow.Parent = selectBtn
-
-    -- Menu Popup
-    local listMenu = Instance.new("Frame")
-    listMenu.Size = UDim2.new(1, 0, 0, math.min(#options * 28 + 6, 160))
-    listMenu.Position = UDim2.new(0, 0, 1, 4)
-    listMenu.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
-    listMenu.ZIndex = 50
-    listMenu.Visible = false
-    listMenu.Parent = selectBtn
-    addCorner(listMenu, 6)
-    addStroke(listMenu, C_ITEM_STROKE, 1, 0)
-
-    local scroll = Instance.new("ScrollingFrame")
-    scroll.Size = UDim2.new(1, 0, 1, 0)
-    scroll.BackgroundTransparency = 1
-    scroll.BorderSizePixel = 0
-    scroll.ZIndex = 51
-    scroll.ScrollBarThickness = 2
-    scroll.ScrollBarImageColor3 = C_AMBER
-    scroll.CanvasSize = UDim2.new(0, 0, 0, #options * 28)
-    scroll.Parent = listMenu
-    addPadding(scroll, 3, 3, 4, 4)
-
-    local menuLayout = Instance.new("UIListLayout")
-    menuLayout.Padding = UDim.new(0, 2)
-    menuLayout.Parent = scroll
-
-    local optionButtons = {}
-    for _, opt in ipairs(options) do
-        local optBtn = Instance.new("TextButton")
-        optBtn.Size = UDim2.new(1, 0, 0, 26)
-        optBtn.BackgroundColor3 = selectedMap[opt] and Color3.fromRGB(34, 30, 24) or Color3.fromRGB(24, 24, 28)
-        optBtn.BackgroundTransparency = selectedMap[opt] and 0 or 1
-        optBtn.Text = (selectedMap[opt] and "✓ " or "   ") .. tostring(opt)
-        optBtn.Font = Enum.Font.Gotham
-        optBtn.TextSize = 11
-        optBtn.TextColor3 = selectedMap[opt] and C_AMBER or C_TEXT_MUTED
-        optBtn.TextXAlignment = Enum.TextXAlignment.Left
-        optBtn.ZIndex = 52
-        optBtn.Parent = scroll
-        addCorner(optBtn, 4)
-
-        optBtn.MouseButton1Click:Connect(function()
-            selectedMap[opt] = not selectedMap[opt]
-            optBtn.Text = (selectedMap[opt] and "✓ " or "   ") .. tostring(opt)
-            optBtn.TextColor3 = selectedMap[opt] and C_AMBER or C_TEXT_MUTED
-            optBtn.BackgroundTransparency = selectedMap[opt] and 0 or 1
-            valueText.Text = getDisplayString()
-
-            local outList = {}
-            for k, v in pairs(selectedMap) do
-                if v then table.insert(outList, k) end
-            end
-            pcall(function() callback(outList) end)
-        end)
-        optionButtons[opt] = optBtn
-    end
-
-    selectBtn.MouseButton1Click:Connect(function()
-        listMenu.Visible = not listMenu.Visible
-    end)
-end
-
--- 5. Botão de Ação BigFroot
 local function addButton(parent, labelText, callback)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(1, 0, 0, 32)
@@ -2602,260 +1503,287 @@ local function addButton(parent, labelText, callback)
     addCorner(btn, 6)
     addStroke(btn, C_ITEM_STROKE, 1, 0)
 
-    btn.MouseEnter:Connect(function()
-        tw(btn, { BackgroundColor3 = Color3.fromRGB(34, 34, 40) }, 0.1)
-    end)
-    btn.MouseLeave:Connect(function()
-        tw(btn, { BackgroundColor3 = C_ITEM_BG }, 0.1)
-    end)
-    btn.MouseButton1Click:Connect(function()
-        pcall(callback)
-    end)
+    btn.MouseEnter:Connect(function() tw(btn, { BackgroundColor3 = Color3.fromRGB(34, 34, 40) }, 0.1) end)
+    btn.MouseLeave:Connect(function() tw(btn, { BackgroundColor3 = C_ITEM_BG }, 0.1) end)
+    btn.MouseButton1Click:Connect(function() pcall(callback) end)
     return btn
 end
 
 --================================================================--
--- CRIAÇÃO DAS PÁGINAS E POPULAÇÃO
+-- 1. PÁGINA PRINCIPAL: RADAR AO VIVO (DADOS REAIS DOS OVOS)
 --================================================================--
 
--- 1. Página "Eggs" (Principal - 2 Colunas como na referência)
-local EggsPage = createPage("Eggs")
+local RadarPage = createPage("Radar")
 
-local EggsCols = Instance.new("Frame")
-EggsCols.Size = UDim2.new(1, 0, 0, 0)
-EggsCols.AutomaticSize = Enum.AutomaticSize.Y
-EggsCols.BackgroundTransparency = 1
-EggsCols.Parent = EggsPage
+-- Card de Status e Resumo do Radar
+local StatusCard = createCard(RadarPage, "Status do Servidor & Radar", "🎯")
 
-local ColLeft = Instance.new("Frame")
-ColLeft.Size = UDim2.new(0.5, -6, 0, 0)
-ColLeft.Position = UDim2.new(0, 0, 0, 0)
-ColLeft.AutomaticSize = Enum.AutomaticSize.Y
-ColLeft.BackgroundTransparency = 1
-ColLeft.Parent = EggsCols
+local SummaryLabel = Instance.new("TextLabel")
+SummaryLabel.Size = UDim2.new(1, 0, 0, 32)
+SummaryLabel.BackgroundTransparency = 1
+SummaryLabel.RichText = true
+SummaryLabel.Text = 'Aguardando primeira varredura... Clique em <b>"Atualizar Radar Agora"</b>.'
+SummaryLabel.Font = Enum.Font.Gotham
+SummaryLabel.TextSize = 11.5
+SummaryLabel.TextColor3 = C_TEXT_WHITE
+SummaryLabel.TextXAlignment = Enum.TextXAlignment.Left
+SummaryLabel.TextWrapped = true
+SummaryLabel.Parent = StatusCard
 
-local ColLeftLayout = Instance.new("UIListLayout")
-ColLeftLayout.Padding = UDim.new(0, 10)
-ColLeftLayout.Parent = ColLeft
+local ActionRow = Instance.new("Frame")
+ActionRow.Size = UDim2.new(1, 0, 0, 32)
+ActionRow.BackgroundTransparency = 1
+ActionRow.Parent = StatusCard
 
-local ColRight = Instance.new("Frame")
-ColRight.Size = UDim2.new(0.5, -6, 0, 0)
-ColRight.Position = UDim2.new(0.5, 6, 0, 0)
-ColRight.AutomaticSize = Enum.AutomaticSize.Y
-ColRight.BackgroundTransparency = 1
-ColRight.Parent = EggsCols
+local ActionLayout = Instance.new("UIListLayout")
+ActionLayout.FillDirection = Enum.FillDirection.Horizontal
+ActionLayout.Padding = UDim.new(0, 8)
+ActionLayout.Parent = ActionRow
 
-local ColRightLayout = Instance.new("UIListLayout")
-ColRightLayout.Padding = UDim.new(0, 10)
-ColRightLayout.Parent = ColRight
+local ScanBtn = Instance.new("TextButton")
+ScanBtn.Size = UDim2.new(0.5, -4, 1, 0)
+ScanBtn.BackgroundColor3 = C_ITEM_BG
+ScanBtn.Text = "🔄 Atualizar Radar Agora"
+ScanBtn.Font = Enum.Font.GothamBold
+ScanBtn.TextSize = 11.5
+ScanBtn.TextColor3 = C_AMBER
+ScanBtn.Parent = ActionRow
+addCorner(ScanBtn, 6)
+addStroke(ScanBtn, C_ITEM_STROKE, 1, 0)
 
--- [CARD 1 - COLUNA ESQUERDA]: Auto Steal
-local AutoStealCard = createCard(ColLeft, "Auto Steal", "⚔")
-addDisclaimer(AutoStealCard, "SCRIPT IS FREE", "IF YOU BOUGHT IT FROM SOMEONE YOU GOT SCAMMED.", "discord.gg/bigfroot")
+local CopyTableBtn = Instance.new("TextButton")
+CopyTableBtn.Size = UDim2.new(0.5, -4, 1, 0)
+CopyTableBtn.BackgroundColor3 = C_ITEM_BG
+CopyTableBtn.Text = "📋 Copiar Lista Formatada"
+CopyTableBtn.Font = Enum.Font.GothamBold
+CopyTableBtn.TextSize = 11.5
+CopyTableBtn.TextColor3 = C_TEXT_WHITE
+CopyTableBtn.Parent = ActionRow
+addCorner(CopyTableBtn, 6)
+addStroke(CopyTableBtn, C_ITEM_STROKE, 1, 0)
 
-addToggle(AutoStealCard, "Auto Steal Eggs", Flags.AutoSteal, function(state)
-    autoStealRunId = autoStealRunId + 1
-    local thisRunId = autoStealRunId
-    Flags.AutoSteal = state
-    if state then
-        local hrp = getHRP()
-        if hrp then
-            Flags.SavedBasePos = Flags.CustomBasePos or hrp.Position
-        end
-        addLog("ROUBO", "Auto Steal ativado (BigFroot Engine).")
-        task.spawn(function()
-            while scriptActive and Flags.AutoSteal and autoStealRunId == thisRunId do
-                flyStealLoop()
-                task.wait(Flags.StealDelay)
+-- Card da Lista de Ovos Detectados
+local EggListCard = createCard(RadarPage, "Ovos Detectados no Mapa", "🥚")
+
+local EggCardsHolder = Instance.new("Frame")
+EggCardsHolder.Size = UDim2.new(1, 0, 0, 0)
+EggCardsHolder.AutomaticSize = Enum.AutomaticSize.Y
+EggCardsHolder.BackgroundTransparency = 1
+EggCardsHolder.Parent = EggListCard
+
+local EggCardsLayout = Instance.new("UIListLayout")
+EggCardsLayout.Padding = UDim.new(0, 6)
+EggCardsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+EggCardsLayout.Parent = EggCardsHolder
+
+-- Função para Criar Cada Card de Ovo na Lista com Dados Reais
+local function renderEggCards(eggsList)
+    for _, child in ipairs(EggCardsHolder:GetChildren()) do
+        if child:IsA("Frame") then child:Destroy() end
+    end
+
+    local query = Flags.SearchQuery:lower()
+    local renderedCount = 0
+
+    for i, egg in ipairs(eggsList) do
+        local matchesSearch = true
+        if query ~= "" then
+            local fullSearchText = (egg.Name .. " " .. egg.Rarity .. " " .. egg.Zone .. " " .. tostring(egg.WeightKg)):lower()
+            if not fullSearchText:find(query, 1, true) then
+                matchesSearch = false
             end
-        end)
-    else
-        addLog("ROUBO", "Auto Steal desativado.")
-    end
-end)
+        end
 
-addToggle(AutoStealCard, "Auto Steal Infested Eggs", Flags.AutoStealInfested or true, function(state)
-    Flags.AutoStealInfested = state
-    Flags.PrioritizeRare = state
-    invalidateTargetCache()
-end)
+        if matchesSearch then
+            renderedCount = renderedCount + 1
+            local itemCard = Instance.new("Frame")
+            itemCard.Size = UDim2.new(1, 0, 0, 58)
+            itemCard.BackgroundColor3 = C_ITEM_BG
+            itemCard.LayoutOrder = i
+            itemCard.Parent = EggCardsHolder
+            addCorner(itemCard, 6)
+            addStroke(itemCard, C_ITEM_STROKE, 1, 0)
 
-addToggle(AutoStealCard, "Shelter From Dragon Wave", Flags.ShelterFromDragon or true, function(state)
-    Flags.ShelterFromDragon = state
-end)
+            -- Linha Superior: Nome do Ovo + Distância + Coordenadas
+            local eggTitle = Instance.new("TextLabel")
+            eggTitle.Size = UDim2.new(1, -120, 0, 18)
+            eggTitle.Position = UDim2.new(0, 10, 0, 6)
+            eggTitle.BackgroundTransparency = 1
+            eggTitle.RichText = true
+            eggTitle.Text = string.format('<b>#%02d %s</b>', i, egg.Name)
+            eggTitle.Font = Enum.Font.GothamBold
+            eggTitle.TextSize = 12
+            eggTitle.TextColor3 = C_TEXT_WHITE
+            eggTitle.TextXAlignment = Enum.TextXAlignment.Left
+            eggTitle.Parent = itemCard
 
-addToggle(AutoStealCard, "Avoid Traps", Flags.AvoidTraps or true, function(state)
-    Flags.AvoidTraps = state
-    Flags.Noclip = state
-    if not state then restoreNoclip() end
-end)
+            local distLabel = Instance.new("TextLabel")
+            distLabel.Size = UDim2.new(0, 110, 0, 18)
+            distLabel.Position = UDim2.new(1, -118, 0, 6)
+            distLabel.BackgroundTransparency = 1
+            distLabel.Text = string.format("📏 %d studs", math.floor(egg.Distance))
+            distLabel.Font = Enum.Font.GothamMedium
+            distLabel.TextSize = 11
+            distLabel.TextColor3 = C_AMBER
+            distLabel.TextXAlignment = Enum.TextXAlignment.Right
+            distLabel.Parent = itemCard
 
-addSlider(AutoStealCard, "Glide Speed", 50, 1000, Flags.FlySpeed or 950, "studs/s", function(val)
-    Flags.FlySpeed = val
-end)
+            -- Linha Inferior: Badges de Localização, Peso e Raridade
+            local infoText = Instance.new("TextLabel")
+            infoText.Size = UDim2.new(1, -120, 0, 16)
+            infoText.Position = UDim2.new(0, 10, 0, 26)
+            infoText.BackgroundTransparency = 1
+            infoText.RichText = true
 
-addDropdown(AutoStealCard, "Target Priority", { "Rarity", "Value ($/s)", "Distance", "Balanced" }, Flags.TargetPriority or "Rarity", function(val)
-    Flags.TargetPriority = val
-    Flags.PrioritizeRare = (val == "Rarity" or val == "Value ($/s)")
-    invalidateTargetCache()
-end)
+            local weightStr = egg.WeightKg > 0 and (tostring(egg.WeightKg) .. " Kg") or egg.Rarity
+            local incomeStr = egg.IncomeFmt and (" • " .. egg.IncomeFmt) or ""
+            infoText.Text = string.format('<font color="#FFA012">[%s]</font>  📍 %s%s', weightStr, egg.Zone, incomeStr)
+            infoText.Font = Enum.Font.Gotham
+            infoText.TextSize = 10.5
+            infoText.TextColor3 = C_TEXT_MUTED
+            infoText.TextXAlignment = Enum.TextXAlignment.Left
+            infoText.Parent = itemCard
 
-addToggle(AutoStealCard, "Return To Plot", Flags.ReturnToPlot ~= false, function(state)
-    Flags.ReturnToPlot = state
-end)
+            -- Coordenadas X, Y, Z
+            local coordText = Instance.new("TextLabel")
+            coordText.Size = UDim2.new(1, -120, 0, 14)
+            coordText.Position = UDim2.new(0, 10, 0, 42)
+            coordText.BackgroundTransparency = 1
+            coordText.Text = string.format("Coords: X: %.1f, Y: %.1f, Z: %.1f", egg.Position.X, egg.Position.Y, egg.Position.Z)
+            coordText.Font = Enum.Font.Code
+            coordText.TextSize = 9.5
+            coordText.TextColor3 = Color3.fromRGB(120, 140, 160)
+            coordText.TextXAlignment = Enum.TextXAlignment.Left
+            coordText.Parent = itemCard
 
-addDropdown(AutoStealCard, "Return To", { "Pen Area", "Plot Base", "Spawn", "Posição Atual" }, Flags.ReturnTo or "Pen Area", function(val)
-    Flags.ReturnTo = val
-    if val == "Posição Atual" then
-        local hrp = getHRP()
-        if hrp then
-            Flags.CustomBasePos = hrp.Position
-            addLog("BASE", "Base registrada na posição atual.")
+            -- Botão Copiar Coordenadas
+            local copyCoordBtn = Instance.new("TextButton")
+            copyCoordBtn.Size = UDim2.new(0, 80, 0, 24)
+            copyCoordBtn.Position = UDim2.new(1, -88, 0, 28)
+            copyCoordBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
+            copyCoordBtn.Text = "Copiar Pos"
+            copyCoordBtn.Font = Enum.Font.GothamBold
+            copyCoordBtn.TextSize = 10
+            copyCoordBtn.TextColor3 = C_TEXT_WHITE
+            copyCoordBtn.Parent = itemCard
+            addCorner(copyCoordBtn, 4)
+            addStroke(copyCoordBtn, C_ITEM_STROKE, 1, 0)
+
+            copyCoordBtn.MouseButton1Click:Connect(function()
+                local cStr = string.format("Vector3.new(%.1f, %.1f, %.1f)", egg.Position.X, egg.Position.Y, egg.Position.Z)
+                pcall(function()
+                    if setclipboard then
+                        setclipboard(cStr)
+                        addLog("RADAR", "Coordenadas copiadas: " .. cStr)
+                    end
+                end)
+                copyCoordBtn.Text = "Copiado!"
+                task.delay(1, function() copyCoordBtn.Text = "Copiar Pos" end)
+            end)
         end
     end
+
+    SummaryLabel.Text = string.format('<b>%d</b> ovos monitorados no mapa | <b>%d</b> exibidos com o filtro atual.', #eggsList, renderedCount)
+end
+
+_G.UpdateRadarCards = renderEggCards
+
+ScanBtn.MouseButton1Click:Connect(function()
+    local discovered = scanAllEggsInMap()
+    renderEggCards(discovered)
+    addLog("RADAR", tostring(#discovered) .. " ovos encontrados no mapa.")
 end)
 
-addButton(AutoStealCard, "Definir Posição Atual como Base", function()
-    local hrp = getHRP()
-    if hrp then
-        Flags.CustomBasePos = hrp.Position
-        Flags.SavedBasePos = hrp.Position
-        addLog("BASE", "Base registrada com sucesso: " .. tostring(math.floor(hrp.Position.X)) .. ", " .. tostring(math.floor(hrp.Position.Z)))
+RefreshBtn.MouseButton1Click:Connect(function()
+    local discovered = scanAllEggsInMap()
+    renderEggCards(discovered)
+end)
+
+SearchInput:GetPropertyChangedSignal("Text"):Connect(function()
+    Flags.SearchQuery = SearchInput.Text
+    if Flags.DiscoveredEggs then
+        renderEggCards(Flags.DiscoveredEggs)
     end
 end)
 
--- [CARD 2 - COLUNA DIREITA]: OP Stuffs
-local OpStuffsCard = createCard(ColRight, "OP Stuffs", "⚡")
-
-addToggle(OpStuffsCard, "Instant TP (Off God Mode)", Flags.InstantTP or false, function(state)
-    Flags.InstantTP = state
-    addLog("TELEPORTE", "Instant TP: " .. (state and "ATIVADO" or "DESATIVADO"))
-end)
-
-addToggle(OpStuffsCard, "God Mode", Flags.GodMode, function(state)
-    Flags.GodMode = state
-    addLog("JOGADOR", "God Mode local " .. (state and "ativado" or "desativado") .. ". (Nota: dano do servidor FE ainda pode aplicar).")
-end)
-
-addToggle(OpStuffsCard, "Anti Treadmill", Flags.AntiTreadmill ~= false, function(state)
-    Flags.AntiTreadmill = state
-    Flags.AntiRagdoll = state
-    Flags.NeverDropEgg = state
-    local char = LocalPlayer.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    setRagdollStatesEnabled(hum, not state)
-    if state and char and hum then enforceAntiRagdoll(char, hum) end
-    if not state then restoreRagdollConstraints() end
-    addLog("JOGADOR", "Anti Treadmill & Anti-Ragdoll: " .. (state and "ATIVADO" or "DESATIVADO"))
-end)
-
-addToggle(OpStuffsCard, "Speed Boost", Flags.SpeedHack, function(state)
-    Flags.SpeedHack = state
-    if not state then
-        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        local defaults = hum and humanoidDefaults[hum]
-        if hum and defaults then hum.WalkSpeed = defaults.WalkSpeed end
+CopyTableBtn.MouseButton1Click:Connect(function()
+    if not Flags.DiscoveredEggs or #Flags.DiscoveredEggs == 0 then
+        scanAllEggsInMap()
     end
-end)
-
-addSlider(OpStuffsCard, "WalkSpeed", 16, 250, Flags.WalkSpeed or 16, "spd", function(val)
-    Flags.WalkSpeed = val
-    if Flags.SpeedHack then
-        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if hum then hum.WalkSpeed = val end
+    local lines = { "=== RELATÓRIO DO RADAR (ROUBE UM OVO) ===" }
+    for i, e in ipairs(Flags.DiscoveredEggs) do
+        table.insert(lines, string.format("#%02d [%s] %s | %s | Coords: Vector3.new(%.1f, %.1f, %.1f) | Dist: %dm",
+            i, e.Rarity, e.Name, e.Zone, e.Position.X, e.Position.Y, e.Position.Z, math.floor(e.Distance)
+        ))
     end
-end)
-
-addToggle(OpStuffsCard, "Jump Boost", Flags.JumpPowerHack, function(state)
-    Flags.JumpPowerHack = state
-    if not state then
-        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        local defaults = hum and humanoidDefaults[hum]
-        if hum and defaults then hum.JumpPower = defaults.JumpPower end
-    end
-end)
-
-addSlider(OpStuffsCard, "JumpPower", 50, 300, Flags.JumpPower or 50, "pwr", function(val)
-    Flags.JumpPower = val
-    if Flags.JumpPowerHack then
-        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if hum then hum.JumpPower = val end
-    end
-end)
-
-addToggle(OpStuffsCard, "Infinite Jump", Flags.InfJump, function(state)
-    Flags.InfJump = state
-end)
-
--- [CARD 3 - COLUNA DIREITA]: Auto Steal Filter
-local FilterCard = createCard(ColRight, "Auto Steal Filter", "🔍")
-
-addDropdown(FilterCard, "Areas", { "...", "Todas as Áreas", "Prehistoric", "Abyss Ocean", "Volcano", "Cherry Blossom" }, Flags.SelectedArea or "...", function(val)
-    Flags.SelectedArea = val
-    invalidateTargetCache()
-end)
-
-addDropdown(FilterCard, "Categories", { "...", "Todas", "Base Eggs", "Area Eggs", "SmartPrompts" }, Flags.SelectedCategory or "...", function(val)
-    Flags.SelectedCategory = val
-    invalidateTargetCache()
-end)
-
-addMultiSelect(FilterCard, "Rarities", { "Divine", "Eternal", "Secret", "Cosmic", "Mythic", "Legendary", "Epic", "Rare", "Common" }, Flags.SelectedRarities or { "Divine", "Eternal", "Secret", "Cosmic" }, function(list)
-    Flags.SelectedRarities = list
-    invalidateTargetCache()
-end)
-
-addDropdown(FilterCard, "Mutations", { "...", "Todas", "Infested", "Golden", "Rainbow" }, Flags.SelectedMutations or "...", function(val)
-    Flags.SelectedMutations = val
-    invalidateTargetCache()
-end)
-
-addSlider(FilterCard, "Pontuação Mínima", 0, 40000, Flags.ManualMinRarityScore or 0, "pts", function(val)
-    Flags.ManualMinRarityScore = val
-    Flags.MinRarityScore = val
-    invalidateTargetCache()
-end)
-
-addToggle(FilterCard, "Ignorar Ovos Comuns", Flags.FilterIgnoreCommons, function(state)
-    Flags.FilterIgnoreCommons = state
-    invalidateTargetCache()
+    pcall(function()
+        if setclipboard then
+            setclipboard(table.concat(lines, "\n"))
+            addLog("RADAR", "Lista formatada copiada para a área de transferência.")
+        end
+    end)
 end)
 
 --================================================================--
--- 2. Página: Visual (ESP)
+-- 2. PÁGINA: VISUAL & ESP (MARCADORES NO MAPA)
 --================================================================--
+
 local VisualPage = createPage("Visual")
-local VisualCard = createCard(VisualPage, "Visuals & ESP", "👁")
+local EspCard = createCard(VisualPage, "Marcadores ESP na Tela", "👁")
 
-addToggle(VisualCard, "ESP de Ovos (Marcadores Leves)", Flags.EggESP, function(state)
+addToggle(EspCard, "Ativar ESP de Ovos (Mostra Peso, Nome e Distância)", Flags.EggESP, function(state)
     Flags.EggESP = state
     updateESP()
+    addLog("VISUAL", "ESP de ovos " .. (state and "ativado." or "desativado."))
 end)
 
-addToggle(VisualCard, "ESP de Jogadores (Nomes)", Flags.PlayerESP, function(state)
+addToggle(EspCard, "Ativar ESP de Jogadores", Flags.PlayerESP, function(state)
     Flags.PlayerESP = state
     updateESP()
 end)
 
-addButton(VisualCard, "Limpar Marcadores ESP", function()
+addSlider(EspCard, "Alcance Máximo do ESP", 100, 5000, Flags.ESPMaxDistance or 2500, "studs", function(val)
+    Flags.ESPMaxDistance = val
+    updateESP()
+end)
+
+addButton(EspCard, "Limpar Todos os Marcadores da Tela", function()
     clearAllESP()
-    addLog("VISUAL", "Todos os marcadores ESP foram removidos da tela.")
+    addLog("VISUAL", "Marcadores limpos.")
 end)
 
 --================================================================--
--- 3. Página: Dashboard & Console Logger
+-- 3. PÁGINA: DIAGNÓSTICO & DUMPER DE DADOS DO JOGO
 --================================================================--
-local DashPage = createPage("Dashboard")
-local LogCard = createCard(DashPage, "Console de Diagnóstico em Tempo Real", "📊")
+
+local DumpPage = createPage("Diagnostico")
+local DumpCard = createCard(DumpPage, "Extrator de Arquivos e Logs do Jogo", "📦")
+
+local DumperDesc = Instance.new("TextLabel")
+DumperDesc.Size = UDim2.new(1, 0, 0, 36)
+DumperDesc.BackgroundTransparency = 1
+DumperDesc.Text = "Varre ReplicatedStorage, Workspace, PlayerGui e atributos internos do jogo para gerar um mapa completo de todos os ovos, chances e valores."
+DumperDesc.Font = Enum.Font.Gotham
+DumperDesc.TextSize = 11
+DumperDesc.TextColor3 = C_TEXT_MUTED
+DumperDesc.TextWrapped = true
+DumperDesc.TextXAlignment = Enum.TextXAlignment.Left
+DumperDesc.Parent = DumpCard
+
+addButton(DumpCard, "📦 Gerar Dump Completo do Jogo (.TXT no Disco)", function()
+    generateGameDump()
+end)
+
+local LogConsoleCard = createCard(DumpPage, "Console Interno de Diagnóstico", "📊")
 
 local ConsoleScroll = Instance.new("ScrollingFrame")
-ConsoleScroll.Size = UDim2.new(1, 0, 0, 220)
+ConsoleScroll.Size = UDim2.new(1, 0, 0, 180)
 ConsoleScroll.BackgroundColor3 = Color3.fromRGB(13, 13, 16)
 ConsoleScroll.BorderSizePixel = 0
 ConsoleScroll.ScrollBarThickness = 3
 ConsoleScroll.ScrollBarImageColor3 = C_AMBER
 ConsoleScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-ConsoleScroll.Parent = LogCard
+ConsoleScroll.Parent = LogConsoleCard
 addCorner(ConsoleScroll, 6)
 addStroke(ConsoleScroll, C_ITEM_STROKE, 1, 0)
 
@@ -2868,7 +1796,7 @@ ConsoleLabel.TextSize = 10.5
 ConsoleLabel.Font = Enum.Font.Code
 ConsoleLabel.TextXAlignment = Enum.TextXAlignment.Left
 ConsoleLabel.TextYAlignment = Enum.TextYAlignment.Top
-ConsoleLabel.Text = "=== BIGFROOT CONSOLE LOGGER ==="
+ConsoleLabel.Text = "=== EGGVISION DIAGNÓSTICO LOCAL ==="
 ConsoleLabel.Parent = ConsoleScroll
 
 local function updateLogConsole()
@@ -2879,168 +1807,129 @@ end
 _G.UpdateLogConsole = updateLogConsole
 updateLogConsole()
 
-addToggle(LogCard, "Salvar Registros no Disco (.txt)", Flags.SaveToDisk, function(state)
+addToggle(LogConsoleCard, "Salvar Registros no Disco (.txt)", Flags.SaveToDisk, function(state)
     Flags.SaveToDisk = state
-    addLog("SISTEMA", "Gravação em disco: " .. (state and "ATIVADA" or "DESATIVADA"))
 end)
 
-addToggle(LogCard, "Diagnóstico Detalhado do Auto Steal", Flags.AutoLogger, function(state)
-    Flags.AutoLogger = state
-end)
-
-addButton(LogCard, "Copiar Todos os Registros", function()
+addButton(LogConsoleCard, "Copiar Histórico de Logs", function()
     pcall(function()
         if setclipboard then
             setclipboard(table.concat(LogHistory, "\n----------------------------------------\n"))
-            addLog("SISTEMA", "Registros copiados para a área de transferência.")
+            addLog("SISTEMA", "Logs copiados.")
         end
     end)
 end)
 
-addButton(LogCard, "Limpar Histórico do Console", function()
+addButton(LogConsoleCard, "Limpar Histórico", function()
     LogHistory = {}
     addLog("SISTEMA", "Histórico limpo.")
 end)
 
 --================================================================--
--- 4. Página: Radar ao Vivo (Ovos no Mapa)
+-- 4. PÁGINA: AUTOMAÇÃO SEGURA (OPCIONAL)
 --================================================================--
-local RadarPage = createPage("Radar")
-local RadarCard = createCard(RadarPage, "Radar de Ovos em Tempo Real", "🎯")
 
-addButton(RadarCard, "Escanear Ovos do Mapa Agora", function()
-    local discovered, dumpText = scanAllEggsInMap()
-    addLog("RADAR", tostring(#discovered) .. " ovos encontrados. Relatório pronto para consulta.")
-    print("\n" .. dumpText .. "\n")
-end)
+local AutoPage = createPage("Automacao")
+local AutoCard = createCard(AutoPage, "Coleta e Retorno Suave (Física)", "⚔")
 
-addButton(RadarCard, "Copiar Relatório do Radar", function()
-    if not _G.EggRadarText or _G.EggRadarText == "" then
-        scanAllEggsInMap()
+addToggle(AutoCard, "Ativar Roubo Automático Suave", Flags.AutoSteal, function(state)
+    Flags.AutoSteal = state
+    if state then
+        addLog("ROUBO", "Ciclo de roubo iniciado com voo físico.")
+        task.spawn(function()
+            while scriptActive and Flags.AutoSteal do
+                local eggs = scanAllEggsInMap()
+                if #eggs > 0 then
+                    local target = eggs[1]
+                    addLog("ROUBO", "Indo até o alvo: " .. target.Name .. " (" .. target.Rarity .. ")")
+                    flyToPosition(target.Position + Vector3.new(0, 1, 0), Flags.FlySpeed)
+                    stealEgg(target.Prompt)
+                    task.wait(0.3)
+                    if Flags.ReturnToPlot then
+                        local basePos = getBasePosition()
+                        if basePos then
+                            flyToPosition(basePos + Vector3.new(0, 3, 0), Flags.FlySpeed)
+                        end
+                    end
+                end
+                task.wait(Flags.StealDelay)
+            end
+        end)
+    else
+        addLog("ROUBO", "Roubo automático pausado.")
     end
-    pcall(function()
-        if setclipboard then
-            setclipboard(_G.EggRadarText)
-            addLog("RADAR", "Relatório do radar copiado com sucesso.")
-        end
-    end)
 end)
 
-addButton(RadarCard, "Roubar Alvo Top 1 de Maior Valor", function()
-    task.spawn(function()
-        local prev = Flags.AutoSteal
-        Flags.AutoSteal = true
-        flyStealLoop()
-        Flags.AutoSteal = prev
-    end)
+addSlider(AutoCard, "Velocidade de Voo Suave", 100, 800, Flags.FlySpeed or 400, "studs/s", function(val)
+    Flags.FlySpeed = val
 end)
 
-addButton(RadarCard, "Gerar Diagnóstico Estrutural Completo (TXT)", function()
-    local dump = dumpGameStructure()
-    addLog("DIAGNÓSTICO", "Relatório estrutural gerado e copiado.")
+addToggle(AutoCard, "Retornar à Base Após Coleta", Flags.ReturnToPlot, function(state)
+    Flags.ReturnToPlot = state
+end)
+
+addButton(AutoCard, "Registrar Posição Atual como Base", function()
+    local hrp = getHRP()
+    if hrp then
+        Flags.CustomBasePos = hrp.Position
+        Flags.SavedBasePos = hrp.Position
+        addLog("BASE", string.format("Base fixada em: (%.1f, %.1f, %.1f)", hrp.Position.X, hrp.Position.Y, hrp.Position.Z))
+    end
 end)
 
 --================================================================--
--- 5. Página: Configurações Gerais
+-- 5. PÁGINA: CONFIGURAÇÕES GERAIS & ATALHOS
 --================================================================--
-local SettingsPage = createPage("Settings")
-local SettCard = createCard(SettingsPage, "Configurações & Teclas", "⚙")
 
-addToggle(SettCard, "Proteção Anti-AFK", Flags.AntiAFK, function(state)
+local SettingsPage = createPage("Configuracoes")
+local SettCard = createCard(SettingsPage, "Configurações Gerais", "⚙")
+
+addToggle(SettCard, "Proteção Anti-AFK (Evita Desconexão)", Flags.AntiAFK, function(state)
     Flags.AntiAFK = state
 end)
 
-addButton(SettCard, "Mostrar / Ocultar Interface (LeftControl)", function()
+addButton(SettCard, "Ocultar / Mostrar Interface (LeftControl)", function()
     ScreenGui.Enabled = not ScreenGui.Enabled
 end)
 
 addButton(SettCard, "Descarregar e Encerrar Script", function()
     scriptActive = false
     Flags.AutoSteal = false
-    Flags.Noclip = false
-    Flags.AntiRagdoll = false
-    Flags.NeverDropEgg = false
-    Flags.GodMode = false
-    Flags.SpeedHack = false
-    Flags.JumpPowerHack = false
-    restoreNoclip()
-    restoreRagdollConstraints()
-    local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-    local defaults = hum and humanoidDefaults[hum]
-    if hum then
-        setRagdollStatesEnabled(hum, true)
-        if defaults then
-            hum.WalkSpeed = defaults.WalkSpeed
-            hum.JumpPower = defaults.JumpPower
-        end
-    end
     clearAllESP()
     ScreenGui:Destroy()
 end)
 
--- Criação das outras abas (Placeholders estilizados)
-local otherTabs = {
-    { id = "Progression", name = "Progression", icon = "📈" },
-    { id = "Pets", name = "Pets", icon = "🐾" },
-    { id = "Monster", name = "Monster Event", icon = "👾" },
-    { id = "Contest", name = "Contest", icon = "⚔" },
-    { id = "Fuse", name = "Fuse", icon = "✨" },
-    { id = "Gifting", name = "Gifting", icon = "🎁" }
-}
+-- Montagem da Sidebar
+addSidebarTab("Radar", "Radar de Ovos", "🎯", 1)
+addSidebarTab("Visual", "Visual & ESP", "👁", 2)
+addSidebarTab("Diagnostico", "Diagnóstico & Dump", "📦", 3)
+addSidebarTab("Automacao", "Automação Suave", "⚔", 4)
+addSidebarTab("Configuracoes", "Configurações", "⚙", 5)
 
-for _, tInfo in ipairs(otherTabs) do
-    local pg = createPage(tInfo.id)
-    local card = createCard(pg, tInfo.name, tInfo.icon)
-    addDisclaimer(card, tInfo.name:upper(), "Módulo de automação sincronizado.", "Opções específicas deste evento serão ativadas durante a rotação do jogo.")
-end
-
--- Montagem da Barra Lateral
-addSidebarTab("Eggs", "Eggs", "🎯", 1)
-addSidebarTab("Progression", "Progression", "📈", 2)
-addSidebarTab("Pets", "Pets", "🐾", 3)
-addSidebarTab("Monster", "Monster Event", "👾", 4)
-addSidebarTab("Contest", "Contest", "⚔", 5)
-addSidebarTab("Fuse", "Fuse", "✨", 6)
-addSidebarTab("Visual", "Visual", "👁", 7)
-addSidebarTab("Gifting", "Gifting", "🎁", 8)
-addSidebarTab("Dashboard", "Dashboard", "📊", 9)
-addSidebarTab("Settings", "Settings", "⚙", 10)
-
--- Sub-Abas do Topo para a aba "Eggs"
-addSubTab("AutoSteal", "Auto Steal Eggs", function()
-    switchTab("Eggs")
+-- Iniciar na aba principal do Radar
+switchTab("Radar")
+task.spawn(function()
+    task.wait(0.5)
+    local eggs = scanAllEggsInMap()
+    renderEggCards(eggs)
 end)
 
-addSubTab("RadarTab", "Eggs", function()
-    switchTab("Radar")
-end)
-
--- Inicializar na aba "Eggs"
-switchTab("Eggs")
-if SubTabButtons["AutoSteal"] then
-    tw(SubTabButtons["AutoSteal"], { TextColor3 = C_TEXT_WHITE }, 0.1)
-    if SubTabIndicators["AutoSteal"] then
-        SubTabIndicators["AutoSteal"].Visible = true
-    end
-end
-
--- Tecla de Atalho (LeftControl) para alternar visibilidade
+-- Tecla de Atalho (LeftControl)
 UserInputService.InputBegan:Connect(function(input, gpe)
     if scriptActive and not gpe and input.KeyCode == Enum.KeyCode.LeftControl then
         ScreenGui.Enabled = not ScreenGui.Enabled
     end
 end)
 
--- Botão Flutuante Mobile (Para dispositivos Touch / sem teclado)
+-- Botão Flutuante Mobile com Ícone de Ovo
 local MobileToggleBtn = Instance.new("TextButton")
-MobileToggleBtn.Name = "BF_MobileToggle"
+MobileToggleBtn.Name = getRandomName()
 MobileToggleBtn.Size = UDim2.new(0, 36, 0, 36)
 MobileToggleBtn.Position = UDim2.new(0, 10, 0.4, 0)
 MobileToggleBtn.BackgroundColor3 = C_SIDEBAR
-MobileToggleBtn.Text = "BF"
+MobileToggleBtn.Text = "🥚"
 MobileToggleBtn.Font = Enum.Font.GothamBold
-MobileToggleBtn.TextSize = 13
-MobileToggleBtn.TextColor3 = C_AMBER
+MobileToggleBtn.TextSize = 16
 MobileToggleBtn.ZIndex = 1000
 MobileToggleBtn.Parent = ScreenGui
 addCorner(MobileToggleBtn, 18)
@@ -3051,7 +1940,6 @@ MobileToggleBtn.MouseButton1Click:Connect(function()
     MainFrame.Visible = not MainFrame.Visible
 end)
 
--- Proteger e Inserir GUI
+-- Proteger e Inserir Interface
 protectGui(ScreenGui)
 ScreenGui.Parent = getGuiContainer()
-print("========== BIGFROOT HUB (STEAL AN EGG) CARREGADO COM SUCESSO ==========")
