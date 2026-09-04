@@ -1,21 +1,27 @@
 --[[
-    ROUBE UM OVO - HUB DE TELEMETRIA & AUTOMAÇÃO (v4.0)
+    ROUBE UM OVO - HUB DE TELEMETRIA & AUTOMAÇÃO (v4.5)
     -----------------------------------------------------------------------
-    - Voo Aéreo Seguro Anti-Morte: Cruzeiro em alta altitude (Y >= 115) com
-      CanTouch = false e CanCollide = false contínuos (100% imune a kill-bricks,
-      lasers, espinhos, esteiras e void).
-    - Resolução Real de Ovos: Eliminação total de hashes UUIDs (ex: 2e05e5...).
-      Inspeção em camadas de ClientRenderedAssets, ReplicatedStorage.Data,
-      atributos, meshes internas e mapeamento de ilhas em português.
-    - Máquina de Estados de Posse (isHoldingEgg): Ao segurar ou roubar um ovo,
-      o script retorna imediatamente à base e aguarda o depósito antes de
-      buscar o próximo alvo.
+    - Deslocamento Inteligente:
+      * Ida até o ovo: Voo direto em linha reta ("retão") com noclip e CanTouch=false
+        (respeitando paredes sem colidir ou morrer em kill-bricks).
+      * Retorno à base: Voo aéreo elevado ("por cima") em alta altitude (Y >= 115)
+        para passar por cima de qualquer obstáculo com o ovo seguro.
+    - Ciclo de Roubo Confiável:
+      * Tentativas contínuas de ProximityPrompt com bypass de HoldDuration.
+      * Só retorna à base quando o ovo for REALMENTE coletado (isHoldingEgg).
+      * Aguarda na base até o ovo ser depositado no plot.
+    - Resolução Real de Ovos & ESP:
+      * Banco de dados dinâmico de todos os ModuleScripts de ReplicatedStorage.Data
+        (Assets, Rarity, Areas, DragonEgg, Sakura, MonsterParasite, BrainrotEgg, AdminAbuseEgg, etc.).
+      * Inspeção de Workspace.ClientRenderedAssets e TextLabels de BillboardGuis.
+      * Cores de ESP por raridade real (Comum, Raro, Épico, Lendário, Mítico, Secreto).
+    - Dumper Estrutural Completo para ROUBE_UM_OVO_DUMP.txt.
     - Zero poluição de console (print/warn silenciados contra LogService).
     - Zero poluição de ambiente global (_G e getgenv limpos contra BAC).
     - Interface minimalista em português, tema Tech Blue (#38BDF8), sem emojis.
 ]]
 
--- 1. Silenciamento Preventivo Total contra LogService.MessageOut
+-- 1. Silenciamento Total Preventivo contra LogService.MessageOut
 local function silentOutput(...) end
 local print = silentOutput
 local warn = silentOutput
@@ -109,7 +115,7 @@ local Config = {
 
     EggESP = false,
     PlayerESP = false,
-    ESPMaxDistance = 3000,
+    ESPMaxDistance = 3500,
 
     AutoSteal = false,
     MoveSpeed = 350,
@@ -172,20 +178,18 @@ local function getBasePosition()
     return Config.SavedBasePos
 end
 
--- Detecção Precisa de Posse de Ovo (Mãos / Costas / Mochila / Atributos)
 local function isHoldingEgg()
     local char = LocalPlayer.Character
     if not char then return false, nil end
 
-    -- 1. Ferramenta ativa no Personagem
+    -- 1. Ferramenta equipada na mão
     for _, item in ipairs(char:GetChildren()) do
         if item:IsA("Tool") then
-            local n = item.Name:lower()
             return true, item.Name
         end
     end
 
-    -- 2. Modelo soldado ao tronco do personagem (Mecânica de carregar nas mãos/costas)
+    -- 2. Modelo soldado ao tronco do personagem (mecânica de carregar nas costas/mãos)
     for _, item in ipairs(char:GetChildren()) do
         if (item:IsA("Model") or item:IsA("BasePart")) and item.Name ~= "HumanoidRootPart" then
             local n = item.Name:lower()
@@ -242,28 +246,66 @@ local function getPositionOf(obj)
     return part and part.Position or nil
 end
 
--- 7. Resolução Avançada de Nomes Reais de Ovos & Dados Internos
-local GameAssetsData = {}
-local GameAreasData = {}
-local GameRarityData = {}
+-- 7. BANCO DE DADOS DINÂMICO DOS MÓDULOS E TABELAS DO JOGO
+local MasterEggDatabase = {}
+local RawDumpData = {}
 
+local function deepIndexTable(tbl, prefix)
+    if type(tbl) ~= "table" then return end
+    for k, v in pairs(tbl) do
+        local keyStr = tostring(k):lower()
+        if type(v) == "table" then
+            local eggName = v.Name or v.DisplayName or v.EggName or (type(k) == "string" and k)
+            local rarity = v.Rarity or v.Tier or v.RarityName
+            local weight = tonumber(v.Weight or v.BaseWeight or v.Kg)
+            local income = v.Income or v.BaseIncome or v.CashPerSec
+
+            if eggName and type(eggName) == "string" and eggName ~= "" then
+                MasterEggDatabase[keyStr] = {
+                    Name = tostring(eggName),
+                    Rarity = rarity and tostring(rarity):upper() or nil,
+                    Weight = weight,
+                    Income = income
+                }
+            end
+            deepIndexTable(v, prefix .. "." .. tostring(k))
+        elseif type(k) == "string" and (type(v) == "string" or type(v) == "number") then
+            if not MasterEggDatabase[keyStr] then
+                MasterEggDatabase[keyStr] = {
+                    Name = tostring(v)
+                }
+            end
+        end
+    end
+end
+
+-- Carregar todos os módulos de ReplicatedStorage.Data
 pcall(function()
     local dataFolder = Services.ReplicatedStorage:FindFirstChild("Data")
     if dataFolder then
-        local assetsMod = dataFolder:FindFirstChild("Assets")
-        if assetsMod and assetsMod:IsA("ModuleScript") then
-            local res = require(assetsMod)
-            if type(res) == "table" then GameAssetsData = res end
+        for _, child in ipairs(dataFolder:GetChildren()) do
+            if child:IsA("ModuleScript") then
+                pcall(function()
+                    local modData = require(child)
+                    if type(modData) == "table" then
+                        RawDumpData[child.Name] = modData
+                        deepIndexTable(modData, child.Name)
+                    end
+                end)
+            end
         end
-        local areasMod = dataFolder:FindFirstChild("Areas")
-        if areasMod and areasMod:IsA("ModuleScript") then
-            local res = require(areasMod)
-            if type(res) == "table" then GameAreasData = res end
-        end
-        local rarityMod = dataFolder:FindFirstChild("Rarity")
-        if rarityMod and rarityMod:IsA("ModuleScript") then
-            local res = require(rarityMod)
-            if type(res) == "table" then GameRarityData = res end
+    end
+end)
+
+-- Carregar nomes de modelos de ReplicatedStorage.AssetModels
+pcall(function()
+    local am = Services.ReplicatedStorage:FindFirstChild("AssetModels")
+    if am then
+        for _, m in ipairs(am:GetChildren()) do
+            local clean = m.Name:gsub("Egg", " Egg"):gsub("  ", " "):gsub("^%s+", "")
+            MasterEggDatabase[m.Name:lower()] = {
+                Name = clean
+            }
         end
     end
 end)
@@ -292,27 +334,57 @@ local function getIslandNameByPos(pos)
     return "Ilha Avançada"
 end
 
-local KnownEggKeywords = {
-    ["admin abuse"] = { Name = "Ovo Admin Abuse", Score = 100000, Rarity = "ADMIN ABUSE" },
-    ["monster parasite"] = { Name = "Ovo Parasita Monstro", Score = 85000, Rarity = "MONSTER PARASITE" },
-    ["dragon"] = { Name = "Ovo do Dragão", Score = 75000, Rarity = "DRAGON" },
-    ["sakura"] = { Name = "Ovo de Sakura", Score = 65000, Rarity = "SAKURA" },
-    ["brainrot"] = { Name = "Ovo Brainrot", Score = 60000, Rarity = "BRAINROT" },
-    ["limited"] = { Name = "Ovo Limitado", Score = 50000, Rarity = "LIMITED" },
-    ["prehistoric"] = { Name = "Ovo Pré-Histórico", Score = 40000, Rarity = "PREHISTORIC" },
-    ["abyss"] = { Name = "Ovo do Abismo", Score = 30000, Rarity = "ABYSS" },
-    ["volcano"] = { Name = "Ovo do Vulcão", Score = 22000, Rarity = "VOLCANO" },
-    ["forest"] = { Name = "Ovo da Floresta", Score = 5000, Rarity = "FOREST" },
-    ["cherry"] = { Name = "Ovo de Cerejeira", Score = 12000, Rarity = "CHERRY" },
-    ["golden"] = { Name = "Ovo Dourado", Score = 18000, Rarity = "GOLDEN" },
-    ["rainbow"] = { Name = "Ovo Arco-Íris", Score = 25000, Rarity = "RAINBOW" },
-    ["secret"] = { Name = "Ovo Secreto", Score = 45000, Rarity = "SECRET" },
-    ["mythic"] = { Name = "Ovo Mítico", Score = 20000, Rarity = "MÍTICO" },
-    ["legendary"] = { Name = "Ovo Lendário", Score = 15000, Rarity = "LENDÁRIO" },
-    ["epic"] = { Name = "Ovo Épico", Score = 8000, Rarity = "ÉPICO" },
-    ["rare"] = { Name = "Ovo Raro", Score = 3500, Rarity = "RARO" },
-    ["uncommon"] = { Name = "Ovo Incomum", Score = 1500, Rarity = "INCOMUM" },
-    ["common"] = { Name = "Ovo Comum", Score = 300, Rarity = "COMUM" }
+local RarityScores = {
+    ["ADMIN ABUSE"] = 100000,
+    ["MONSTER PARASITE"] = 85000,
+    ["DRAGON"] = 75000,
+    ["SAKURA"] = 65000,
+    ["BRAINROT"] = 60000,
+    ["LIMITED"] = 50000,
+    ["SECRET"] = 45000,
+    ["PREHISTORIC"] = 40000,
+    ["ABYSS"] = 30000,
+    ["VOLCANO"] = 22000,
+    ["MÍTICO"] = 20000,
+    ["MYTHIC"] = 20000,
+    ["GOLDEN"] = 18000,
+    ["RAINBOW"] = 25000,
+    ["LENDÁRIO"] = 15000,
+    ["LEGENDARY"] = 15000,
+    ["CHERRY"] = 12000,
+    ["ÉPICO"] = 8000,
+    ["EPIC"] = 8000,
+    ["FOREST"] = 5000,
+    ["RARO"] = 3500,
+    ["RARE"] = 3500,
+    ["INCOMUM"] = 1500,
+    ["UNCOMMON"] = 1500,
+    ["COMUM"] = 300,
+    ["COMMON"] = 300
+}
+
+local KnownKeywords = {
+    ["admin abuse"] = { Name = "Ovo Admin Abuse", Rarity = "ADMIN ABUSE", Score = 100000 },
+    ["monster parasite"] = { Name = "Ovo Parasita Monstro", Rarity = "MONSTER PARASITE", Score = 85000 },
+    ["parasite"] = { Name = "Ovo Parasita", Rarity = "MONSTER PARASITE", Score = 85000 },
+    ["dragon"] = { Name = "Ovo do Dragão", Rarity = "DRAGON", Score = 75000 },
+    ["sakura"] = { Name = "Ovo de Sakura", Rarity = "SAKURA", Score = 65000 },
+    ["brainrot"] = { Name = "Ovo Brainrot", Rarity = "BRAINROT", Score = 60000 },
+    ["limited"] = { Name = "Ovo Limitado", Rarity = "LIMITED", Score = 50000 },
+    ["secret"] = { Name = "Ovo Secreto", Rarity = "SECRET", Score = 45000 },
+    ["prehistoric"] = { Name = "Ovo Pré-Histórico", Rarity = "PREHISTORIC", Score = 40000 },
+    ["abyss"] = { Name = "Ovo do Abismo", Rarity = "ABYSS", Score = 30000 },
+    ["volcano"] = { Name = "Ovo do Vulcão", Rarity = "VOLCANO", Score = 22000 },
+    ["rainbow"] = { Name = "Ovo Arco-Íris", Rarity = "RAINBOW", Score = 25000 },
+    ["golden"] = { Name = "Ovo Dourado", Rarity = "GOLDEN", Score = 18000 },
+    ["mythic"] = { Name = "Ovo Mítico", Rarity = "MÍTICO", Score = 20000 },
+    ["legendary"] = { Name = "Ovo Lendário", Rarity = "LENDÁRIO", Score = 15000 },
+    ["cherry"] = { Name = "Ovo de Cerejeira", Rarity = "CHERRY", Score = 12000 },
+    ["epic"] = { Name = "Ovo Épico", Rarity = "ÉPICO", Score = 8000 },
+    ["forest"] = { Name = "Ovo da Floresta", Rarity = "FOREST", Score = 5000 },
+    ["rare"] = { Name = "Ovo Raro", Rarity = "RARO", Score = 3500 },
+    ["uncommon"] = { Name = "Ovo Incomum", Rarity = "INCOMUM", Score = 1500 },
+    ["common"] = { Name = "Ovo Comum", Rarity = "COMUM", Score = 300 }
 }
 
 local function resolveEggDetails(instance, prompt)
@@ -326,6 +398,24 @@ local function resolveEggDetails(instance, prompt)
     local function inspectStr(s)
         if not s or s == "" then return end
         local low = tostring(s):lower()
+
+        -- Consulta no banco de dados de módulos
+        if MasterEggDatabase[low] then
+            local entry = MasterEggDatabase[low]
+            if entry.Name and not isHexUUID(entry.Name) then
+                foundName = entry.Name
+            end
+            if entry.Rarity then
+                detectedRarity = entry.Rarity
+                maxScore = math.max(maxScore, RarityScores[entry.Rarity] or 5000)
+            end
+            if entry.Weight and entry.Weight > detectedWeight then
+                detectedWeight = entry.Weight
+            end
+            if entry.Income and not detectedIncome then
+                detectedIncome = entry.Income
+            end
+        end
 
         -- Peso em Kg
         local kg = low:match("([%d%,%.]+)%s*kg")
@@ -341,7 +431,7 @@ local function resolveEggDetails(instance, prompt)
         end
 
         -- Identificação por palavras-chave
-        for kw, meta in pairs(KnownEggKeywords) do
+        for kw, meta in pairs(KnownKeywords) do
             if low:find(kw, 1, true) then
                 if meta.Score > maxScore then
                     maxScore = meta.Score
@@ -354,20 +444,39 @@ local function resolveEggDetails(instance, prompt)
         end
     end
 
-    -- Camada 1: Localizar visual correspondente em ClientRenderedAssets
+    -- 1. Consulta em ClientRenderedAssets (Onde o jogo renderiza os ovos reais no cliente)
     pcall(function()
         if pos then
             local renderedFolder = Services.Workspace:FindFirstChild("ClientRenderedAssets")
             if renderedFolder then
-                for _, renderItem in ipairs(renderedFolder:GetChildren()) do
-                    local rPos = getPositionOf(renderItem)
-                    if rPos and (rPos - pos).Magnitude <= 3.5 then
-                        if not isHexUUID(renderItem.Name) and renderItem.Name ~= "Model" and renderItem.Name ~= "MeshPart" then
-                            foundName = renderItem.Name
+                for _, rItem in ipairs(renderedFolder:GetChildren()) do
+                    local isMatch = false
+                    if rItem.Name == instance.Name then
+                        isMatch = true
+                    else
+                        local rPos = getPositionOf(rItem)
+                        if rPos then
+                            local horizDist = (Vector2.new(rPos.X, rPos.Z) - Vector2.new(pos.X, pos.Z)).Magnitude
+                            if horizDist <= 8 then
+                                isMatch = true
+                            end
                         end
-                        inspectStr(renderItem.Name)
-                        for k, v in pairs(renderItem:GetAttributes()) do
+                    end
+
+                    if isMatch then
+                        if not isHexUUID(rItem.Name) and rItem.Name ~= "Model" and rItem.Name ~= "MeshPart" then
+                            foundName = rItem.Name
+                        end
+                        inspectStr(rItem.Name)
+                        for k, v in pairs(rItem:GetAttributes()) do
                             inspectStr(k); inspectStr(v)
+                        end
+                        for _, desc in ipairs(rItem:GetDescendants()) do
+                            if desc:IsA("TextLabel") or desc:IsA("TextButton") then
+                                inspectStr(desc.Text)
+                            elseif desc:IsA("ValueBase") then
+                                inspectStr(desc.Name); inspectStr(desc.Value)
+                            end
                         end
                         break
                     end
@@ -376,7 +485,7 @@ local function resolveEggDetails(instance, prompt)
         end
     end)
 
-    -- Camada 2: Inspecionar Prompt
+    -- 2. Inspeção do Prompt
     if prompt then
         local pObj = prompt.ObjectText
         if pObj and pObj ~= "" and pObj:lower() ~= "egg" and pObj:lower() ~= "ovo" and not isHexUUID(pObj) then
@@ -385,15 +494,20 @@ local function resolveEggDetails(instance, prompt)
         inspectStr(prompt.ObjectText)
         inspectStr(prompt.ActionText)
         inspectStr(prompt.Name)
+        pcall(function()
+            for k, v in pairs(prompt:GetAttributes()) do
+                inspectStr(k); inspectStr(v)
+            end
+        end)
     end
 
-    -- Camada 3: Inspecionar Instância, Atributos e Filhos
+    -- 3. Inspeção da Instância do Slot
     if instance then
         inspectStr(instance.Name)
 
         pcall(function()
             for k, v in pairs(instance:GetAttributes()) do
-                if (k == "EggName" or k == "EggType" or k == "Egg") and tostring(v) ~= "" and not isHexUUID(tostring(v)) then
+                if (k == "EggName" or k == "EggType" or k == "Egg" or k == "AssetId") and tostring(v) ~= "" and not isHexUUID(tostring(v)) then
                     foundName = tostring(v)
                 end
                 inspectStr(k); inspectStr(v)
@@ -408,29 +522,26 @@ local function resolveEggDetails(instance, prompt)
                     if not foundName then foundName = child.Name end
                 elseif child:IsA("ValueBase") then
                     inspectStr(child.Name); inspectStr(child.Value)
-                    if (child.Name:find("Egg") or child.Name:find("Name")) and tostring(child.Value) ~= "" and not isHexUUID(tostring(child.Value)) then
-                        foundName = tostring(child.Value)
-                    end
                 end
             end
         end)
 
         pcall(function()
-            local inspectedLabels = 0
+            local count = 0
             for _, d in ipairs(instance:GetDescendants()) do
-                if inspectedLabels >= 30 then break end
+                if count >= 35 then break end
                 if d:IsA("TextLabel") or d:IsA("TextButton") then
-                    inspectedLabels = inspectedLabels + 1
+                    count = count + 1
                     inspectStr(d.Text)
                 end
             end
         end)
     end
 
-    -- Camada 4: Mapeamento de nome de slot (ex: FirstAreaEgg_..._Forest:Slot_004)
+    -- 4. Mapeamento de nome de slot (ex: FirstAreaEgg_..._Forest:Slot_004)
     if not foundName or isHexUUID(foundName) then
         local rawName = instance and instance.Name or ""
-        for kw, meta in pairs(KnownEggKeywords) do
+        for kw, meta in pairs(KnownKeywords) do
             if rawName:lower():find(kw, 1, true) then
                 foundName = meta.Name
                 if meta.Score > maxScore then
@@ -442,7 +553,7 @@ local function resolveEggDetails(instance, prompt)
         end
     end
 
-    -- Camada 5: Fallback Limpo por Ilha / Coordenadas (Zero hashes UUIDs)
+    -- 5. Fallback limpo por Ilha / Coordenadas (Zero hashes UUIDs)
     if not foundName or isHexUUID(foundName) or foundName:lower() == "egg" or foundName:lower() == "ovo" then
         local island = getIslandNameByPos(pos)
         foundName = "Ovo da " .. island
@@ -522,7 +633,7 @@ local function scanAllEggs()
         })
     end
 
-    -- 1. PlacedEggRenders (Ovos colocados nos pedestais dos plots)
+    -- 1. PlacedEggRenders (Ovos nas bases/plots dos jogadores)
     pcall(function()
         local placed = Services.Workspace:FindFirstChild("PlacedEggRenders")
         if placed then
@@ -558,7 +669,7 @@ local function scanAllEggs()
         end
     end)
 
-    -- 4. Varredura Geral de ProximityPrompts do Workspace
+    -- 4. Varredura Geral de Prompts do Workspace
     pcall(function()
         for _, desc in ipairs(Services.Workspace:GetDescendants()) do
             if desc:IsA("ProximityPrompt") then
@@ -574,7 +685,7 @@ local function scanAllEggs()
         end
     end)
 
-    -- Ordenação por raridade/score e distância
+    -- Ordenação: Maior raridade/score primeiro, depois menor distância
     table.sort(discovered, function(a, b)
         if a.RarityScore ~= b.RarityScore then
             return a.RarityScore > b.RarityScore
@@ -585,10 +696,10 @@ local function scanAllEggs()
     return discovered
 end
 
--- 9. SISTEMA DE VOO AÉREO SEGURO (ANTI-MORTE / IMUNIDADE A KILL BRICKS)
+-- 9. SISTEMA DE DESLOCAMENTO HÍBRIDO (DIRETO NA IDA, POR CIMA NA VOLTA)
 local isMoving = false
 
-local function movePlayerTo(targetPos, speed, onStep)
+local function movePlayerTo(targetPos, speed, isReturningToBase, onStep)
     local hrp = getHRP()
     local char = LocalPlayer.Character
     if not hrp or not char or isMoving then return false end
@@ -600,13 +711,12 @@ local function movePlayerTo(targetPos, speed, onStep)
     local startPos = hrp.Position
     local totalDist = (targetPos - startPos).Magnitude
 
-    if totalDist < 5 then
+    if totalDist < 4 then
         isMoving = false
         return true
     end
 
     -- 1. Ativação Contínua de Noclip & Imunidade a Kill Bricks (CanTouch = false)
-    -- Definir CanTouch = false a cada frame impede que scripts de Touch do jogo matem o personagem!
     local noclipConn = Services.RunService.Stepped:Connect(function()
         if char and char.Parent then
             for _, part in ipairs(char:GetDescendants()) do
@@ -618,7 +728,7 @@ local function movePlayerTo(targetPos, speed, onStep)
         end
     end)
 
-    -- 2. Congelar física do Humanoid para evitar dano de queda, tombos e flings
+    -- 2. Congelar física do Humanoid para evitar tombos e flings
     pcall(function()
         humanoid.PlatformStand = true
         humanoid:ChangeState(Enum.HumanoidStateType.Physics)
@@ -645,19 +755,20 @@ local function movePlayerTo(targetPos, speed, onStep)
         isMoving = false
     end
 
-    -- 3. Definição da Trajetória em Arco Aéreo Seguro
-    -- No Roube um Ovo, as ilhas e esteiras ficam entre Y=65 e Y=75.
-    -- Voar a Y >= 115 garante céu 100% livre de qualquer obstáculo, void ou kill-brick.
+    -- 3. Definição da Trajetória:
+    -- SE for retorno à base: Voo por cima (arco elevado Y >= 115) para passar por cima de todas as paredes e obstáculos com o ovo!
+    -- SE for ida até o ovo: Voo direto em linha reta ("retão") ligeiramente elevado (+1.8 studs) respeitando a rota direta.
     local waypoints = {}
-    if totalDist > 25 then
-        local safeY = math.max(startPos.Y, targetPos.Y) + 38
+    if isReturningToBase and totalDist > 25 then
+        local safeY = math.max(startPos.Y, targetPos.Y) + 40
         if safeY < 115 then safeY = 115 end
 
-        table.insert(waypoints, Vector3.new(startPos.X, safeY, startPos.Z))       -- Decolagem vertical
-        table.insert(waypoints, Vector3.new(targetPos.X, safeY, targetPos.Z))      -- Cruzeiro em céu aberto
-        table.insert(waypoints, targetPos + Vector3.new(0, 2.5, 0))                -- Descida sobre o alvo
+        table.insert(waypoints, Vector3.new(startPos.X, safeY, startPos.Z))
+        table.insert(waypoints, Vector3.new(targetPos.X, safeY, targetPos.Z))
+        table.insert(waypoints, targetPos + Vector3.new(0, 3.5, 0))
     else
-        table.insert(waypoints, targetPos + Vector3.new(0, 2, 0))
+        -- Ida direta em linha reta até o ovo
+        table.insert(waypoints, targetPos + Vector3.new(0, 1.8, 0))
     end
 
     -- 4. Execução Ponto a Ponto Suave
@@ -705,30 +816,35 @@ local function movePlayerTo(targetPos, speed, onStep)
         currentPos = hrp.Position
     end
 
-    hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 2.5, 0))
+    hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, isReturningToBase and 3.5 or 1.8, 0))
     hrp.AssemblyLinearVelocity = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
 
     cleanup()
-    return (targetPos - hrp.Position).Magnitude < 12
+    return (targetPos - hrp.Position).Magnitude < 10
 end
 
--- Acionamento Seguro de ProximityPrompt
+-- Acionamento Instantâneo e Forçado de ProximityPrompt
 local function triggerPrompt(prompt)
-    if not prompt then return false end
-    local ok = false
+    if not prompt or not prompt.Parent then return false end
+    pcall(function()
+        prompt.HoldDuration = 0
+        prompt.RequiresLineOfSight = false
+        prompt.MaxActivationDistance = 9999
+        prompt.Enabled = true
+    end)
     pcall(function()
         if fireproximityprompt then
+            fireproximityprompt(prompt, 0)
             fireproximityprompt(prompt)
-            ok = true
-        else
-            prompt:InputHoldBegin()
-            task.wait(prompt.HoldDuration > 0 and (prompt.HoldDuration + 0.05) or 0.1)
-            prompt:InputHoldEnd()
-            ok = true
         end
     end)
-    return ok
+    pcall(function()
+        prompt:InputHoldBegin()
+        task.wait(0.05)
+        prompt:InputHoldEnd()
+    end)
+    return true
 end
 
 -- 10. Dumper Estrutural Profundo
@@ -737,52 +853,66 @@ local function dumpGameData()
     local function logL(s) table.insert(lines, s or "") end
 
     logL("================================================================================")
-    logL("ROUBE UM OVO - INVENTARIO ESTRUTURAL COMPLETO (INSPECAO PROFUNDA)")
+    logL("ROUBE UM OVO - INVENTARIO ESTRUTURAL COMPLETO (INSPECAO PROFUNDA v4.5)")
     logL("Data: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | PlaceId: " .. tostring(game.PlaceId))
     logL("================================================================================\n")
 
-    -- 1. PlacedEggRenders
-    logL("[1] WORKSPACE.PLACEDEGGRENDERS (Ovos renderizados em plots):")
-    pcall(function()
-        local placed = Services.Workspace:FindFirstChild("PlacedEggRenders")
-        if placed then
-            logL("  Total de objetos: " .. tostring(#placed:GetChildren()))
-            for _, egg in ipairs(placed:GetChildren()) do
-                local pos = getPositionOf(egg)
-                local posStr = pos and string.format("(%.1f, %.1f, %.1f)", pos.X, pos.Y, pos.Z) or "N/D"
-                logL(string.format("  - %s [%s] | Pos: %s", egg.Name, egg.ClassName, posStr))
-            end
-        else
-            logL("  (Pasta PlacedEggRenders nao encontrada)")
-        end
-    end)
-    logL("\n")
-
-    -- 2. AreaEggSlotsClient
-    logL("[2] WORKSPACE.AREAEGGSLOTSCLIENT (Slots de ovos de area/ilha):")
-    pcall(function()
-        local slots = Services.Workspace:FindFirstChild("AreaEggSlotsClient")
-        if slots then
-            logL("  Total de slots: " .. tostring(#slots:GetChildren()))
-            for _, s in ipairs(slots:GetChildren()) do
-                local pos = getPositionOf(s)
-                local posStr = pos and string.format("(%.1f, %.1f, %.1f)", pos.X, pos.Y, pos.Z) or "N/D"
-                local cleanName = resolveEggDetails(s, nil)
-                logL(string.format("  - %s (Nome: %s) [%s] | Pos: %s", s.Name, cleanName, s.ClassName, posStr))
-            end
-        else
-            logL("  (Pasta AreaEggSlotsClient nao encontrada)")
-        end
-    end)
-    logL("\n")
-
-    -- 3. Modulos de ReplicatedStorage.Data
-    logL("[3] REPLICATEDSTORAGE.DATA (Módulos e Tabelas do Jogo):")
+    -- 1. Modulos de ReplicatedStorage.Data
+    logL("[1] REPLICATEDSTORAGE.DATA (Módulos e Tabelas do Jogo):")
     pcall(function()
         local dataF = Services.ReplicatedStorage:FindFirstChild("Data")
         if dataF then
             for _, mod in ipairs(dataF:GetChildren()) do
                 logL("  - " .. mod.Name .. " [" .. mod.ClassName .. "]")
+                if mod:IsA("ModuleScript") then
+                    pcall(function()
+                        local res = require(mod)
+                        if type(res) == "table" then
+                            local keys = {}
+                            for k, _ in pairs(res) do
+                                table.insert(keys, tostring(k))
+                                if #keys >= 15 then break end
+                            end
+                            logL("      > Amostra de Chaves: " .. table.concat(keys, ", "))
+                        end
+                    end)
+                end
+            end
+        end
+    end)
+    logL("\n")
+
+    -- 2. Workspace.ClientRenderedAssets
+    logL("[2] WORKSPACE.CLIENTRENDEREDASSETS (Modelos Renderizados de Ovos):")
+    pcall(function()
+        local renderedFolder = Services.Workspace:FindFirstChild("ClientRenderedAssets")
+        if renderedFolder then
+            logL("  Total de itens: " .. tostring(#renderedFolder:GetChildren()))
+            for idx, rItem in ipairs(renderedFolder:GetChildren()) do
+                if idx > 30 then break end
+                local pos = getPositionOf(rItem)
+                local posStr = pos and string.format("(%.1f, %.1f, %.1f)", pos.X, pos.Y, pos.Z) or "N/D"
+                logL(string.format("  - #%02d %s [%s] | Pos: %s", idx, rItem.Name, rItem.ClassName, posStr))
+                for k, v in pairs(rItem:GetAttributes()) do
+                    logL(string.format("      > Atributo: %s = %s", tostring(k), tostring(v)))
+                end
+            end
+        end
+    end)
+    logL("\n")
+
+    -- 3. AreaEggSlotsClient
+    logL("[3] WORKSPACE.AREAEGGSLOTSCLIENT (Slots de Ovos das Ilhas):")
+    pcall(function()
+        local slots = Services.Workspace:FindFirstChild("AreaEggSlotsClient")
+        if slots then
+            logL("  Total de slots: " .. tostring(#slots:GetChildren()))
+            for idx, s in ipairs(slots:GetChildren()) do
+                if idx > 30 then break end
+                local pos = getPositionOf(s)
+                local posStr = pos and string.format("(%.1f, %.1f, %.1f)", pos.X, pos.Y, pos.Z) or "N/D"
+                local cleanName, rarity = resolveEggDetails(s, nil)
+                logL(string.format("  - #%02d Slot: %s | Nome Resolvido: %s (%s) | Pos: %s", idx, s.Name, cleanName, rarity, posStr))
             end
         end
     end)
@@ -805,11 +935,11 @@ local function dumpGameData()
         if writefile then writefile("ROUBE_UM_OVO_DUMP.txt", fullText) end
         if setclipboard then setclipboard(fullText) end
     end)
-    addLog("INSPETOR", "Dump exportado para ROUBE_UM_OVO_DUMP.txt (" .. tostring(#discovered) .. " ovos)!")
+    addLog("INSPETOR", "Dump estrutural exportado para ROUBE_UM_OVO_DUMP.txt (" .. tostring(#discovered) .. " ovos)!")
     return fullText, #discovered
 end
 
--- 11. ESP Leve e Discreto (Sem Emojis)
+-- 11. ESP com Cores Reais por Raridade
 local activeESPs = {}
 local function clearAllESP()
     for target, item in pairs(activeESPs) do
@@ -818,23 +948,54 @@ local function clearAllESP()
     activeESPs = {}
 end
 
-local function applyESP(target, text, color)
+local RarityColors = {
+    ["ADMIN ABUSE"] = Color3.fromRGB(239, 68, 68),      -- Vermelho Vivo
+    ["MONSTER PARASITE"] = Color3.fromRGB(168, 85, 247), -- Roxo Épico
+    ["DRAGON"] = Color3.fromRGB(249, 115, 22),          -- Laranja Fogo
+    ["SAKURA"] = Color3.fromRGB(244, 114, 182),         -- Rosa Sakura
+    ["BRAINROT"] = Color3.fromRGB(34, 197, 94),          -- Verde Ácido
+    ["LIMITED"] = Color3.fromRGB(234, 179, 8),           -- Amarelo Dourado
+    ["SECRET"] = Color3.fromRGB(217, 70, 239),           -- Magenta
+    ["PREHISTORIC"] = Color3.fromRGB(245, 158, 11),      -- Âmbar
+    ["ABYSS"] = Color3.fromRGB(59, 130, 246),            -- Azul Profundo
+    ["VOLCANO"] = Color3.fromRGB(239, 68, 68),          -- Vermelho
+    ["MÍTICO"] = Color3.fromRGB(236, 72, 153),          -- Rosa Mítico
+    ["MYTHIC"] = Color3.fromRGB(236, 72, 153),
+    ["GOLDEN"] = Color3.fromRGB(250, 204, 21),          -- Ouro
+    ["RAINBOW"] = Color3.fromRGB(56, 189, 248),         -- Ciano
+    ["LENDÁRIO"] = Color3.fromRGB(245, 158, 11),        -- Dourado
+    ["LEGENDARY"] = Color3.fromRGB(245, 158, 11),
+    ["CHERRY"] = Color3.fromRGB(251, 113, 133),
+    ["ÉPICO"] = Color3.fromRGB(168, 85, 247),            -- Roxo
+    ["EPIC"] = Color3.fromRGB(168, 85, 247),
+    ["FOREST"] = Color3.fromRGB(74, 222, 128),          -- Verde Claro
+    ["RARO"] = Color3.fromRGB(56, 189, 248),             -- Tech Blue
+    ["RARE"] = Color3.fromRGB(56, 189, 248),
+    ["INCOMUM"] = Color3.fromRGB(148, 163, 184),         -- Ardósia
+    ["UNCOMMON"] = Color3.fromRGB(148, 163, 184),
+    ["COMUM"] = Color3.fromRGB(203, 213, 225),           -- Branco/Prata
+    ["COMMON"] = Color3.fromRGB(203, 213, 225)
+}
+
+local function applyESP(target, text, rarity)
     if not target or not target.Parent or activeESPs[target] then return end
     local p = target:IsA("BasePart") and target or (target:IsA("Model") and (target.PrimaryPart or target:FindFirstChildWhichIsA("BasePart")))
     if not p then return end
 
+    local color = RarityColors[rarity] or Color3.fromRGB(56, 189, 248)
+
     local bill = Instance.new("BillboardGui")
     bill.Name = getRandomName()
     bill.AlwaysOnTop = true
-    bill.Size = UDim2.new(0, 190, 0, 24)
-    bill.StudsOffset = Vector3.new(0, 2.5, 0)
+    bill.Size = UDim2.new(0, 195, 0, 24)
+    bill.StudsOffset = Vector3.new(0, 2.8, 0)
     bill.Adornee = p
 
     local tag = Instance.new("TextLabel")
     tag.Size = UDim2.new(1, 0, 1, 0)
-    tag.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
-    tag.BackgroundTransparency = 0.25
-    tag.TextColor3 = color or Color3.fromRGB(56, 189, 248)
+    tag.BackgroundColor3 = Color3.fromRGB(10, 14, 23)
+    tag.BackgroundTransparency = 0.2
+    tag.TextColor3 = color
     tag.TextSize = 11
     tag.Font = Enum.Font.GothamBold
     tag.Text = text
@@ -845,8 +1006,8 @@ local function applyESP(target, text, color)
     c.Parent = tag
 
     local s = Instance.new("UIStroke")
-    s.Color = color or Color3.fromRGB(56, 189, 248)
-    s.Transparency = 0.6
+    s.Color = color
+    s.Transparency = 0.5
     s.Thickness = 1
     s.Parent = tag
 
@@ -873,13 +1034,13 @@ local function updateESP()
 
         if Config.EggESP then
             local eggs = scanAllEggs()
-            for i = 1, math.min(#eggs, 35) do
+            for i = 1, math.min(#eggs, 40) do
                 local e = eggs[i]
                 if not e.IsMyPlot and e.Distance <= Config.ESPMaxDistance then
                     seen[e.Instance] = true
                     local wText = e.WeightKg > 0 and (" [" .. tostring(e.WeightKg) .. " Kg]") or (" [" .. e.Rarity .. "]")
                     local label = e.Name .. wText .. " (" .. math.floor(e.Distance) .. "m)"
-                    applyESP(e.Instance, label, Color3.fromRGB(56, 189, 248))
+                    applyESP(e.Instance, label, e.Rarity)
                 end
             end
         end
@@ -891,7 +1052,7 @@ local function updateESP()
                     if pHrp then
                         local dist = hrp and (hrp.Position - pHrp.Position).Magnitude or 0
                         seen[pl.Character] = true
-                        applyESP(pl.Character, pl.DisplayName .. " (" .. math.floor(dist) .. "m)", Color3.fromRGB(148, 163, 184))
+                        applyESP(pl.Character, pl.DisplayName .. " (" .. math.floor(dist) .. "m)", "INCOMUM")
                     end
                 end
             end
@@ -1035,7 +1196,7 @@ Title.Size = UDim2.new(1, -24, 0, 20)
 Title.Position = UDim2.new(0, 16, 0, 26)
 Title.BackgroundTransparency = 1
 Title.RichText = true
-Title.Text = '<b>RADAR HUB</b> <font color="#38BDF8">v4.0</font>'
+Title.Text = '<b>RADAR HUB</b> <font color="#38BDF8">v4.5</font>'
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 15.5
 Title.TextColor3 = C_TEXT
@@ -1088,7 +1249,7 @@ StatusDot.Size = UDim2.new(1, -40, 0, 12)
 StatusDot.Position = UDim2.new(0, 38, 0, 19)
 StatusDot.BackgroundTransparency = 1
 StatusDot.RichText = true
-StatusDot.Text = '<font color="#10B981">●</font> Voo Seguro Ativo'
+StatusDot.Text = '<font color="#10B981">●</font> Voo Híbrido Ativo'
 StatusDot.Font = Enum.Font.Gotham
 StatusDot.TextSize = 9.5
 StatusDot.TextColor3 = C_TEXT_DIM
@@ -1416,7 +1577,7 @@ local StatusCard = createCard(RadarPage, "STATUS DO RADAR")
 local StatusLabel = Instance.new("TextLabel")
 StatusLabel.Size = UDim2.new(1, 0, 0, 20)
 StatusLabel.BackgroundTransparency = 1
-StatusLabel.Text = "Iniciando varredura passiva com resolução avançada de nomes..."
+StatusLabel.Text = "Iniciando varredura profunda com banco de dados do jogo..."
 StatusLabel.Font = Enum.Font.Gotham
 StatusLabel.TextSize = 11
 StatusLabel.TextColor3 = C_TEXT_DIM
@@ -1517,7 +1678,7 @@ local function renderRadarList(eggs)
                 task.delay(1, function() copyBtn.Text = "COPIAR POS" end)
             end)
 
-            -- Botão 2: Ir até o Ovo (Voo Aéreo Seguro Anti-Morte)
+            -- Botão 2: Ir até o Ovo (Voo Direto "Retão")
             local gotoBtn = Instance.new("TextButton")
             gotoBtn.Size = UDim2.new(0, 78, 0, 22)
             gotoBtn.Position = UDim2.new(1, -82, 0, 15)
@@ -1531,10 +1692,10 @@ local function renderRadarList(eggs)
 
             gotoBtn.MouseButton1Click:Connect(function()
                 task.spawn(function()
-                    addLog("MOVIMENTO", "Iniciando voo seguro ate " .. e.Name .. " (" .. math.floor(e.Distance) .. " studs)...")
-                    local ok = movePlayerTo(e.Position + Vector3.new(0, 2.5, 0), Config.MoveSpeed)
+                    addLog("MOVIMENTO", "Iniciando voo direto ate " .. e.Name .. " (" .. math.floor(e.Distance) .. " studs)...")
+                    local ok = movePlayerTo(e.Position + Vector3.new(0, 1.8, 0), Config.MoveSpeed, false)
                     if ok then
-                        addLog("MOVIMENTO", "Chegou ao destino! Tentando coletar...")
+                        addLog("MOVIMENTO", "Chegou ao ovo! Tentando coletar...")
                         if e.Prompt then triggerPrompt(e.Prompt) end
                     else
                         addLog("MOVIMENTO", "Deslocamento finalizado.")
@@ -1590,13 +1751,13 @@ DumpStatus.TextXAlignment = Enum.TextXAlignment.Left
 DumpStatus.Parent = DumpCard
 
 addButton(DumpCard, "EXPORTAR DUMP ESTRUTURAL (TXT NO DISCO & CLIPBOARD)", function()
-    DumpStatus.Text = "Varrendo instâncias do jogo..."
+    DumpStatus.Text = "Varrendo instâncias e tabelas do jogo..."
     local text, count = dumpGameData()
     DumpStatus.Text = string.format("Salvo em ROUBE_UM_OVO_DUMP.txt (%d ovos documentados)!", count)
 end)
 
 --================================================================--
--- 3. ABA: AUTOMAÇÃO (VOO SEGURO, POSSE DE OVO & ENTREGA NA BASE)
+-- 3. ABA: AUTOMAÇÃO (VOO HÍBRIDO, POSSE DE OVO & ENTREGA NA BASE)
 --================================================================--
 
 local AutoPage = createPage("Automacao")
@@ -1605,24 +1766,25 @@ local AutoCard = createCard(AutoPage, "AUTOMAÇÃO INTELIGENTE DE ROUBO & ENTREG
 addToggle(AutoCard, "Ativar Roubo Automático Inteligente", Config.AutoSteal, function(state)
     Config.AutoSteal = state
     if state then
-        addLog("ROUBO", "Ciclo de roubo automático iniciado com verificação de posse.")
+        addLog("ROUBO", "Ciclo de roubo automático iniciado (Direto na ida, Por cima na volta).")
         task.spawn(function()
             while scriptActive and Config.AutoSteal do
                 -- 1. Checar se já está segurando um ovo nas mãos / costas / mochila
                 local holding, heldEggName = isHoldingEgg()
                 if holding then
-                    addLog("BASE", "Ovo detectado em mãos (" .. tostring(heldEggName) .. ")! Priorizando entrega na base...")
+                    addLog("BASE", "Ovo detectado em mãos (" .. tostring(heldEggName) .. ")! Voando por cima até a base...")
                     local basePos = getBasePosition()
                     if basePos then
-                        movePlayerTo(basePos + Vector3.new(0, 3.5, 0), Config.MoveSpeed)
+                        movePlayerTo(basePos + Vector3.new(0, 3.5, 0), Config.MoveSpeed, true)
                         
                         -- Aguardar na base até o ovo ser depositado no pedestal do plot
+                        addLog("BASE", "Na base! Aguardando o jogo depositar o ovo no plot...")
                         local waitDeposit = 0
-                        while scriptActive and Config.AutoSteal and waitDeposit < 8 do
+                        while scriptActive and Config.AutoSteal and waitDeposit < 10 do
                             task.wait(0.5)
                             waitDeposit = waitDeposit + 0.5
                             if not isHoldingEgg() then
-                                addLog("BASE", "Ovo depositado com sucesso no pedestal da base!")
+                                addLog("BASE", "Ovo armazenado no plot da base com sucesso!")
                                 break
                             end
                         end
@@ -1641,42 +1803,49 @@ addToggle(AutoCard, "Ativar Roubo Automático Inteligente", Config.AutoSteal, fu
                     if #validTargets > 0 then
                         local target = validTargets[1]
                         addLog("ROUBO", "Alvo selecionado: " .. target.Name .. " (" .. target.Rarity .. ") em " .. target.Zone)
-                        local arrived = movePlayerTo(target.Position + Vector3.new(0, 2.5, 0), Config.MoveSpeed)
                         
+                        -- Ida direta em linha reta ("retão") até o ovo
+                        local arrived = movePlayerTo(target.Position + Vector3.new(0, 1.8, 0), Config.MoveSpeed, false)
+                        
+                        local pickedUp = false
                         if arrived and target.Prompt then
-                            addLog("ROUBO", "Acionando coleta do ovo...")
-                            triggerPrompt(target.Prompt)
-
-                            -- Aguardar até 2.5s para confirmação da posse do ovo
-                            local waitPick = 0
-                            while waitPick < 2.5 do
-                                task.wait(0.2)
-                                waitPick = waitPick + 0.2
+                            addLog("ROUBO", "Chegou ao ovo! Coletando...")
+                            -- Tentativas contínuas de prompt até confirmação de posse
+                            for attempt = 1, 8 do
+                                if not scriptActive or not Config.AutoSteal then break end
+                                if target.Prompt and target.Prompt.Parent then
+                                    triggerPrompt(target.Prompt)
+                                end
+                                task.wait(0.35)
                                 if isHoldingEgg() then
-                                    addLog("ROUBO", "Ovo em mãos! Iniciando retorno imediato à base...")
+                                    pickedUp = true
+                                    addLog("ROUBO", "Ovo em mãos! Iniciando voo por cima até a base...")
                                     break
                                 end
                             end
                         end
 
-                        -- Retornar à base se pegou o ovo ou se ReturnToBase estiver ativo
-                        if isHoldingEgg() or Config.ReturnToBase then
+                        -- SÓ retorna à base se realmente estiver segurando o ovo!
+                        if pickedUp or isHoldingEgg() then
                             local basePos = getBasePosition()
                             if basePos then
-                                addLog("BASE", "Retornando à base com voo seguro...")
-                                movePlayerTo(basePos + Vector3.new(0, 3.5, 0), Config.MoveSpeed)
+                                addLog("BASE", "Retornando à base com voo por cima de obstáculos...")
+                                movePlayerTo(basePos + Vector3.new(0, 3.5, 0), Config.MoveSpeed, true)
 
                                 -- Aguardar depósito
                                 local waitDeposit = 0
-                                while scriptActive and Config.AutoSteal and waitDeposit < 8 do
+                                while scriptActive and Config.AutoSteal and waitDeposit < 10 do
                                     task.wait(0.5)
                                     waitDeposit = waitDeposit + 0.5
                                     if not isHoldingEgg() then
-                                        addLog("BASE", "Ovo armazenado no plot!")
+                                        addLog("BASE", "Ovo armazenado no plot da base!")
                                         break
                                     end
                                 end
                             end
+                        else
+                            addLog("ROUBO", "Não foi possível coletar este ovo (tempo de recarga ou protegido). Próximo alvo...")
+                            task.wait(1)
                         end
                     else
                         addLog("ROUBO", "Nenhum ovo de outros jogadores ou ilhas disponível.")
@@ -1714,7 +1883,7 @@ addButton(AutoCard, "ROUBAR ALVO TOP 1 AGORA", function()
         if holding then
             addLog("BASE", "Já está segurando um ovo (" .. tostring(heldName) .. ")! Entregue-o primeiro.")
             local basePos = getBasePosition()
-            if basePos then movePlayerTo(basePos + Vector3.new(0, 3.5, 0), Config.MoveSpeed) end
+            if basePos then movePlayerTo(basePos + Vector3.new(0, 3.5, 0), Config.MoveSpeed, true) end
             return
         end
 
@@ -1727,16 +1896,19 @@ addButton(AutoCard, "ROUBAR ALVO TOP 1 AGORA", function()
         if #validTargets > 0 then
             local target = validTargets[1]
             addLog("ROUBO", "Indo até o alvo Top 1: " .. target.Name)
-            local arrived = movePlayerTo(target.Position + Vector3.new(0, 2.5, 0), Config.MoveSpeed)
+            local arrived = movePlayerTo(target.Position + Vector3.new(0, 1.8, 0), Config.MoveSpeed, false)
             if arrived and target.Prompt then
-                triggerPrompt(target.Prompt)
-                task.wait(0.5)
+                for attempt = 1, 6 do
+                    triggerPrompt(target.Prompt)
+                    task.wait(0.35)
+                    if isHoldingEgg() then break end
+                end
             end
-            if Config.ReturnToBase or isHoldingEgg() then
+            if isHoldingEgg() then
                 local basePos = getBasePosition()
                 if basePos then
-                    addLog("BASE", "Retornando à base...")
-                    movePlayerTo(basePos + Vector3.new(0, 3.5, 0), Config.MoveSpeed)
+                    addLog("BASE", "Retornando à base com voo por cima...")
+                    movePlayerTo(basePos + Vector3.new(0, 3.5, 0), Config.MoveSpeed, true)
                 end
             end
         else
@@ -1752,7 +1924,7 @@ end)
 local VisualsPage = createPage("Visuals")
 local VisualsCard = createCard(VisualsPage, "MARCADORES NO MUNDO (ESP)")
 
-addToggle(VisualsCard, "Ativar ESP de Ovos (Mostra Nome Real, Peso e Distância)", Config.EggESP, function(state)
+addToggle(VisualsCard, "Ativar ESP de Ovos (Nome Real, Raridade e Distância)", Config.EggESP, function(state)
     Config.EggESP = state
     updateESP()
     addLog("ESP", "ESP de ovos " .. (state and "ativado." or "desativado."))
