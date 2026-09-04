@@ -1,69 +1,38 @@
 --[[
-    EGGVISION - RADAR & RASTREADOR EM TEMPO REAL
-    Jogo: Roube um Ovo (Steal an Egg)
+    STEAL AN EGG: TELEMETRY & RADAR OBSERVER (v3.8)
     -----------------------------------------------------------------------
-    - Leitura 100% observacional de instâncias, prompts e atributos reais.
+    - Leitura puramente observacional e passiva do Workspace e ReplicatedStorage.
     - Zero poluição de console (print/warn silenciados contra LogService).
-    - Radar ao vivo com coordenadas (X, Y, Z), raridade, peso em Kg e zona.
-    - Inspeção estrutural e dumper de arquivos/tabelas do jogo.
-    - Interface escura fosca com acentos em âmbar e navegação rápida.
+    - Zero poluição de ambiente global (_G e getgenv limpos).
+    - Radar ao vivo com coordenadas exatas (X, Y, Z), peso (Kg), raridade e zona.
+    - Dumper estrutural completo de instâncias do jogo para arquivo local.
+    - Interface minimalista em azul técnico escuro, sem emojis ou hooks invasivos.
 ]]
 
--- Silenciamento Preventivo Total contra detecções do LogService.MessageOut
-local function silentOutput(...) end
-local print = silentOutput
-local warn = silentOutput
+-- 1. Silenciamento Total Preventivo contra LogService.MessageOut
+local function silentLog(...) end
+local print = silentLog
+local warn = silentLog
 
--- Configurações e Flags Globais
-local Flags = {
-    -- Radar & Rastreamento
-    RadarActive = true,
-    MinRarityScore = 0,
-    ManualMinRarityScore = 0,
-    FilterIgnoreCommons = false,
-    SelectedArea = "Todas as Áreas",
-    SearchQuery = "",
-    DiscoveredEggs = {},
+-- 2. Limpeza Preventiva de Globais para evitar detecção em _G
+pcall(function()
+    _G.DiscoveredEggs = nil
+    _G.UpdateRadarCards = nil
+    _G.UpdateLogConsole = nil
+    _G.EggRadarText = nil
+    _G.MegaDumpText = nil
+    _G.scanAllEggsInMap = nil
+    if getgenv then
+        local g = getgenv()
+        g.DiscoveredEggs = nil
+        g.UpdateRadarCards = nil
+        g.UpdateLogConsole = nil
+        g.EggRadarText = nil
+        g.MegaDumpText = nil
+    end
+end)
 
-    -- Visuals (ESP)
-    EggESP = false,
-    PlayerESP = false,
-    ESPMaxDistance = 2500,
-    ESPColor = Color3.fromRGB(255, 160, 18),
-    PlayerESPColor = Color3.fromRGB(0, 180, 255),
-
-    -- Automação Suave (Opcional - Desativada por padrão)
-    AutoSteal = false,
-    FlySpeed = 400,
-    StealRadius = 2500,
-    StealDelay = 0.25,
-    PrioritizeRare = true,
-    CustomBasePos = nil,
-    SavedBasePos = nil,
-    ReturnToPlot = true,
-    AvoidTraps = true,
-
-    -- Proteções do Jogador
-    AntiRagdoll = true,
-    NeverDropEgg = true,
-    GodMode = false,
-    SpeedHack = false,
-    WalkSpeed = 16,
-    JumpPowerHack = false,
-    JumpPower = 50,
-    Noclip = false,
-    InfJump = false,
-
-    -- Diagnóstico & Logger
-    AntiAFK = true,
-    AutoLogger = false,
-    SaveToDisk = false
-}
-
---================================================================--
--- SERVIÇOS SEGUROS COM CLONEREF
---================================================================--
-
+-- 3. Serviços Seguros via cloneref
 local function safeService(name)
     local s = game:GetService(name)
     return (cloneref and cloneref(s)) or s
@@ -75,88 +44,23 @@ local Services = {
     HttpService = safeService("HttpService"),
     RunService = safeService("RunService"),
     UserInputService = safeService("UserInputService"),
-    ProximityPromptService = safeService("ProximityPromptService"),
     ReplicatedStorage = safeService("ReplicatedStorage"),
-    TweenService = safeService("TweenService"),
-    VirtualUser = safeService("VirtualUser")
+    TweenService = safeService("TweenService")
 }
 
 local LocalPlayer = Services.Players.LocalPlayer
 local scriptActive = true
 
---================================================================--
--- HISTÓRICO DE DIAGNÓSTICO INTERNO (SEM PRINT/WARN)
---================================================================--
-
-local LogHistory = {}
-local LogFileName = "egg_radar_logs.txt"
-
-local function serializeValue(v, depth)
-    depth = depth or 1
-    if depth > 4 then return "..." end
-    local t = typeof(v)
-    if t == "string" then
-        return '"' .. tostring(v) .. '"'
-    elseif t == "Instance" then
-        return "Instance(" .. v:GetFullName() .. ")"
-    elseif t == "Vector3" then
-        return string.format("Vector3.new(%.1f, %.1f, %.1f)", v.X, v.Y, v.Z)
-    elseif t == "CFrame" then
-        return string.format("CFrame.new(%.1f, %.1f, %.1f)", v.X, v.Y, v.Z)
-    elseif t == "table" then
-        local parts = {}
-        for k, val in pairs(v) do
-            table.insert(parts, tostring(k) .. " = " .. serializeValue(val, depth + 1))
-        end
-        return "{" .. table.concat(parts, ", ") .. "}"
-    else
-        return tostring(v) .. " [" .. t .. "]"
-    end
-end
-
-local function formatArgsList(args)
-    if not args or #args == 0 then return "(Sem argumentos)" end
-    local formatted = {}
-    for i = 1, #args do
-        table.insert(formatted, string.format("Arg[%d]: %s", i, serializeValue(args[i])))
-    end
-    return table.concat(formatted, " | ")
-end
-
-local function addLog(category, text, extraArgs)
-    local timestamp = os.date("%H:%M:%S")
-    local entry = string.format("[%s] [%s] %s", timestamp, category, text)
-    if extraArgs then
-        entry = entry .. "\n  ↪ Detalhes: " .. formatArgsList(extraArgs)
-    end
-
-    table.insert(LogHistory, 1, entry)
-    if #LogHistory > 300 then
-        table.remove(LogHistory, #LogHistory)
-    end
-
-    if Flags.SaveToDisk then
-        pcall(function()
-            if appendfile then
-                appendfile(LogFileName, entry .. "\n----------------------------------------\n")
-            elseif writefile then
-                local fullText = table.concat(LogHistory, "\n----------------------------------------\n")
-                writefile(LogFileName, fullText)
-            end
-        end)
-    end
-
-    if _G.UpdateLogConsole then
-        _G.UpdateLogConsole()
-    end
-end
-
-addLog("SISTEMA", "EggVision inicializado com segurança. Logs mantidos internamente.")
-
--- Utilitários de Segurança e Nomes Aleatórios
+-- 4. Utilitários de Stealth & GUI
 local function getRandomName()
-    local guid = Services.HttpService:GenerateGUID(false):gsub("-", "")
-    return "X_" .. guid:sub(1, math.random(10, 16))
+    local guid = ""
+    pcall(function()
+        guid = Services.HttpService:GenerateGUID(false):gsub("-", ""):sub(1, 14)
+    end)
+    if guid == "" then
+        guid = tostring(math.random(1000000000, 9999999999))
+    end
+    return guid
 end
 
 local function protectGui(gui)
@@ -177,9 +81,7 @@ end
 local function getGuiContainer()
     local container = nil
     pcall(function()
-        if gethui then
-            container = gethui()
-        end
+        if gethui then container = gethui() end
     end)
     if not container then
         pcall(function()
@@ -187,760 +89,427 @@ local function getGuiContainer()
             container = (cloneref and cloneref(cg)) or cg
         end)
     end
-    if not container then
-        container = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not container and LocalPlayer then
+        container = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 3)
     end
     return container
 end
 
-local function plainText(value)
-    return tostring(value or ""):gsub("<[^>]->", ""):lower()
+-- 5. Configurações Locais (Privadas)
+local Settings = {
+    EggESP = false,
+    PlayerESP = false,
+    ESPMaxDistance = 2500,
+    SearchQuery = "",
+    SaveLogsToDisk = false
+}
+
+local LogHistory = {}
+local function addLog(tag, msg)
+    local timeStr = os.date("%H:%M:%S")
+    local entry = string.format("[%s] [%s] %s", timeStr, tag, tostring(msg))
+    table.insert(LogHistory, 1, entry)
+    if #LogHistory > 200 then
+        table.remove(LogHistory, #LogHistory)
+    end
+    if _G_InternalUpdateConsole then
+        _G_InternalUpdateConsole()
+    end
 end
 
-local function isStealPrompt(prompt)
-    if not prompt or not prompt:IsA("ProximityPrompt") or not prompt.Enabled then
-        return false
-    end
-    local action = plainText(prompt.ActionText)
-    local object = plainText(prompt.ObjectText)
-    local actionIsSteal = action:find("steal", 1, true) or action:find("roubar", 1, true)
-    local objectIsEgg = object:find("egg", 1, true) or object:find("ovo", 1, true)
-    return actionIsSteal ~= nil and objectIsEgg ~= nil
-end
-
-local function isEggInteractionPrompt(prompt)
-    if not prompt or not prompt:IsA("ProximityPrompt") or not prompt.Enabled then
-        return false
-    end
-    local action = plainText(prompt.ActionText)
-    local object = plainText(prompt.ObjectText)
-    local objectIsEgg = object:find("egg", 1, true) or object:find("ovo", 1, true)
-    local actionMatches = action:find("steal", 1, true)
-        or action:find("roubar", 1, true)
-        or action:find("pick", 1, true)
-        or action:find("grab", 1, true)
-        or action:find("take", 1, true)
-        or action:find("pegar", 1, true)
-        or action:find("collect", 1, true)
-        or action:find("coletar", 1, true)
-    return objectIsEgg ~= nil and actionMatches ~= nil
+-- 6. Helper de Posição e Personagem
+local function getHRP()
+    local char = LocalPlayer.Character
+    return char and char:FindFirstChild("HumanoidRootPart")
 end
 
 local function getPromptPosition(prompt)
     if not prompt or not prompt.Parent then return nil end
     local holder = prompt.Parent
-    if holder:IsA("Attachment") then
-        holder = holder.Parent
-    end
+    if holder:IsA("Attachment") then holder = holder.Parent end
     if not holder then return nil end
-    if holder:IsA("BasePart") then
-        return holder.Position
-    end
-    if holder:IsA("Model") then
-        return holder:GetPivot().Position
-    end
+    if holder:IsA("BasePart") then return holder.Position end
+    if holder:IsA("Model") then return holder:GetPivot().Position end
     local part = holder:FindFirstChildWhichIsA("BasePart", true)
     return part and part.Position or nil
 end
 
--- Registry de Prompts por Eventos
-local stealPromptRegistry = setmetatable({}, { __mode = "k" })
-local eggInteractionPromptRegistry = setmetatable({}, { __mode = "k" })
-local function updateStealPrompt(prompt)
-    if prompt and prompt:IsA("ProximityPrompt") then
-        if isStealPrompt(prompt) then
-            stealPromptRegistry[prompt] = true
-        else
-            stealPromptRegistry[prompt] = nil
-        end
-        if isEggInteractionPrompt(prompt) then
-            eggInteractionPromptRegistry[prompt] = true
-        else
-            eggInteractionPromptRegistry[prompt] = nil
-        end
-    end
+local function plainText(str)
+    return tostring(str or ""):gsub("<[^>]->", ""):lower()
 end
 
-for _, descendant in ipairs(Services.Workspace:GetDescendants()) do
-    if descendant:IsA("ProximityPrompt") then
-        updateStealPrompt(descendant)
-        descendant:GetPropertyChangedSignal("Enabled"):Connect(function()
-            updateStealPrompt(descendant)
-        end)
-        descendant:GetPropertyChangedSignal("ActionText"):Connect(function()
-            updateStealPrompt(descendant)
-        end)
-        descendant:GetPropertyChangedSignal("ObjectText"):Connect(function()
-            updateStealPrompt(descendant)
-        end)
+local function isEggPrompt(prompt)
+    if not prompt or not prompt:IsA("ProximityPrompt") or not prompt.Enabled then
+        return false
     end
+    local act = plainText(prompt.ActionText)
+    local obj = plainText(prompt.ObjectText)
+    local hasSteal = act:find("steal", 1, true) or act:find("roubar", 1, true)
+    local hasEgg = obj:find("egg", 1, true) or obj:find("ovo", 1, true)
+    return (hasSteal ~= nil and hasEgg ~= nil)
 end
 
-Services.Workspace.DescendantAdded:Connect(function(descendant)
-    if not scriptActive then return end
-    if descendant:IsA("ProximityPrompt") then
-        updateStealPrompt(descendant)
-        descendant:GetPropertyChangedSignal("Enabled"):Connect(function()
-            updateStealPrompt(descendant)
-        end)
-        descendant:GetPropertyChangedSignal("ActionText"):Connect(function()
-            updateStealPrompt(descendant)
-        end)
-        descendant:GetPropertyChangedSignal("ObjectText"):Connect(function()
-            updateStealPrompt(descendant)
-        end)
-    end
-end)
-
-Services.Workspace.DescendantRemoving:Connect(function(descendant)
-    if not scriptActive then return end
-    if descendant:IsA("ProximityPrompt") then
-        stealPromptRegistry[descendant] = nil
-        eggInteractionPromptRegistry[descendant] = nil
-    end
-end)
-
-local function getCharacter()
-    return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-end
-
-local function getHRP()
-    local char = getCharacter()
-    return char and char:FindFirstChild("HumanoidRootPart")
-end
-
--- Detecção e Fixação da Base do Jogador
-local function getBasePosition()
-    if Flags.CustomBasePos then
-        return Flags.CustomBasePos
-    end
-    if Flags.SavedBasePos then
-        return Flags.SavedBasePos
-    end
-
-    pcall(function()
-        local playerName = LocalPlayer.Name:lower()
-        for _, obj in ipairs(Services.Workspace:GetDescendants()) do
-            if obj:IsA("Model") or obj:IsA("Folder") or obj:IsA("BasePart") then
-                local n = obj.Name:lower()
-                if n:find(playerName) or (obj:FindFirstChild("Owner") and tostring(obj.Owner.Value):lower() == playerName) then
-                    local pos = obj:IsA("BasePart") and obj.Position or (obj:IsA("Model") and obj:GetPivot().Position)
-                    if pos then
-                        Flags.SavedBasePos = pos + Vector3.new(0, 3, 0)
-                    end
-                end
-            end
-        end
-    end)
-
-    if not Flags.SavedBasePos then
-        local hrp = getHRP()
-        if hrp then
-            Flags.SavedBasePos = hrp.Position
-        end
-    end
-
-    return Flags.SavedBasePos
-end
-
---================================================================--
--- AVALIAÇÃO OBSERVACIONAL DE RARIDADE, PESO E RENDA
---================================================================--
-
-local RarityWeights = {
+-- 7. Avaliação Observacional Real de Ovos
+local RarityTiers = {
     ["admin abuse"] = 80000,
     ["monster parasite"] = 70000,
     ["dragon"] = 65000,
     ["sakura"] = 60000,
     ["brainrot"] = 55000,
     ["limited"] = 50000,
-    ["capture the egg"] = 45000,
     ["prehistoric"] = 35000,
-    ["pre-histórico"] = 35000,
-    ["pre historico"] = 35000,
-    ["abyss ocean"] = 28000,
     ["abyss"] = 28000,
-    ["ocean"] = 28000,
     ["volcano"] = 20000,
-    ["vulcão"] = 20000,
-    ["vulcao"] = 20000,
-    ["cherry blossom"] = 10000,
     ["cherry"] = 10000,
-    ["blossom"] = 10000,
     ["secret"] = 45000,
-    ["secreto"] = 45000,
     ["mythic"] = 25000,
-    ["mítico"] = 25000,
-    ["mitico"] = 25000,
     ["legendary"] = 18000,
-    ["lendário"] = 18000,
-    ["lendario"] = 18000,
     ["epic"] = 8000,
-    ["épico"] = 8000,
-    ["epico"] = 8000,
     ["rare"] = 4000,
-    ["raro"] = 4000,
     ["uncommon"] = 1500,
-    ["incomum"] = 1500,
-    ["common"] = 300,
-    ["comum"] = 300
+    ["common"] = 300
 }
 
-local function parseEggWeightKg(str)
-    if not str then return 0 end
-    local s = tostring(str):lower()
-    local kgStr = s:match("([%d%,%.]+)%s*kg")
-    if kgStr then
-        kgStr = kgStr:gsub(",", "")
-        local kg = tonumber(kgStr)
-        if kg then return kg end
-    end
-    return 0
-end
-
-local function parseIncomeRate(str)
-    if not str then return 0, nil end
-    local s = tostring(str):lower()
-    local num, suffix = s:match("%$%s*([%d][%d%,%.]*)%s*(%a*)%s*/%s*s")
-    if num then
-        num = num:gsub(",", "")
-        local n = tonumber(num)
-        if n and n > 0 then
-            local multipliers = { [""] = 1, k = 1e3, m = 1e6, b = 1e9, t = 1e12, qa = 1e15, qi = 1e18 }
-            local mult = multipliers[suffix]
-            if not mult then return 0, nil end
-            local finalVal = n * mult
-            local formatted = "$" .. string.format("%.2f", n) .. suffix:upper() .. "/s"
-            return finalVal, formatted
-        end
-    end
-    return 0, nil
-end
-
-local function evaluateEggRarity(eggObj, prompt)
-    if not eggObj then return 0, "Sem dados confirmados", "nenhuma", 0, nil end
+local function parseEggData(eggModel, prompt)
     local maxScore = 0
     local detectedRarity = "Normal"
-    local detectedSource = "nenhuma"
-    local highestIncome = 0
-    local highestIncomeLabel = nil
     local detectedWeight = 0
+    local detectedIncome = nil
 
-    local function checkText(str, source)
-        if not str or str == "" then return end
-        local s = tostring(str):lower()
+    local function inspectString(s)
+        if not s or s == "" then return end
+        local low = tostring(s):lower()
 
-        local incomeVal, incomeFmt = parseIncomeRate(s)
-        if incomeVal > highestIncome then
-            highestIncome = incomeVal
-            highestIncomeLabel = incomeFmt
-        end
-
-        for kw, weight in pairs(RarityWeights) do
-            if s:find(kw, 1, true) then
-                if weight > maxScore then
-                    maxScore = weight
-                    detectedRarity = kw:upper()
-                    detectedSource = source
-                end
+        -- Peso em Kg
+        local kgMatch = low:match("([%d%,%.]+)%s*kg")
+        if kgMatch then
+            local n = tonumber((kgMatch:gsub(",", "")))
+            if n and n > detectedWeight then
+                detectedWeight = n
             end
         end
 
-        local kg = parseEggWeightKg(s)
-        if kg > 0 then
-            detectedWeight = kg
-            local kgScore = kg * 2
-            if kgScore > maxScore then
-                maxScore = kgScore
-                detectedRarity = string.format("%s Kg", tostring(kg))
-                detectedSource = source
+        -- Renda $/s
+        local num, suffix = low:match("%$%s*([%d][%d%,%.]*)%s*(%a*)%s*/%s*s")
+        if num and not detectedIncome then
+            detectedIncome = "$" .. num .. (suffix or ""):upper() .. "/s"
+        end
+
+        -- Raridade
+        for kw, score in pairs(RarityTiers) do
+            if low:find(kw, 1, true) then
+                if score > maxScore then
+                    maxScore = score
+                    detectedRarity = kw:upper()
+                end
             end
         end
     end
 
     if prompt then
-        checkText(prompt.ObjectText, "prompt")
-        checkText(prompt.ActionText, "prompt")
+        inspectString(prompt.ObjectText)
+        inspectString(prompt.ActionText)
     end
 
-    pcall(function()
-        for key, val in pairs(eggObj:GetAttributes()) do
-            checkText(key, "atributo")
-            checkText(val, "atributo")
-        end
-    end)
+    if eggModel then
+        inspectString(eggModel.Name)
 
-    pcall(function()
-        for _, child in ipairs(eggObj:GetChildren()) do
-            if child:IsA("ValueBase") then
-                checkText(child.Name, "value")
-                checkText(child.Value, "value")
+        pcall(function()
+            for k, v in pairs(eggModel:GetAttributes()) do
+                inspectString(k)
+                inspectString(v)
             end
-        end
-    end)
+        end)
 
-    pcall(function()
-        local inspected = 0
-        for _, desc in ipairs(eggObj:GetDescendants()) do
-            if inspected >= 35 then break end
-            if desc:IsA("TextLabel") or desc:IsA("TextButton") then
-                inspected = inspected + 1
-                checkText(desc.Text, "texto visual")
+        pcall(function()
+            for _, child in ipairs(eggModel:GetChildren()) do
+                if child:IsA("ValueBase") then
+                    inspectString(child.Name)
+                    inspectString(child.Value)
+                end
             end
-        end
-    end)
+        end)
 
-    checkText(eggObj.Name, "nome")
+        pcall(function()
+            local count = 0
+            for _, d in ipairs(eggModel:GetDescendants()) do
+                if count >= 30 then break end
+                if d:IsA("TextLabel") or d:IsA("TextButton") then
+                    count = count + 1
+                    inspectString(d.Text)
+                end
+            end
+        end)
+    end
 
-    return maxScore, detectedRarity, detectedSource, detectedWeight, highestIncomeLabel
+    if detectedWeight > 0 and maxScore < (detectedWeight * 2) then
+        maxScore = detectedWeight * 2
+        detectedRarity = string.format("%s Kg", tostring(detectedWeight))
+    end
+
+    return maxScore, detectedRarity, detectedWeight, detectedIncome
 end
 
-local function getEggLocationZone(eggObj, prompt)
-    local cur = eggObj or (prompt and prompt.Parent)
-    local zoneName = "Mapa Aberto"
-    local plotOwner = nil
+local function getEggZone(eggModel, prompt)
+    local cur = eggModel or (prompt and prompt.Parent)
+    local zone = "Mapa Aberto"
+    local owner = nil
 
     while cur and cur ~= Services.Workspace do
         local n = cur.Name
-        local nLow = n:lower()
+        local low = n:lower()
 
-        if nLow:find("plot") or nLow:find("base") or nLow:find("spawn") or nLow:find("house") or nLow:find("casa") then
+        if low:find("plot") or low:find("base") or low:find("spawn") or low:find("house") then
             pcall(function()
-                local ownerVal = cur:FindFirstChild("Owner") or cur:FindFirstChild("Player") or cur:FindFirstChild("OwnerName")
-                if ownerVal and ownerVal.Value and tostring(ownerVal.Value) ~= "" then
-                    plotOwner = tostring(ownerVal.Value)
+                local val = cur:FindFirstChild("Owner") or cur:FindFirstChild("Player") or cur:FindFirstChild("OwnerName")
+                if val and val.Value and tostring(val.Value) ~= "" then
+                    owner = tostring(val.Value)
                 end
             end)
-            zoneName = n .. (plotOwner and (" (" .. plotOwner .. ")") or "")
+            zone = n .. (owner and (" (" .. owner .. ")") or "")
             break
-        elseif nLow:find("island") or nLow:find("ilha") or nLow:find("zone") or nLow:find("zona") or nLow:find("area") or nLow:find("world") or nLow:find("mundo") then
-            zoneName = n
+        elseif low:find("island") or low:find("zone") or low:find("area") or low:find("world") then
+            zone = n
             break
         end
         cur = cur.Parent
     end
 
-    return zoneName, plotOwner
+    return zone, owner
 end
 
---================================================================--
--- SCANNER COMPLETO DE OVOS (DADOS REAIS EM TEMPO REAL)
---================================================================--
-
-local function scanAllEggsInMap()
-    local myPlayerName = LocalPlayer.Name:lower()
-    local discovered = {}
+-- 8. Scanner Passivo do Mapa (Sob Demanda)
+local function scanEggs()
+    local list = {}
     local hrp = getHRP()
+    local myName = LocalPlayer.Name:lower()
 
-    for obj in pairs(stealPromptRegistry) do
-        if isStealPrompt(obj) and obj:IsDescendantOf(Services.Workspace) then
-            local parent = obj.Parent
-            local pos = getPromptPosition(obj)
-            if parent and pos then
-                local fullName = parent:GetFullName():lower()
-                local isMyBase = fullName:find(myPlayerName) ~= nil
-                local dist = hrp and (hrp.Position - pos).Magnitude or 0
-                local rarityScore, rarityName, evidenceSource, weightKg, incomeFmt = evaluateEggRarity(parent, obj)
-                local zoneName, plotOwner = getEggLocationZone(parent, obj)
-                local displayName = (obj.ObjectText ~= "" and obj.ObjectText) or parent.Name
+    pcall(function()
+        for _, desc in ipairs(Services.Workspace:GetDescendants()) do
+            if desc:IsA("ProximityPrompt") and isEggPrompt(desc) then
+                local parent = desc.Parent
+                local pos = getPromptPosition(desc)
+                if parent and pos then
+                    local fullName = parent:GetFullName():lower()
+                    local isMyPlot = fullName:find(myName) ~= nil
+                    local dist = hrp and (hrp.Position - pos).Magnitude or 0
+                    local score, rarity, weight, income = parseEggData(parent, desc)
+                    local zone, owner = getEggZone(parent, desc)
+                    local dName = (desc.ObjectText ~= "" and desc.ObjectText) or parent.Name
 
-                table.insert(discovered, {
-                    Prompt = obj,
-                    Parent = parent,
-                    Name = displayName,
-                    Rarity = rarityName,
-                    RarityScore = rarityScore,
-                    WeightKg = weightKg,
-                    IncomeFmt = incomeFmt,
-                    EvidenceSource = evidenceSource,
-                    Zone = zoneName,
-                    IsMyBase = isMyBase,
-                    PlotOwner = plotOwner,
-                    Position = pos,
-                    Distance = dist,
-                    Path = parent:GetFullName(),
-                    ActionText = obj.ActionText,
-                    HoldDuration = obj.HoldDuration,
-                    MaxActivationDistance = obj.MaxActivationDistance
-                })
+                    table.insert(list, {
+                        Prompt = desc,
+                        Parent = parent,
+                        Name = dName,
+                        Rarity = rarity,
+                        RarityScore = score,
+                        WeightKg = weight,
+                        Income = income,
+                        Zone = zone,
+                        IsMyPlot = isMyPlot,
+                        PlotOwner = owner,
+                        Position = pos,
+                        Distance = dist,
+                        HoldDuration = desc.HoldDuration
+                    })
+                end
             end
         end
-    end
+    end)
 
-    table.sort(discovered, function(a, b)
+    table.sort(list, function(a, b)
         if a.RarityScore ~= b.RarityScore then
             return a.RarityScore > b.RarityScore
         end
         return a.Distance < b.Distance
     end)
 
-    Flags.DiscoveredEggs = discovered
-    _G.DiscoveredEggs = discovered
-
-    if _G.UpdateRadarCards then
-        _G.UpdateRadarCards(discovered)
-    end
-
-    return discovered
+    return list
 end
 
---================================================================--
--- GERADOR DE DUMP ESTRUTURAL COMPLETO DO JOGO (.TXT)
---================================================================--
+-- 9. Dumper Estrutural Completo para Análise Local
+local function exportGameDump()
+    local out = {}
+    local function add(s) table.insert(out, s or "") end
 
-local function generateGameDump()
-    local output = {}
-    local function logLine(str) table.insert(output, str or "") end
+    add("================================================================================")
+    add("ROUBE UM OVO - INVENTARIO ESTRUTURAL COMPLETO")
+    add("Data: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | PlaceId: " .. tostring(game.PlaceId))
+    add("================================================================================\n")
 
-    logLine("================================================================================")
-    logLine("🧬 RELATÓRIO ESTRUTURAL COMPLETO DO JOGO — " .. os.date("%Y-%m-%d %H:%M:%S"))
-    logLine("PlaceId: " .. tostring(game.PlaceId) .. " | JobId: " .. tostring(game.JobId))
-    logLine("Jogador: " .. LocalPlayer.Name .. " (@" .. LocalPlayer.DisplayName .. ")")
-    logLine("================================================================================\n")
-
-    -- 1. ReplicatedStorage
-    logLine("📁 [1/4] REPLICATED STORAGE (Configs, Ovos, Tabelas, Módulos):")
+    add("[1] REPLICATED STORAGE (Modulos, Tabelas, Configs):")
     pcall(function()
         for _, child in ipairs(Services.ReplicatedStorage:GetChildren()) do
-            logLine(string.format("  • %s [%s] (Filhos: %d)", child.Name, child.ClassName, #child:GetChildren()))
+            add(string.format("  - %s [%s] (Filhos: %d)", child.Name, child.ClassName, #child:GetChildren()))
             local low = child.Name:lower()
-            if low:find("egg") or low:find("pet") or low:find("item") or low:find("data") or low:find("config") or low:find("shop") then
+            if low:find("egg") or low:find("rarit") or low:find("data") or low:find("config") or low:find("item") then
                 for _, sub in ipairs(child:GetChildren()) do
-                    logLine(string.format("      ↳ %s [%s]", sub.Name, sub.ClassName))
+                    add(string.format("      > %s [%s]", sub.Name, sub.ClassName))
                 end
             end
         end
     end)
-    logLine("\n")
+    add("\n")
 
-    -- 2. Workspace
-    logLine("🗺️ [2/4] WORKSPACE (Zonas, Ilhas, Spawns, Pedestais):")
+    add("[2] WORKSPACE (Zonas, Modelos e Spawns):")
     pcall(function()
         for _, child in ipairs(Services.Workspace:GetChildren()) do
             if child:IsA("Folder") or child:IsA("Model") then
-                local count = #child:GetChildren()
-                if count > 0 then
-                    logLine(string.format("  • %s [%s] (%d objetos)", child.Name, child.ClassName, count))
-                end
+                add(string.format("  - %s [%s] (%d objs)", child.Name, child.ClassName, #child:GetChildren()))
             end
         end
     end)
-    logLine("\n")
+    add("\n")
 
-    -- 3. ProximityPrompts & Ovos
-    logLine("🥚 [3/4] PROMPTS STEAL/EGG ATIVOS NO MAPA:")
-    local eggs = scanAllEggsInMap()
+    add("[3] OVOS E PROMPTS ATIVOS NO SERVIDOR:")
+    local eggs = scanEggs()
     for i, e in ipairs(eggs) do
-        logLine(string.format("#%02d [%s] %s | 📍 %s | Coords: (%.1f, %.1f, %.1f) | Dist: %dm | Peso: %s | Renda: %s",
+        add(string.format("#%02d [%s] %s | Zona: %s | Pos: (%.1f, %.1f, %.1f) | Dist: %dm | Peso: %s | Renda: %s",
             i, e.Rarity, e.Name, e.Zone, e.Position.X, e.Position.Y, e.Position.Z, math.floor(e.Distance),
-            e.WeightKg > 0 and (tostring(e.WeightKg) .. " Kg") or "N/D", e.IncomeFmt or "N/D"
+            e.WeightKg > 0 and (tostring(e.WeightKg) .. " Kg") or "N/D", e.Income or "N/D"
         ))
     end
-    logLine("\n")
+    add("\n")
 
-    -- 4. PlayerGui
-    logLine("🖥️ [4/4] PLAYERGUI (Catálogos e Menus do Jogo):")
+    add("[4] PLAYERGUI (Menus Ativos):")
     pcall(function()
         local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
         if pg then
-            for _, gui in ipairs(pg:GetChildren()) do
-                if gui:IsA("ScreenGui") and gui.Enabled then
-                    logLine(string.format("  • %s", gui.Name))
+            for _, g in ipairs(pg:GetChildren()) do
+                if g:IsA("ScreenGui") and g.Enabled then
+                    add("  - ScreenGui: " .. g.Name)
                 end
             end
         end
     end)
-    logLine("\n================================================================================")
-    logLine("✅ FIM DO RELATÓRIO.")
-    logLine("================================================================================")
 
-    local fullDump = table.concat(output, "\n")
+    add("================================================================================")
+    add("FIM DO INVENTARIO.")
+
+    local text = table.concat(out, "\n")
     pcall(function()
-        if writefile then
-            writefile("ROUBE_UM_OVO_DUMP.txt", fullDump)
-        end
-        if setclipboard then
-            setclipboard(fullDump)
-        end
+        if writefile then writefile("ROUBE_UM_OVO_DUMP.txt", text) end
+        if setclipboard then setclipboard(text) end
     end)
-    addLog("DIAGNÓSTICO", "Dump completo exportado com sucesso para ROUBE_UM_OVO_DUMP.txt e copiado!")
-    return fullDump
+    addLog("DUMP", "Dump estrutural exportado com sucesso para ROUBE_UM_OVO_DUMP.txt e copiado!")
+    return text, #eggs
 end
 
---================================================================--
--- VOO FÍSICO SEGURO (SEM TELEPORTE INSTANTÂNEO)
---================================================================--
-
-local function flyToPosition(targetPos, speed, onApproach)
-    local hrp = getHRP()
-    local char = LocalPlayer.Character
-    if not hrp or not char then return false end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    local collisionState = {}
-
-    speed = speed or Flags.FlySpeed or 400
-    local startPos = hrp.Position
-    local totalDist = (targetPos - startPos).Magnitude
-    if totalDist < 3.5 then
-        if onApproach then onApproach(totalDist) end
-        return true
-    end
-
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
-            collisionState[part] = part.CanCollide
-            part.CanCollide = false
-        end
-    end
-
-    local bp = Instance.new("BodyPosition")
-    bp.Name = getRandomName()
-    bp.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-    bp.D = 600
-    bp.P = 50000
-    bp.Position = startPos
-    bp.Parent = hrp
-
-    local bg = Instance.new("BodyGyro")
-    bg.Name = getRandomName()
-    bg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
-    bg.D = 100
-    bg.P = 30000
-    bg.CFrame = CFrame.new(startPos, targetPos)
-    bg.Parent = hrp
-
-    local travelTime = totalDist / math.max(speed, 10)
-    local startTime = os.clock()
-    local lastPhysicsUpdate = 0
-
-    while (os.clock() - startTime) < (travelTime + 2) do
-        local elapsed = os.clock() - startTime
-        local alpha = math.clamp(elapsed / travelTime, 0, 1)
-        if elapsed - lastPhysicsUpdate >= (1 / 30) then
-            lastPhysicsUpdate = elapsed
-            bp.Position = startPos:Lerp(targetPos, alpha)
-            bg.CFrame = CFrame.new(hrp.Position, targetPos)
-        end
-
-        local remainingDistance = (targetPos - hrp.Position).Magnitude
-        if onApproach then onApproach(remainingDistance) end
-        if hum and hum.PlatformStand then hum.PlatformStand = false end
-        if remainingDistance < 3.5 then break end
-        Services.RunService.Heartbeat:Wait()
-    end
-
-    bp.Position = targetPos
-    local settleDeadline = os.clock() + 0.3
-    while hrp.Parent and (targetPos - hrp.Position).Magnitude >= 4 and os.clock() < settleDeadline do
-        Services.RunService.Heartbeat:Wait()
-    end
-
-    local finalDistance = hrp.Parent and (targetPos - hrp.Position).Magnitude or math.huge
-    pcall(function() bp:Destroy() end)
-    pcall(function() bg:Destroy() end)
-    for part, wasCollidable in pairs(collisionState) do
-        if part and part.Parent then part.CanCollide = wasCollidable end
-    end
-
-    return finalDistance < 8, finalDistance
-end
-
-local function stealEgg(prompt)
-    if not prompt or not prompt.Parent then return false end
-    local success = false
-    pcall(function()
-        prompt.HoldDuration = 0
-        prompt.RequiresLineOfSight = false
-        if fireproximityprompt then
-            fireproximityprompt(prompt)
-            success = true
-        else
-            prompt:InputHoldBegin()
-            prompt:InputHoldEnd()
-            success = true
-        end
-    end)
-    return success
-end
-
---================================================================--
--- ESP LEVE COM DADOS REAIS NA TELA (NOME, PESO KG, DISTÂNCIA)
---================================================================--
-
+-- 10. ESP Leve e Passivo
 local activeESPs = {}
-
-local function clearAllESP()
-    for target, espItem in pairs(activeESPs) do
-        pcall(function()
-            if espItem and espItem.Parent then espItem:Destroy() end
-        end)
+local function clearESP()
+    for target, item in pairs(activeESPs) do
+        pcall(function() if item and item.Parent then item:Destroy() end end)
     end
     activeESPs = {}
 end
 
-local function applyLightweightESP(target, labelText, color)
+local function applyESP(target, labelText, color)
     if not target or not target.Parent or activeESPs[target] then return end
-    local p = target:IsA("BasePart") and target 
-           or (target:IsA("Model") and (target.PrimaryPart or target:FindFirstChildWhichIsA("BasePart")))
+    local p = target:IsA("BasePart") and target or (target:IsA("Model") and (target.PrimaryPart or target:FindFirstChildWhichIsA("BasePart")))
     if not p then return end
 
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = getRandomName()
-    billboard.AlwaysOnTop = true
-    billboard.Size = UDim2.new(0, 200, 0, 26)
-    billboard.StudsOffset = Vector3.new(0, 2.5, 0)
-    billboard.Adornee = p
+    local bill = Instance.new("BillboardGui")
+    bill.Name = getRandomName()
+    bill.AlwaysOnTop = true
+    bill.Size = UDim2.new(0, 190, 0, 24)
+    bill.StudsOffset = Vector3.new(0, 2.5, 0)
+    bill.Adornee = p
 
     local tag = Instance.new("TextLabel")
     tag.Size = UDim2.new(1, 0, 1, 0)
-    tag.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
-    tag.BackgroundTransparency = 0.2
-    tag.TextColor3 = color or Color3.fromRGB(255, 160, 18)
+    tag.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
+    tag.BackgroundTransparency = 0.25
+    tag.TextColor3 = color or Color3.fromRGB(56, 189, 248)
     tag.TextSize = 11
     tag.Font = Enum.Font.GothamBold
     tag.Text = labelText
-    tag.Parent = billboard
+    tag.Parent = bill
 
     local c = Instance.new("UICorner")
     c.CornerRadius = UDim.new(0, 4)
     c.Parent = tag
 
     local s = Instance.new("UIStroke")
-    s.Color = color or Color3.fromRGB(255, 160, 18)
-    s.Transparency = 0.5
+    s.Color = color or Color3.fromRGB(56, 189, 248)
+    s.Transparency = 0.6
     s.Thickness = 1
     s.Parent = tag
 
-    billboard.Parent = p
-    activeESPs[target] = billboard
+    bill.Parent = p
+    activeESPs[target] = bill
 
     target.AncestryChanged:Connect(function(_, parent)
         if not parent then
-            pcall(function() billboard:Destroy() end)
+            pcall(function() bill:Destroy() end)
             activeESPs[target] = nil
         end
     end)
 end
 
-local function updateESP()
-    if not Flags.EggESP and not Flags.PlayerESP then
-        clearAllESP()
+local function refreshESP()
+    if not Settings.EggESP and not Settings.PlayerESP then
+        clearESP()
         return
     end
 
     pcall(function()
-        local seenTargets = {}
+        local seen = {}
         local hrp = getHRP()
-        local myPlayerName = LocalPlayer.Name:lower()
+        local myName = LocalPlayer.Name:lower()
 
-        if Flags.EggESP then
-            local count = 0
-            for obj in pairs(stealPromptRegistry) do
-                if count >= 30 then break end
-                if isStealPrompt(obj) and obj:IsDescendantOf(Services.Workspace) then
-                    local parent = obj.Parent
-                    local pos = getPromptPosition(obj)
-                    if parent and pos then
-                        local fullName = parent:GetFullName():lower()
-                        if not fullName:find(myPlayerName) then
-                            local dist = hrp and (hrp.Position - pos).Magnitude or 0
-                            if dist <= (Flags.ESPMaxDistance or 2500) then
-                                count = count + 1
-                                local _, rName, _, weightKg = evaluateEggRarity(parent, obj)
-                                local dName = (obj.ObjectText ~= "" and obj.ObjectText) or parent.Name
-                                local weightTag = weightKg > 0 and (" [" .. tostring(weightKg) .. " Kg]") or (" [" .. rName .. "]")
-                                local label = dName .. weightTag .. " (" .. math.floor(dist) .. "m)"
-                                seenTargets[parent] = true
-                                applyLightweightESP(parent, label, Flags.ESPColor)
-                            end
-                        end
-                    end
+        if Settings.EggESP then
+            local eggs = scanEggs()
+            for i = 1, math.min(#eggs, 25) do
+                local e = eggs[i]
+                if not e.IsMyPlot and e.Distance <= Settings.ESPMaxDistance then
+                    seen[e.Parent] = true
+                    local wText = e.WeightKg > 0 and (" [" .. tostring(e.WeightKg) .. " Kg]") or (" [" .. e.Rarity .. "]")
+                    local label = e.Name .. wText .. " (" .. math.floor(e.Distance) .. "m)"
+                    applyESP(e.Parent, label, Color3.fromRGB(56, 189, 248))
                 end
             end
         end
 
-        if Flags.PlayerESP then
+        if Settings.PlayerESP then
             for _, pl in ipairs(Services.Players:GetPlayers()) do
                 if pl ~= LocalPlayer and pl.Character then
                     local pHrp = pl.Character:FindFirstChild("HumanoidRootPart")
                     if pHrp then
                         local dist = hrp and (hrp.Position - pHrp.Position).Magnitude or 0
-                        seenTargets[pl.Character] = true
-                        applyLightweightESP(pl.Character, pl.DisplayName .. " (" .. math.floor(dist) .. "m)", Flags.PlayerESPColor)
+                        seen[pl.Character] = true
+                        applyESP(pl.Character, pl.DisplayName .. " (" .. math.floor(dist) .. "m)", Color3.fromRGB(148, 163, 184))
                     end
                 end
             end
         end
 
-        for target, espItem in pairs(activeESPs) do
-            if not seenTargets[target] then
-                pcall(function() if espItem and espItem.Parent then espItem:Destroy() end end)
+        for target, item in pairs(activeESPs) do
+            if not seen[target] then
+                pcall(function() if item and item.Parent then item:Destroy() end end)
                 activeESPs[target] = nil
             end
         end
     end)
 end
 
-task.spawn(function()
-    while scriptActive do
-        task.wait(2)
-        if Flags.EggESP or Flags.PlayerESP then
-            updateESP()
-        end
-    end
-end)
-
--- Proteção Básica do Personagem (Anti-Ragdoll / Recuperar Ovo)
-local humanoidDefaults = setmetatable({}, { __mode = "k" })
-local function applyCharacterProtections(char)
-    if not char then return end
-    local hum = char:WaitForChild("Humanoid", 3)
-    if hum then
-        humanoidDefaults[hum] = { WalkSpeed = hum.WalkSpeed, JumpPower = hum.JumpPower }
-    end
-end
-
-if LocalPlayer.Character then task.spawn(function() applyCharacterProtections(LocalPlayer.Character) end) end
-LocalPlayer.CharacterAdded:Connect(function(char)
-    if scriptActive then task.spawn(function() applyCharacterProtections(char) end) end
-end)
-
--- Anti-AFK
-pcall(function()
-    LocalPlayer.Idled:Connect(function()
-        if scriptActive and Flags.AntiAFK then
-            pcall(function()
-                Services.VirtualUser:CaptureController()
-                Services.VirtualUser:ClickButton2(Vector2.new(0, 0))
-            end)
-        end
-    end)
-end)
-
---================================================================--
--- INTERFACE MODERNA E LIMPA (INSPIRADA NO DESIGN ESCURO + ÂMBAR)
---================================================================--
-
+-- 11. CONSTRUÇÃO DA INTERFACE (TEMA TECH BLUE MINIMALISTA - ZERO EMOJIS)
 local TweenService = Services.TweenService
 local UserInputService = Services.UserInputService
 
-local C_BG         = Color3.fromRGB(11, 11, 13)
-local C_SIDEBAR    = Color3.fromRGB(14, 14, 16)
-local C_CARD       = Color3.fromRGB(19, 19, 22)
-local C_CARD_STROKE= Color3.fromRGB(30, 30, 35)
-local C_ITEM_BG    = Color3.fromRGB(24, 24, 28)
-local C_ITEM_STROKE= Color3.fromRGB(38, 38, 44)
-local C_AMBER      = Color3.fromRGB(255, 160, 18)     -- Âmbar Vibrante
-local C_TEXT_WHITE = Color3.fromRGB(255, 255, 255)
-local C_TEXT_MUTED = Color3.fromRGB(142, 142, 147)
-local C_TOGGLE_OFF = Color3.fromRGB(48, 48, 54)
-local C_TRACK_BG   = Color3.fromRGB(36, 36, 42)
+local C_BG       = Color3.fromRGB(10, 14, 23)       -- Obsidian Dark Slate
+local C_SIDEBAR  = Color3.fromRGB(14, 19, 31)       -- Dark Navy Sidebar
+local C_CARD     = Color3.fromRGB(18, 25, 41)       -- Slate Card Background
+local C_BORDER   = Color3.fromRGB(30, 41, 59)       -- Border Stroke (#1E293B)
+local C_ITEM_BG  = Color3.fromRGB(22, 32, 51)       -- Input / Box Background
+local C_BLUE     = Color3.fromRGB(56, 189, 248)     -- Tech Blue (#38BDF8)
+local C_BLUE_DARK= Color3.fromRGB(14, 116, 144)
+local C_TEXT     = Color3.fromRGB(248, 250, 252)    -- Pure Clean White
+local C_TEXT_DIM = Color3.fromRGB(148, 163, 184)    -- Slate Dim Text
+local C_INACTIVE = Color3.fromRGB(51, 65, 85)
 
-local function tw(obj, props, duration)
-    duration = duration or 0.18
-    local t = TweenService:Create(obj, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props)
-    t:Play()
-    return t
+local function tw(obj, props, t)
+    TweenService:Create(obj, TweenInfo.new(t or 0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
 end
 
 local function addCorner(parent, px)
@@ -950,252 +519,220 @@ local function addCorner(parent, px)
     return c
 end
 
-local function addStroke(parent, color, thickness, transparency)
+local function addStroke(parent, color, thickness)
     local s = Instance.new("UIStroke")
-    s.Color = color or C_CARD_STROKE
+    s.Color = color or C_BORDER
     s.Thickness = thickness or 1
-    s.Transparency = transparency or 0
     s.Parent = parent
     return s
 end
 
-local function addPadding(parent, top, bottom, left, right)
+local function addPadding(parent, t, b, l, r)
     local p = Instance.new("UIPadding")
-    p.PaddingTop = UDim.new(0, top or 0)
-    p.PaddingBottom = UDim.new(0, bottom or 0)
-    p.PaddingLeft = UDim.new(0, left or 0)
-    p.PaddingRight = UDim.new(0, right or 0)
+    p.PaddingTop = UDim.new(0, t or 0)
+    p.PaddingBottom = UDim.new(0, b or 0)
+    p.PaddingLeft = UDim.new(0, l or 0)
+    p.PaddingRight = UDim.new(0, r or 0)
     p.Parent = parent
     return p
 end
 
+-- Instanciação Antecipada e Protegida do ScreenGui
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = getRandomName()
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.IgnoreGuiInset = true
+protectGui(ScreenGui)
+ScreenGui.Parent = getGuiContainer()
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = getRandomName()
-MainFrame.Size = UDim2.new(0, 750, 0, 510)
-MainFrame.Position = UDim2.new(0.5, -375, 0.5, -255)
+MainFrame.Size = UDim2.new(0, 740, 0, 500)
+MainFrame.Position = UDim2.new(0.5, -370, 0.5, -250)
 MainFrame.BackgroundColor3 = C_BG
 MainFrame.BorderSizePixel = 0
 MainFrame.Parent = ScreenGui
-addCorner(MainFrame, 10)
-addStroke(MainFrame, C_CARD_STROKE, 1, 0)
+addCorner(MainFrame, 8)
+addStroke(MainFrame, C_BORDER, 1)
 
--- Arrasto Suave
+-- Drag Handler
 local dragging, dragInput, dragStart, startPos
-local function enableDragging(dragHandle)
-    dragHandle.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+local function makeDraggable(handle)
+    handle.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
             dragging = true
-            dragStart = input.Position
+            dragStart = i.Position
             startPos = MainFrame.Position
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            i.Changed:Connect(function()
+                if i.UserInputState == Enum.UserInputState.End then dragging = false end
             end)
         end
     end)
-    dragHandle.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            dragInput = input
+    handle.InputChanged:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
+            dragInput = i
         end
     end)
 end
 
-UserInputService.InputChanged:Connect(function(input)
-    if input == dragInput and dragging then
-        local delta = input.Position - dragStart
+UserInputService.InputChanged:Connect(function(i)
+    if i == dragInput and dragging then
+        local delta = i.Position - dragStart
         MainFrame.Position = UDim2.new(
-            startPos.X.Scale,
-            startPos.X.Offset + delta.X,
-            startPos.Y.Scale,
-            startPos.Y.Offset + delta.Y
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
         )
     end
 end)
 
 -- Sidebar Esquerda
 local Sidebar = Instance.new("Frame")
-Sidebar.Size = UDim2.new(0, 175, 1, 0)
+Sidebar.Size = UDim2.new(0, 165, 1, 0)
 Sidebar.BackgroundColor3 = C_SIDEBAR
 Sidebar.BorderSizePixel = 0
 Sidebar.Parent = MainFrame
-addCorner(Sidebar, 10)
+addCorner(Sidebar, 8)
 
-local SquarePatch = Instance.new("Frame")
-SquarePatch.Size = UDim2.new(0, 10, 1, 0)
-SquarePatch.Position = UDim2.new(1, -10, 0, 0)
-SquarePatch.BackgroundColor3 = C_SIDEBAR
-SquarePatch.BorderSizePixel = 0
-SquarePatch.Parent = Sidebar
-enableDragging(Sidebar)
+local SidebarPatch = Instance.new("Frame")
+SidebarPatch.Size = UDim2.new(0, 10, 1, 0)
+SidebarPatch.Position = UDim2.new(1, -10, 0, 0)
+SidebarPatch.BackgroundColor3 = C_SIDEBAR
+SidebarPatch.BorderSizePixel = 0
+SidebarPatch.Parent = Sidebar
+makeDraggable(Sidebar)
 
--- Logo Limpo: EggVision
-local LogoContainer = Instance.new("Frame")
-LogoContainer.Size = UDim2.new(1, 0, 0, 52)
-LogoContainer.BackgroundTransparency = 1
-LogoContainer.Parent = Sidebar
+-- Header / Logo Minimalista
+local BrandHeader = Instance.new("Frame")
+BrandHeader.Size = UDim2.new(1, 0, 0, 50)
+BrandHeader.BackgroundTransparency = 1
+BrandHeader.Parent = Sidebar
 
-local LogoText = Instance.new("TextLabel")
-LogoText.Size = UDim2.new(1, -24, 0, 24)
-LogoText.Position = UDim2.new(0, 16, 0, 14)
-LogoText.BackgroundTransparency = 1
-LogoText.RichText = true
-LogoText.Text = '<font color="#FFFFFF"><b>Egg</b></font><font color="#FFA012"><b>Vision</b></font>'
-LogoText.Font = Enum.Font.GothamBold
-LogoText.TextSize = 22
-LogoText.TextXAlignment = Enum.TextXAlignment.Left
-LogoText.Parent = LogoContainer
+local TagLabel = Instance.new("TextLabel")
+TagLabel.Size = UDim2.new(1, -24, 0, 14)
+TagLabel.Position = UDim2.new(0, 16, 0, 12)
+TagLabel.BackgroundTransparency = 1
+TagLabel.Text = "STEAL AN EGG"
+TagLabel.Font = Enum.Font.GothamBold
+TagLabel.TextSize = 9.5
+TagLabel.TextColor3 = C_TEXT_DIM
+TagLabel.TextXAlignment = Enum.TextXAlignment.Left
+TagLabel.Parent = BrandHeader
 
-local SubtitleText = Instance.new("TextLabel")
-SubtitleText.Size = UDim2.new(1, -24, 0, 14)
-SubtitleText.Position = UDim2.new(0, 16, 0, 38)
-SubtitleText.BackgroundTransparency = 1
-SubtitleText.Text = "Steal an Egg • Live Tracker"
-SubtitleText.Font = Enum.Font.GothamMedium
-SubtitleText.TextSize = 11
-SubtitleText.TextColor3 = C_TEXT_MUTED
-SubtitleText.TextXAlignment = Enum.TextXAlignment.Left
-SubtitleText.Parent = LogoContainer
+local MainTitle = Instance.new("TextLabel")
+MainTitle.Size = UDim2.new(1, -24, 0, 20)
+MainTitle.Position = UDim2.new(0, 16, 0, 26)
+MainTitle.BackgroundTransparency = 1
+MainTitle.RichText = true
+MainTitle.Text = '<b>OBSERVER</b> <font color="#38BDF8">v3.8</font>'
+MainTitle.Font = Enum.Font.GothamBold
+MainTitle.TextSize = 16
+MainTitle.TextColor3 = C_TEXT
+MainTitle.TextXAlignment = Enum.TextXAlignment.Left
+MainTitle.Parent = BrandHeader
 
--- Lista de Navegação
-local NavList = Instance.new("ScrollingFrame")
-NavList.Size = UDim2.new(1, 0, 1, -114)
-NavList.Position = UDim2.new(0, 0, 0, 60)
+-- Navegação
+local NavList = Instance.new("Frame")
+NavList.Size = UDim2.new(1, 0, 1, -110)
+NavList.Position = UDim2.new(0, 0, 0, 58)
 NavList.BackgroundTransparency = 1
-NavList.BorderSizePixel = 0
-NavList.ScrollBarThickness = 2
-NavList.ScrollBarImageColor3 = C_AMBER
-NavList.CanvasSize = UDim2.new(0, 0, 0, 280)
 NavList.Parent = Sidebar
-addPadding(NavList, 4, 4, 10, 10)
+addPadding(NavList, 6, 6, 10, 10)
 
 local NavLayout = Instance.new("UIListLayout")
-NavLayout.Padding = UDim.new(0, 3)
-NavLayout.SortOrder = Enum.SortOrder.LayoutOrder
+NavLayout.Padding = UDim.new(0, 4)
 NavLayout.Parent = NavList
 
--- Perfil do Jogador
-local ProfileFrame = Instance.new("Frame")
-ProfileFrame.Size = UDim2.new(1, -20, 0, 42)
-ProfileFrame.Position = UDim2.new(0, 10, 1, -48)
-ProfileFrame.BackgroundColor3 = C_ITEM_BG
-ProfileFrame.BorderSizePixel = 0
-ProfileFrame.Parent = Sidebar
-addCorner(ProfileFrame, 8)
-addStroke(ProfileFrame, C_ITEM_STROKE, 1, 0.4)
+-- Profile no Rodapé
+local ProfileBar = Instance.new("Frame")
+ProfileBar.Size = UDim2.new(1, -20, 0, 38)
+ProfileBar.Position = UDim2.new(0, 10, 1, -46)
+ProfileBar.BackgroundColor3 = C_ITEM_BG
+ProfileBar.BorderSizePixel = 0
+ProfileBar.Parent = Sidebar
+addCorner(ProfileBar, 6)
+addStroke(ProfileBar, C_BORDER, 1)
 
 local AvatarImg = Instance.new("ImageLabel")
-AvatarImg.Size = UDim2.new(0, 30, 0, 30)
-AvatarImg.Position = UDim2.new(0, 6, 0.5, -15)
-AvatarImg.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-AvatarImg.BorderSizePixel = 0
+AvatarImg.Size = UDim2.new(0, 26, 0, 26)
+AvatarImg.Position = UDim2.new(0, 6, 0.5, -13)
+AvatarImg.BackgroundColor3 = C_BG
 AvatarImg.Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(LocalPlayer.UserId) .. "&w=100&h=100"
-AvatarImg.Parent = ProfileFrame
-addCorner(AvatarImg, 15)
+AvatarImg.Parent = ProfileBar
+addCorner(AvatarImg, 13)
 
-local ProfileName = Instance.new("TextLabel")
-ProfileName.Size = UDim2.new(1, -44, 0, 15)
-ProfileName.Position = UDim2.new(0, 42, 0, 6)
-ProfileName.BackgroundTransparency = 1
-ProfileName.Text = LocalPlayer.DisplayName
-ProfileName.Font = Enum.Font.GothamBold
-ProfileName.TextSize = 11
-ProfileName.TextColor3 = C_TEXT_WHITE
-ProfileName.TextXAlignment = Enum.TextXAlignment.Left
-ProfileName.TextTruncate = Enum.TextTruncate.AtEnd
-ProfileName.Parent = ProfileFrame
+local UserNameLabel = Instance.new("TextLabel")
+UserNameLabel.Size = UDim2.new(1, -40, 0, 14)
+UserNameLabel.Position = UDim2.new(0, 38, 0, 5)
+UserNameLabel.BackgroundTransparency = 1
+UserNameLabel.Text = LocalPlayer.DisplayName
+UserNameLabel.Font = Enum.Font.GothamBold
+UserNameLabel.TextSize = 10.5
+UserNameLabel.TextColor3 = C_TEXT
+UserNameLabel.TextXAlignment = Enum.TextXAlignment.Left
+UserNameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+UserNameLabel.Parent = ProfileBar
 
-local ProfileStatus = Instance.new("TextLabel")
-ProfileStatus.Size = UDim2.new(1, -44, 0, 13)
-ProfileStatus.Position = UDim2.new(0, 42, 0, 22)
-ProfileStatus.BackgroundTransparency = 1
-ProfileStatus.Text = "Radar Furtivo Ativo"
-ProfileStatus.Font = Enum.Font.Gotham
-ProfileStatus.TextSize = 10
-ProfileStatus.TextColor3 = C_AMBER
-ProfileStatus.TextXAlignment = Enum.TextXAlignment.Left
-ProfileStatus.Parent = ProfileFrame
+local StatusDot = Instance.new("TextLabel")
+StatusDot.Size = UDim2.new(1, -40, 0, 12)
+StatusDot.Position = UDim2.new(0, 38, 0, 19)
+StatusDot.BackgroundTransparency = 1
+StatusDot.RichText = true
+StatusDot.Text = '<font color="#10B981">●</font> Observer Active'
+StatusDot.Font = Enum.Font.Gotham
+StatusDot.TextSize = 9.5
+StatusDot.TextColor3 = C_TEXT_DIM
+StatusDot.TextXAlignment = Enum.TextXAlignment.Left
+StatusDot.Parent = ProfileBar
 
--- Barra Superior
+-- TopBar
 local TopBar = Instance.new("Frame")
-TopBar.Size = UDim2.new(1, -175, 0, 44)
-TopBar.Position = UDim2.new(0, 175, 0, 0)
+TopBar.Size = UDim2.new(1, -165, 0, 44)
+TopBar.Position = UDim2.new(0, 165, 0, 0)
 TopBar.BackgroundColor3 = C_BG
 TopBar.BorderSizePixel = 0
 TopBar.Parent = MainFrame
-enableDragging(TopBar)
+makeDraggable(TopBar)
 
--- Barra de Pesquisa de Ovos em Tempo Real
-local SearchBoxContainer = Instance.new("Frame")
-SearchBoxContainer.Size = UDim2.new(1, -120, 0, 30)
-SearchBoxContainer.Position = UDim2.new(0, 14, 0, 7)
-SearchBoxContainer.BackgroundColor3 = C_ITEM_BG
-SearchBoxContainer.Parent = TopBar
-addCorner(SearchBoxContainer, 6)
-addStroke(SearchBoxContainer, C_ITEM_STROKE, 1, 0)
-
-local SearchIcon = Instance.new("TextLabel")
-SearchIcon.Size = UDim2.new(0, 26, 1, 0)
-SearchIcon.BackgroundTransparency = 1
-SearchIcon.Text = "🔍"
-SearchIcon.Font = Enum.Font.GothamBold
-SearchIcon.TextSize = 12
-SearchIcon.TextColor3 = C_TEXT_MUTED
-SearchIcon.Parent = SearchBoxContainer
+-- Search Box
+local SearchBox = Instance.new("Frame")
+SearchBox.Size = UDim2.new(1, -130, 0, 28)
+SearchBox.Position = UDim2.new(0, 14, 0, 8)
+SearchBox.BackgroundColor3 = C_ITEM_BG
+SearchBox.Parent = TopBar
+addCorner(SearchBox, 5)
+addStroke(SearchBox, C_BORDER, 1)
 
 local SearchInput = Instance.new("TextBox")
-SearchInput.Size = UDim2.new(1, -30, 1, 0)
-SearchInput.Position = UDim2.new(0, 28, 0, 0)
+SearchInput.Size = UDim2.new(1, -16, 1, 0)
+SearchInput.Position = UDim2.new(0, 8, 0, 0)
 SearchInput.BackgroundTransparency = 1
-SearchInput.PlaceholderText = "Pesquisar ovos por nome, zona, peso ou raridade..."
-SearchInput.PlaceholderColor3 = C_TEXT_MUTED
+SearchInput.PlaceholderText = "Search eggs by name, zone, weight or rarity..."
+SearchInput.PlaceholderColor3 = C_TEXT_DIM
 SearchInput.Text = ""
 SearchInput.Font = Enum.Font.Gotham
-SearchInput.TextSize = 11.5
-SearchInput.TextColor3 = C_TEXT_WHITE
+SearchInput.TextSize = 11
+SearchInput.TextColor3 = C_TEXT
 SearchInput.TextXAlignment = Enum.TextXAlignment.Left
 SearchInput.ClearTextOnFocus = false
-SearchInput.Parent = SearchBoxContainer
+SearchInput.Parent = SearchBox
 
--- Botão de Atualização Rápida (Refresh)
+-- Refresh Button
 local RefreshBtn = Instance.new("TextButton")
-RefreshBtn.Size = UDim2.new(0, 30, 0, 30)
-RefreshBtn.Position = UDim2.new(1, -95, 0, 7)
-RefreshBtn.BackgroundColor3 = C_ITEM_BG
-RefreshBtn.Text = "🔄"
+RefreshBtn.Size = UDim2.new(0, 95, 0, 28)
+RefreshBtn.Position = UDim2.new(1, -105, 0, 8)
+RefreshBtn.BackgroundColor3 = C_BLUE_DARK
+RefreshBtn.Text = "REFRESH"
 RefreshBtn.Font = Enum.Font.GothamBold
-RefreshBtn.TextSize = 13
-RefreshBtn.TextColor3 = C_AMBER
+RefreshBtn.TextSize = 10.5
+RefreshBtn.TextColor3 = C_TEXT
 RefreshBtn.Parent = TopBar
-addCorner(RefreshBtn, 6)
-addStroke(RefreshBtn, C_ITEM_STROKE, 1, 0)
-
--- Badge de Versão no Rodapé
-local VersionBadge = Instance.new("Frame")
-VersionBadge.Size = UDim2.new(0, 110, 0, 24)
-VersionBadge.Position = UDim2.new(1, -120, 1, -32)
-VersionBadge.BackgroundColor3 = C_CARD
-VersionBadge.BorderSizePixel = 0
-VersionBadge.Parent = MainFrame
-addCorner(VersionBadge, 6)
-addStroke(VersionBadge, C_CARD_STROKE, 1, 0)
-
-local VersionText = Instance.new("TextLabel")
-VersionText.Size = UDim2.new(1, 0, 1, 0)
-VersionText.BackgroundTransparency = 1
-VersionText.RichText = true
-VersionText.Text = '<b><font color="#FFFFFF">v3.7</font></b> | <font color="#8E8E93">Stealth</font>'
-VersionText.Font = Enum.Font.GothamBold
-VersionText.TextSize = 11
-VersionText.Parent = VersionBadge
+addCorner(RefreshBtn, 5)
 
 -- Container de Páginas
 local PageContainer = Instance.new("Frame")
-PageContainer.Size = UDim2.new(1, -175, 1, -80)
-PageContainer.Position = UDim2.new(0, 175, 0, 44)
+PageContainer.Size = UDim2.new(1, -165, 1, -44)
+PageContainer.Position = UDim2.new(0, 165, 0, 44)
 PageContainer.BackgroundTransparency = 1
 PageContainer.Parent = MainFrame
 
@@ -1203,55 +740,57 @@ local TabButtons = {}
 local Pages = {}
 local CurrentTab = nil
 
-local function switchTab(tabId)
-    if CurrentTab == tabId then return end
-    CurrentTab = tabId
-    for id, btn in pairs(TabButtons) do
-        local isSelected = (id == tabId)
+local function switchTab(id)
+    if CurrentTab == id then return end
+    CurrentTab = id
+    for tabId, btn in pairs(TabButtons) do
+        local active = (tabId == id)
         tw(btn, {
-            BackgroundColor3 = isSelected and Color3.fromRGB(26, 26, 30) or C_SIDEBAR,
-            BackgroundTransparency = isSelected and 0 or 1
-        }, 0.15)
+            BackgroundColor3 = active and Color3.fromRGB(30, 41, 59) or C_SIDEBAR,
+            BackgroundTransparency = active and 0 or 1
+        }, 0.12)
         local lbl = btn:FindFirstChild("Title")
-        if lbl then tw(lbl, { TextColor3 = isSelected and C_TEXT_WHITE or C_TEXT_MUTED }, 0.15) end
-        local icon = btn:FindFirstChild("Icon")
-        if icon then tw(icon, { TextColor3 = isSelected and C_AMBER or C_TEXT_MUTED }, 0.15) end
+        if lbl then
+            tw(lbl, { TextColor3 = active and C_TEXT or C_TEXT_DIM }, 0.12)
+        end
+        local dot = btn:FindFirstChild("Dot")
+        if dot then
+            dot.Visible = active
+        end
     end
-    for id, pg in pairs(Pages) do
-        pg.Visible = (id == tabId)
+    for pageId, page in pairs(Pages) do
+        page.Visible = (pageId == id)
     end
 end
 
-local function addSidebarTab(id, name, iconSymbol, order)
+local function addNavTab(id, titleText)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 0, 34)
+    btn.Size = UDim2.new(1, 0, 0, 32)
     btn.BackgroundColor3 = C_SIDEBAR
     btn.BackgroundTransparency = 1
     btn.Text = ""
-    btn.LayoutOrder = order or 1
     btn.Parent = NavList
-    addCorner(btn, 6)
+    addCorner(btn, 5)
 
-    local icon = Instance.new("TextLabel")
-    icon.Name = "Icon"
-    icon.Size = UDim2.new(0, 20, 1, 0)
-    icon.Position = UDim2.new(0, 10, 0, 0)
-    icon.BackgroundTransparency = 1
-    icon.Text = iconSymbol or "•"
-    icon.Font = Enum.Font.GothamBold
-    icon.TextSize = 14
-    icon.TextColor3 = C_TEXT_MUTED
-    icon.Parent = btn
+    local dot = Instance.new("Frame")
+    dot.Name = "Dot"
+    dot.Size = UDim2.new(0, 3, 0, 14)
+    dot.Position = UDim2.new(0, 6, 0.5, -7)
+    dot.BackgroundColor3 = C_BLUE
+    dot.BorderSizePixel = 0
+    dot.Visible = false
+    dot.Parent = btn
+    addCorner(dot, 2)
 
     local title = Instance.new("TextLabel")
     title.Name = "Title"
-    title.Size = UDim2.new(1, -38, 1, 0)
-    title.Position = UDim2.new(0, 34, 0, 0)
+    title.Size = UDim2.new(1, -22, 1, 0)
+    title.Position = UDim2.new(0, 16, 0, 0)
     title.BackgroundTransparency = 1
-    title.Text = name
+    title.Text = titleText
     title.Font = Enum.Font.GothamMedium
-    title.TextSize = 12
-    title.TextColor3 = C_TEXT_MUTED
+    title.TextSize = 11.5
+    title.TextColor3 = C_TEXT_DIM
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.Parent = btn
 
@@ -1266,12 +805,12 @@ local function createPage(id)
     pg.BackgroundTransparency = 1
     pg.BorderSizePixel = 0
     pg.ScrollBarThickness = 3
-    pg.ScrollBarImageColor3 = C_AMBER
+    pg.ScrollBarImageColor3 = C_BLUE
     pg.CanvasSize = UDim2.new(0, 0, 0, 0)
     pg.AutomaticCanvasSize = Enum.AutomaticSize.Y
     pg.Visible = false
     pg.Parent = PageContainer
-    addPadding(pg, 4, 16, 12, 12)
+    addPadding(pg, 8, 16, 12, 12)
 
     local layout = Instance.new("UIListLayout")
     layout.Padding = UDim.new(0, 10)
@@ -1282,664 +821,485 @@ local function createPage(id)
     return pg
 end
 
--- Construtor de Cards
-local function createCard(parent, titleText, iconSymbol)
+local function createCard(parent, titleText)
     local card = Instance.new("Frame")
     card.Size = UDim2.new(1, 0, 0, 0)
     card.AutomaticSize = Enum.AutomaticSize.Y
     card.BackgroundColor3 = C_CARD
     card.BorderSizePixel = 0
     card.Parent = parent
-    addCorner(card, 8)
-    addStroke(card, C_CARD_STROKE, 1, 0)
+    addCorner(card, 6)
+    addStroke(card, C_BORDER, 1)
 
-    local header = Instance.new("TextButton")
-    header.Size = UDim2.new(1, 0, 0, 36)
+    local header = Instance.new("Frame")
+    header.Size = UDim2.new(1, 0, 0, 32)
     header.BackgroundTransparency = 1
-    header.Text = ""
     header.Parent = card
 
-    local icon = Instance.new("TextLabel")
-    icon.Size = UDim2.new(0, 20, 1, 0)
-    icon.Position = UDim2.new(0, 12, 0, 0)
-    icon.BackgroundTransparency = 1
-    icon.Text = iconSymbol or "✦"
-    icon.Font = Enum.Font.GothamBold
-    icon.TextSize = 13
-    icon.TextColor3 = C_AMBER
-    icon.Parent = header
-
     local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, -70, 1, 0)
-    title.Position = UDim2.new(0, 34, 0, 0)
+    title.Size = UDim2.new(1, -24, 1, 0)
+    title.Position = UDim2.new(0, 12, 0, 0)
     title.BackgroundTransparency = 1
     title.Text = titleText
     title.Font = Enum.Font.GothamBold
-    title.TextSize = 13
-    title.TextColor3 = C_TEXT_WHITE
+    title.TextSize = 11.5
+    title.TextColor3 = C_TEXT
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.Parent = header
 
-    local chevron = Instance.new("TextLabel")
-    chevron.Size = UDim2.new(0, 20, 1, 0)
-    chevron.Position = UDim2.new(1, -28, 0, 0)
-    chevron.BackgroundTransparency = 1
-    chevron.Text = "▾"
-    chevron.Font = Enum.Font.GothamBold
-    chevron.TextSize = 13
-    chevron.TextColor3 = C_TEXT_MUTED
-    chevron.Parent = header
-
     local body = Instance.new("Frame")
     body.Size = UDim2.new(1, 0, 0, 0)
-    body.Position = UDim2.new(0, 0, 0, 36)
+    body.Position = UDim2.new(0, 0, 0, 32)
     body.AutomaticSize = Enum.AutomaticSize.Y
     body.BackgroundTransparency = 1
     body.Parent = card
-    addPadding(body, 2, 12, 12, 12)
+    addPadding(body, 2, 10, 12, 12)
 
     local bodyLayout = Instance.new("UIListLayout")
     bodyLayout.Padding = UDim.new(0, 8)
     bodyLayout.SortOrder = Enum.SortOrder.LayoutOrder
     bodyLayout.Parent = body
 
-    local collapsed = false
-    header.MouseButton1Click:Connect(function()
-        collapsed = not collapsed
-        body.Visible = not collapsed
-        chevron.Text = collapsed and "▸" or "▾"
-    end)
-
     return body
 end
 
--- Widgets
-local function addToggle(parent, labelText, defaultState, callback)
-    local state = defaultState == true
+local function addToggle(parent, labelText, defaultVal, callback)
+    local state = defaultVal == true
 
     local row = Instance.new("Frame")
-    row.Size = UDim2.new(1, 0, 0, 26)
+    row.Size = UDim2.new(1, 0, 0, 24)
     row.BackgroundTransparency = 1
     row.Parent = parent
 
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -50, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = labelText
-    label.Font = Enum.Font.GothamMedium
-    label.TextSize = 12
-    label.TextColor3 = C_TEXT_WHITE
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = row
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -44, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = labelText
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.TextSize = 11.5
+    lbl.TextColor3 = C_TEXT
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
 
-    local switch = Instance.new("TextButton")
-    switch.Size = UDim2.new(0, 42, 0, 22)
-    switch.Position = UDim2.new(1, -42, 0.5, -11)
-    switch.BackgroundColor3 = state and C_AMBER or C_TOGGLE_OFF
-    switch.Text = ""
-    switch.Parent = row
-    addCorner(switch, 11)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 38, 0, 20)
+    btn.Position = UDim2.new(1, -38, 0.5, -10)
+    btn.BackgroundColor3 = state and C_BLUE or C_INACTIVE
+    btn.Text = ""
+    btn.Parent = row
+    addCorner(btn, 10)
 
     local knob = Instance.new("Frame")
-    knob.Size = UDim2.new(0, 18, 0, 18)
-    knob.Position = state and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9)
-    knob.BackgroundColor3 = C_TEXT_WHITE
+    knob.Size = UDim2.new(0, 16, 0, 16)
+    knob.Position = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+    knob.BackgroundColor3 = C_TEXT
     knob.BorderSizePixel = 0
-    knob.Parent = switch
-    addCorner(knob, 9)
+    knob.Parent = btn
+    addCorner(knob, 8)
 
-    switch.MouseButton1Click:Connect(function()
+    btn.MouseButton1Click:Connect(function()
         state = not state
-        tw(switch, { BackgroundColor3 = state and C_AMBER or C_TOGGLE_OFF }, 0.15)
-        tw(knob, { Position = state and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9) }, 0.15)
+        tw(btn, { BackgroundColor3 = state and C_BLUE or C_INACTIVE }, 0.12)
+        tw(knob, { Position = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8) }, 0.12)
         pcall(function() callback(state) end)
     end)
 end
 
-local function addSlider(parent, titleText, minVal, maxVal, defaultVal, unitStr, callback)
-    local curVal = math.clamp(defaultVal or minVal, minVal, maxVal)
-    unitStr = unitStr or ""
+local function addSlider(parent, labelText, minV, maxV, defV, unit, callback)
+    local val = math.clamp(defV or minV, minV, maxV)
+    unit = unit or ""
 
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, 0, 0, 46)
-    container.BackgroundTransparency = 1
-    container.Parent = parent
+    local cont = Instance.new("Frame")
+    cont.Size = UDim2.new(1, 0, 0, 42)
+    cont.BackgroundTransparency = 1
+    cont.Parent = parent
 
-    local headerRow = Instance.new("Frame")
-    headerRow.Size = UDim2.new(1, 0, 0, 20)
-    headerRow.BackgroundTransparency = 1
-    headerRow.Parent = container
+    local header = Instance.new("Frame")
+    header.Size = UDim2.new(1, 0, 0, 18)
+    header.BackgroundTransparency = 1
+    header.Parent = cont
 
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -100, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = titleText
-    label.Font = Enum.Font.GothamMedium
-    label.TextSize = 12
-    label.TextColor3 = C_TEXT_WHITE
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = headerRow
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -80, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = labelText
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.TextSize = 11.5
+    lbl.TextColor3 = C_TEXT
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = header
 
-    local badge = Instance.new("Frame")
-    badge.Size = UDim2.new(0, 85, 0, 18)
-    badge.Position = UDim2.new(1, -85, 0, 1)
-    badge.BackgroundColor3 = C_ITEM_BG
-    badge.BorderSizePixel = 0
-    badge.Parent = headerRow
-    addCorner(badge, 4)
-
-    local badgeText = Instance.new("TextLabel")
-    badgeText.Size = UDim2.new(1, 0, 1, 0)
-    badgeText.BackgroundTransparency = 1
-    badgeText.Text = tostring(curVal) .. " " .. unitStr
-    badgeText.Font = Enum.Font.GothamBold
-    badgeText.TextSize = 10.5
-    badgeText.TextColor3 = Color3.fromRGB(215, 215, 220)
-    badgeText.Parent = badge
+    local badge = Instance.new("TextLabel")
+    badge.Size = UDim2.new(0, 75, 1, 0)
+    badge.Position = UDim2.new(1, -75, 0, 0)
+    badge.BackgroundTransparency = 1
+    badge.Text = tostring(val) .. " " .. unit
+    badge.Font = Enum.Font.GothamBold
+    badge.TextSize = 10.5
+    badge.TextColor3 = C_BLUE
+    badge.TextXAlignment = Enum.TextXAlignment.Right
+    badge.Parent = header
 
     local track = Instance.new("TextButton")
-    track.Size = UDim2.new(1, 0, 0, 5)
-    track.Position = UDim2.new(0, 0, 0, 28)
-    track.BackgroundColor3 = C_TRACK_BG
+    track.Size = UDim2.new(1, 0, 0, 4)
+    track.Position = UDim2.new(0, 0, 0, 26)
+    track.BackgroundColor3 = C_INACTIVE
     track.Text = ""
     track.AutoButtonColor = false
-    track.Parent = container
-    addCorner(track, 3)
+    track.Parent = cont
+    addCorner(track, 2)
 
+    local initR = math.clamp((val - minV) / (maxV - minV), 0, 1)
     local fill = Instance.new("Frame")
-    local initRatio = math.clamp((curVal - minVal) / (maxVal - minVal), 0, 1)
-    fill.Size = UDim2.new(initRatio, 0, 1, 0)
-    fill.BackgroundColor3 = C_AMBER
+    fill.Size = UDim2.new(initR, 0, 1, 0)
+    fill.BackgroundColor3 = C_BLUE
     fill.BorderSizePixel = 0
     fill.Parent = track
-    addCorner(fill, 3)
-
-    local knob = Instance.new("Frame")
-    knob.Size = UDim2.new(0, 12, 0, 12)
-    knob.AnchorPoint = Vector2.new(0.5, 0.5)
-    knob.Position = UDim2.new(initRatio, 0, 0.5, 0)
-    knob.BackgroundColor3 = C_TEXT_WHITE
-    knob.BorderSizePixel = 0
-    knob.Parent = track
-    addCorner(knob, 6)
+    addCorner(fill, 2)
 
     local draggingSlider = false
-    local function updateSlider(input)
+    local function update(input)
         local ratio = math.clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
         fill.Size = UDim2.new(ratio, 0, 1, 0)
-        knob.Position = UDim2.new(ratio, 0, 0.5, 0)
-        local val = math.floor(minVal + (maxVal - minVal) * ratio)
-        badgeText.Text = tostring(val) .. " " .. unitStr
+        val = math.floor(minV + (maxV - minV) * ratio)
+        badge.Text = tostring(val) .. " " .. unit
         pcall(function() callback(val) end)
     end
 
-    track.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+    track.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
             draggingSlider = true
-            updateSlider(input)
+            update(i)
         end
     end)
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
             draggingSlider = false
         end
     end)
-    UserInputService.InputChanged:Connect(function(input)
-        if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            updateSlider(input)
+    UserInputService.InputChanged:Connect(function(i)
+        if draggingSlider and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            update(i)
         end
     end)
 end
 
 local function addButton(parent, labelText, callback)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 0, 32)
+    btn.Size = UDim2.new(1, 0, 0, 28)
     btn.BackgroundColor3 = C_ITEM_BG
     btn.Text = labelText
     btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 12
-    btn.TextColor3 = C_TEXT_WHITE
+    btn.TextSize = 11.5
+    btn.TextColor3 = C_TEXT
     btn.Parent = parent
-    addCorner(btn, 6)
-    addStroke(btn, C_ITEM_STROKE, 1, 0)
+    addCorner(btn, 5)
+    addStroke(btn, C_BORDER, 1)
 
-    btn.MouseEnter:Connect(function() tw(btn, { BackgroundColor3 = Color3.fromRGB(34, 34, 40) }, 0.1) end)
+    btn.MouseEnter:Connect(function() tw(btn, { BackgroundColor3 = Color3.fromRGB(30, 41, 59) }, 0.1) end)
     btn.MouseLeave:Connect(function() tw(btn, { BackgroundColor3 = C_ITEM_BG }, 0.1) end)
     btn.MouseButton1Click:Connect(function() pcall(callback) end)
     return btn
 end
 
 --================================================================--
--- 1. PÁGINA PRINCIPAL: RADAR AO VIVO (DADOS REAIS DOS OVOS)
+-- 1. TAB: RADAR (LIVE EGG TELEMETRY)
 --================================================================--
 
 local RadarPage = createPage("Radar")
 
--- Card de Status e Resumo do Radar
-local StatusCard = createCard(RadarPage, "Status do Servidor & Radar", "🎯")
+local RadarStatusCard = createCard(RadarPage, "STATUS & FILTERS")
+local RadarStatusLabel = Instance.new("TextLabel")
+RadarStatusLabel.Size = UDim2.new(1, 0, 0, 20)
+RadarStatusLabel.BackgroundTransparency = 1
+RadarStatusLabel.Text = "Scanning active Workspace prompts..."
+RadarStatusLabel.Font = Enum.Font.Gotham
+RadarStatusLabel.TextSize = 11
+RadarStatusLabel.TextColor3 = C_TEXT_DIM
+RadarStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+RadarStatusLabel.Parent = RadarStatusCard
 
-local SummaryLabel = Instance.new("TextLabel")
-SummaryLabel.Size = UDim2.new(1, 0, 0, 32)
-SummaryLabel.BackgroundTransparency = 1
-SummaryLabel.RichText = true
-SummaryLabel.Text = 'Aguardando primeira varredura... Clique em <b>"Atualizar Radar Agora"</b>.'
-SummaryLabel.Font = Enum.Font.Gotham
-SummaryLabel.TextSize = 11.5
-SummaryLabel.TextColor3 = C_TEXT_WHITE
-SummaryLabel.TextXAlignment = Enum.TextXAlignment.Left
-SummaryLabel.TextWrapped = true
-SummaryLabel.Parent = StatusCard
+local RadarListCard = createCard(RadarPage, "OBSERVED EGGS")
+local EggListHolder = Instance.new("Frame")
+EggListHolder.Size = UDim2.new(1, 0, 0, 0)
+EggListHolder.AutomaticSize = Enum.AutomaticSize.Y
+EggListHolder.BackgroundTransparency = 1
+EggListHolder.Parent = RadarListCard
 
-local ActionRow = Instance.new("Frame")
-ActionRow.Size = UDim2.new(1, 0, 0, 32)
-ActionRow.BackgroundTransparency = 1
-ActionRow.Parent = StatusCard
+local EggListLayout = Instance.new("UIListLayout")
+EggListLayout.Padding = UDim.new(0, 5)
+EggListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+EggListLayout.Parent = EggListHolder
 
-local ActionLayout = Instance.new("UIListLayout")
-ActionLayout.FillDirection = Enum.FillDirection.Horizontal
-ActionLayout.Padding = UDim.new(0, 8)
-ActionLayout.Parent = ActionRow
+local currentDiscovered = {}
 
-local ScanBtn = Instance.new("TextButton")
-ScanBtn.Size = UDim2.new(0.5, -4, 1, 0)
-ScanBtn.BackgroundColor3 = C_ITEM_BG
-ScanBtn.Text = "🔄 Atualizar Radar Agora"
-ScanBtn.Font = Enum.Font.GothamBold
-ScanBtn.TextSize = 11.5
-ScanBtn.TextColor3 = C_AMBER
-ScanBtn.Parent = ActionRow
-addCorner(ScanBtn, 6)
-addStroke(ScanBtn, C_ITEM_STROKE, 1, 0)
-
-local CopyTableBtn = Instance.new("TextButton")
-CopyTableBtn.Size = UDim2.new(0.5, -4, 1, 0)
-CopyTableBtn.BackgroundColor3 = C_ITEM_BG
-CopyTableBtn.Text = "📋 Copiar Lista Formatada"
-CopyTableBtn.Font = Enum.Font.GothamBold
-CopyTableBtn.TextSize = 11.5
-CopyTableBtn.TextColor3 = C_TEXT_WHITE
-CopyTableBtn.Parent = ActionRow
-addCorner(CopyTableBtn, 6)
-addStroke(CopyTableBtn, C_ITEM_STROKE, 1, 0)
-
--- Card da Lista de Ovos Detectados
-local EggListCard = createCard(RadarPage, "Ovos Detectados no Mapa", "🥚")
-
-local EggCardsHolder = Instance.new("Frame")
-EggCardsHolder.Size = UDim2.new(1, 0, 0, 0)
-EggCardsHolder.AutomaticSize = Enum.AutomaticSize.Y
-EggCardsHolder.BackgroundTransparency = 1
-EggCardsHolder.Parent = EggListCard
-
-local EggCardsLayout = Instance.new("UIListLayout")
-EggCardsLayout.Padding = UDim.new(0, 6)
-EggCardsLayout.SortOrder = Enum.SortOrder.LayoutOrder
-EggCardsLayout.Parent = EggCardsHolder
-
--- Função para Criar Cada Card de Ovo na Lista com Dados Reais
-local function renderEggCards(eggsList)
-    for _, child in ipairs(EggCardsHolder:GetChildren()) do
+local function renderRadar(list)
+    currentDiscovered = list or {}
+    for _, child in ipairs(EggListHolder:GetChildren()) do
         if child:IsA("Frame") then child:Destroy() end
     end
 
-    local query = Flags.SearchQuery:lower()
-    local renderedCount = 0
+    local q = Settings.SearchQuery:lower()
+    local matched = 0
 
-    for i, egg in ipairs(eggsList) do
-        local matchesSearch = true
-        if query ~= "" then
-            local fullSearchText = (egg.Name .. " " .. egg.Rarity .. " " .. egg.Zone .. " " .. tostring(egg.WeightKg)):lower()
-            if not fullSearchText:find(query, 1, true) then
-                matchesSearch = false
-            end
-        end
+    for idx, e in ipairs(currentDiscovered) do
+        local fullSearch = (e.Name .. " " .. e.Rarity .. " " .. e.Zone .. " " .. tostring(e.WeightKg)):lower()
+        if q == "" or fullSearch:find(q, 1, true) then
+            matched = matched + 1
 
-        if matchesSearch then
-            renderedCount = renderedCount + 1
-            local itemCard = Instance.new("Frame")
-            itemCard.Size = UDim2.new(1, 0, 0, 58)
-            itemCard.BackgroundColor3 = C_ITEM_BG
-            itemCard.LayoutOrder = i
-            itemCard.Parent = EggCardsHolder
-            addCorner(itemCard, 6)
-            addStroke(itemCard, C_ITEM_STROKE, 1, 0)
+            local row = Instance.new("Frame")
+            row.Size = UDim2.new(1, 0, 0, 48)
+            row.BackgroundColor3 = C_ITEM_BG
+            row.LayoutOrder = idx
+            row.Parent = EggListHolder
+            addCorner(row, 5)
+            addStroke(row, C_BORDER, 1)
 
-            -- Linha Superior: Nome do Ovo + Distância + Coordenadas
-            local eggTitle = Instance.new("TextLabel")
-            eggTitle.Size = UDim2.new(1, -120, 0, 18)
-            eggTitle.Position = UDim2.new(0, 10, 0, 6)
-            eggTitle.BackgroundTransparency = 1
-            eggTitle.RichText = true
-            eggTitle.Text = string.format('<b>#%02d %s</b>', i, egg.Name)
-            eggTitle.Font = Enum.Font.GothamBold
-            eggTitle.TextSize = 12
-            eggTitle.TextColor3 = C_TEXT_WHITE
-            eggTitle.TextXAlignment = Enum.TextXAlignment.Left
-            eggTitle.Parent = itemCard
+            -- Linha 1: Nome + Raridade + Distância
+            local title = Instance.new("TextLabel")
+            title.Size = UDim2.new(1, -95, 0, 16)
+            title.Position = UDim2.new(0, 8, 0, 6)
+            title.BackgroundTransparency = 1
+            title.RichText = true
+            local wStr = e.WeightKg > 0 and (tostring(e.WeightKg) .. " Kg") or e.Rarity
+            title.Text = string.format('<b>#%02d %s</b>  <font color="#38BDF8">[%s]</font>', idx, e.Name, wStr)
+            title.Font = Enum.Font.GothamBold
+            title.TextSize = 11.5
+            title.TextColor3 = C_TEXT
+            title.TextXAlignment = Enum.TextXAlignment.Left
+            title.Parent = row
 
-            local distLabel = Instance.new("TextLabel")
-            distLabel.Size = UDim2.new(0, 110, 0, 18)
-            distLabel.Position = UDim2.new(1, -118, 0, 6)
-            distLabel.BackgroundTransparency = 1
-            distLabel.Text = string.format("📏 %d studs", math.floor(egg.Distance))
-            distLabel.Font = Enum.Font.GothamMedium
-            distLabel.TextSize = 11
-            distLabel.TextColor3 = C_AMBER
-            distLabel.TextXAlignment = Enum.TextXAlignment.Right
-            distLabel.Parent = itemCard
+            local dist = Instance.new("TextLabel")
+            dist.Size = UDim2.new(0, 85, 0, 16)
+            dist.Position = UDim2.new(1, -90, 0, 6)
+            dist.BackgroundTransparency = 1
+            dist.Text = string.format("%d studs", math.floor(e.Distance))
+            dist.Font = Enum.Font.GothamBold
+            dist.TextSize = 10.5
+            dist.TextColor3 = C_BLUE
+            dist.TextXAlignment = Enum.TextXAlignment.Right
+            dist.Parent = row
 
-            -- Linha Inferior: Badges de Localização, Peso e Raridade
-            local infoText = Instance.new("TextLabel")
-            infoText.Size = UDim2.new(1, -120, 0, 16)
-            infoText.Position = UDim2.new(0, 10, 0, 26)
-            infoText.BackgroundTransparency = 1
-            infoText.RichText = true
+            -- Linha 2: Zona / Coordenadas / Botão Copiar
+            local sub = Instance.new("TextLabel")
+            sub.Size = UDim2.new(1, -95, 0, 16)
+            sub.Position = UDim2.new(0, 8, 0, 26)
+            sub.BackgroundTransparency = 1
+            sub.Text = string.format("Zone: %s | (%.0f, %.0f, %.0f)", e.Zone, e.Position.X, e.Position.Y, e.Position.Z)
+            sub.Font = Enum.Font.Code
+            sub.TextSize = 9.5
+            sub.TextColor3 = C_TEXT_DIM
+            sub.TextXAlignment = Enum.TextXAlignment.Left
+            sub.Parent = row
 
-            local weightStr = egg.WeightKg > 0 and (tostring(egg.WeightKg) .. " Kg") or egg.Rarity
-            local incomeStr = egg.IncomeFmt and (" • " .. egg.IncomeFmt) or ""
-            infoText.Text = string.format('<font color="#FFA012">[%s]</font>  📍 %s%s', weightStr, egg.Zone, incomeStr)
-            infoText.Font = Enum.Font.Gotham
-            infoText.TextSize = 10.5
-            infoText.TextColor3 = C_TEXT_MUTED
-            infoText.TextXAlignment = Enum.TextXAlignment.Left
-            infoText.Parent = itemCard
+            local copyBtn = Instance.new("TextButton")
+            copyBtn.Size = UDim2.new(0, 70, 0, 20)
+            copyBtn.Position = UDim2.new(1, -78, 0, 24)
+            copyBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+            copyBtn.Text = "COPY POS"
+            copyBtn.Font = Enum.Font.GothamBold
+            copyBtn.TextSize = 9
+            copyBtn.TextColor3 = C_TEXT
+            copyBtn.Parent = row
+            addCorner(copyBtn, 4)
 
-            -- Coordenadas X, Y, Z
-            local coordText = Instance.new("TextLabel")
-            coordText.Size = UDim2.new(1, -120, 0, 14)
-            coordText.Position = UDim2.new(0, 10, 0, 42)
-            coordText.BackgroundTransparency = 1
-            coordText.Text = string.format("Coords: X: %.1f, Y: %.1f, Z: %.1f", egg.Position.X, egg.Position.Y, egg.Position.Z)
-            coordText.Font = Enum.Font.Code
-            coordText.TextSize = 9.5
-            coordText.TextColor3 = Color3.fromRGB(120, 140, 160)
-            coordText.TextXAlignment = Enum.TextXAlignment.Left
-            coordText.Parent = itemCard
-
-            -- Botão Copiar Coordenadas
-            local copyCoordBtn = Instance.new("TextButton")
-            copyCoordBtn.Size = UDim2.new(0, 80, 0, 24)
-            copyCoordBtn.Position = UDim2.new(1, -88, 0, 28)
-            copyCoordBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
-            copyCoordBtn.Text = "Copiar Pos"
-            copyCoordBtn.Font = Enum.Font.GothamBold
-            copyCoordBtn.TextSize = 10
-            copyCoordBtn.TextColor3 = C_TEXT_WHITE
-            copyCoordBtn.Parent = itemCard
-            addCorner(copyCoordBtn, 4)
-            addStroke(copyCoordBtn, C_ITEM_STROKE, 1, 0)
-
-            copyCoordBtn.MouseButton1Click:Connect(function()
-                local cStr = string.format("Vector3.new(%.1f, %.1f, %.1f)", egg.Position.X, egg.Position.Y, egg.Position.Z)
+            copyBtn.MouseButton1Click:Connect(function()
+                local cStr = string.format("Vector3.new(%.1f, %.1f, %.1f)", e.Position.X, e.Position.Y, e.Position.Z)
                 pcall(function()
-                    if setclipboard then
-                        setclipboard(cStr)
-                        addLog("RADAR", "Coordenadas copiadas: " .. cStr)
-                    end
+                    if setclipboard then setclipboard(cStr) end
                 end)
-                copyCoordBtn.Text = "Copiado!"
-                task.delay(1, function() copyCoordBtn.Text = "Copiar Pos" end)
+                copyBtn.Text = "COPIED"
+                task.delay(1, function() copyBtn.Text = "COPY POS" end)
             end)
         end
     end
 
-    SummaryLabel.Text = string.format('<b>%d</b> ovos monitorados no mapa | <b>%d</b> exibidos com o filtro atual.', #eggsList, renderedCount)
+    RadarStatusLabel.Text = string.format("Tracking %d eggs on map (%d visible matching query).", #currentDiscovered, matched)
 end
 
-_G.UpdateRadarCards = renderEggCards
+local function executeScan()
+    local eggs = scanEggs()
+    renderRadar(eggs)
+    addLog("RADAR", string.format("Scan complete. %d active prompts detected.", #eggs))
+    refreshESP()
+end
 
-ScanBtn.MouseButton1Click:Connect(function()
-    local discovered = scanAllEggsInMap()
-    renderEggCards(discovered)
-    addLog("RADAR", tostring(#discovered) .. " ovos encontrados no mapa.")
-end)
-
-RefreshBtn.MouseButton1Click:Connect(function()
-    local discovered = scanAllEggsInMap()
-    renderEggCards(discovered)
-end)
-
+RefreshBtn.MouseButton1Click:Connect(executeScan)
 SearchInput:GetPropertyChangedSignal("Text"):Connect(function()
-    Flags.SearchQuery = SearchInput.Text
-    if Flags.DiscoveredEggs then
-        renderEggCards(Flags.DiscoveredEggs)
-    end
-end)
-
-CopyTableBtn.MouseButton1Click:Connect(function()
-    if not Flags.DiscoveredEggs or #Flags.DiscoveredEggs == 0 then
-        scanAllEggsInMap()
-    end
-    local lines = { "=== RELATÓRIO DO RADAR (ROUBE UM OVO) ===" }
-    for i, e in ipairs(Flags.DiscoveredEggs) do
-        table.insert(lines, string.format("#%02d [%s] %s | %s | Coords: Vector3.new(%.1f, %.1f, %.1f) | Dist: %dm",
-            i, e.Rarity, e.Name, e.Zone, e.Position.X, e.Position.Y, e.Position.Z, math.floor(e.Distance)
-        ))
-    end
-    pcall(function()
-        if setclipboard then
-            setclipboard(table.concat(lines, "\n"))
-            addLog("RADAR", "Lista formatada copiada para a área de transferência.")
-        end
-    end)
+    Settings.SearchQuery = SearchInput.Text
+    renderRadar(currentDiscovered)
 end)
 
 --================================================================--
--- 2. PÁGINA: VISUAL & ESP (MARCADORES NO MAPA)
+-- 2. TAB: INSPECTOR (GAME DATA & STRUCTURE DUMP)
 --================================================================--
 
-local VisualPage = createPage("Visual")
-local EspCard = createCard(VisualPage, "Marcadores ESP na Tela", "👁")
+local InspectorPage = createPage("Inspector")
+local DumpCard = createCard(InspectorPage, "STRUCTURAL DATA EXTRACTION")
 
-addToggle(EspCard, "Ativar ESP de Ovos (Mostra Peso, Nome e Distância)", Flags.EggESP, function(state)
-    Flags.EggESP = state
-    updateESP()
-    addLog("VISUAL", "ESP de ovos " .. (state and "ativado." or "desativado."))
-end)
+local DumpDesc = Instance.new("TextLabel")
+DumpDesc.Size = UDim2.new(1, 0, 0, 32)
+DumpDesc.BackgroundTransparency = 1
+DumpDesc.Text = "Inspects and exports all client-accessible instances from ReplicatedStorage, Workspace, and PlayerGui to an offline document."
+DumpDesc.Font = Enum.Font.Gotham
+DumpDesc.TextSize = 11
+DumpDesc.TextColor3 = C_TEXT_DIM
+DumpDesc.TextWrapped = true
+DumpDesc.TextXAlignment = Enum.TextXAlignment.Left
+DumpDesc.Parent = DumpCard
 
-addToggle(EspCard, "Ativar ESP de Jogadores", Flags.PlayerESP, function(state)
-    Flags.PlayerESP = state
-    updateESP()
-end)
+local DumpStatusLabel = Instance.new("TextLabel")
+DumpStatusLabel.Size = UDim2.new(1, 0, 0, 18)
+DumpStatusLabel.BackgroundTransparency = 1
+DumpStatusLabel.Text = "Status: Ready to export"
+DumpStatusLabel.Font = Enum.Font.Code
+DumpStatusLabel.TextSize = 10.5
+DumpStatusLabel.TextColor3 = C_BLUE
+DumpStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+DumpStatusLabel.Parent = DumpCard
 
-addSlider(EspCard, "Alcance Máximo do ESP", 100, 5000, Flags.ESPMaxDistance or 2500, "studs", function(val)
-    Flags.ESPMaxDistance = val
-    updateESP()
-end)
-
-addButton(EspCard, "Limpar Todos os Marcadores da Tela", function()
-    clearAllESP()
-    addLog("VISUAL", "Marcadores limpos.")
+addButton(DumpCard, "EXPORT STRUCTURAL DUMP (TXT & CLIPBOARD)", function()
+    DumpStatusLabel.Text = "Generating dump..."
+    local text, count = exportGameDump()
+    DumpStatusLabel.Text = string.format("Dump saved to ROUBE_UM_OVO_DUMP.txt (%d eggs documented)", count)
 end)
 
 --================================================================--
--- 3. PÁGINA: DIAGNÓSTICO & DUMPER DE DADOS DO JOGO
+-- 3. TAB: VISUALS (IN-GAME 3D MARKERS)
 --================================================================--
 
-local DumpPage = createPage("Diagnostico")
-local DumpCard = createCard(DumpPage, "Extrator de Arquivos e Logs do Jogo", "📦")
+local VisualsPage = createPage("Visuals")
+local VisualsCard = createCard(VisualsPage, "3D BILLBOARD OVERLAYS")
 
-local DumperDesc = Instance.new("TextLabel")
-DumperDesc.Size = UDim2.new(1, 0, 0, 36)
-DumperDesc.BackgroundTransparency = 1
-DumperDesc.Text = "Varre ReplicatedStorage, Workspace, PlayerGui e atributos internos do jogo para gerar um mapa completo de todos os ovos, chances e valores."
-DumperDesc.Font = Enum.Font.Gotham
-DumperDesc.TextSize = 11
-DumperDesc.TextColor3 = C_TEXT_MUTED
-DumperDesc.TextWrapped = true
-DumperDesc.TextXAlignment = Enum.TextXAlignment.Left
-DumperDesc.Parent = DumpCard
-
-addButton(DumpCard, "📦 Gerar Dump Completo do Jogo (.TXT no Disco)", function()
-    generateGameDump()
+addToggle(VisualsCard, "Enable Egg Overlays (Weight, Name, Distance)", Settings.EggESP, function(state)
+    Settings.EggESP = state
+    refreshESP()
+    addLog("ESP", "Egg overlays " .. (state and "enabled" or "disabled"))
 end)
 
-local LogConsoleCard = createCard(DumpPage, "Console Interno de Diagnóstico", "📊")
+addToggle(VisualsCard, "Enable Player Overlays", Settings.PlayerESP, function(state)
+    Settings.PlayerESP = state
+    refreshESP()
+end)
+
+addSlider(VisualsCard, "Maximum Overlay Range", 100, 5000, Settings.ESPMaxDistance, "studs", function(val)
+    Settings.ESPMaxDistance = val
+    refreshESP()
+end)
+
+addButton(VisualsCard, "CLEAR ALL OVERLAYS", function()
+    clearESP()
+    addLog("ESP", "All overlays purged from scene.")
+end)
+
+--================================================================--
+-- 4. TAB: CONSOLE (INTERNAL LOG VIEWER)
+--================================================================--
+
+local ConsolePage = createPage("Console")
+local ConsoleCard = createCard(ConsolePage, "TELEMETRY LOG STREAM")
 
 local ConsoleScroll = Instance.new("ScrollingFrame")
-ConsoleScroll.Size = UDim2.new(1, 0, 0, 180)
-ConsoleScroll.BackgroundColor3 = Color3.fromRGB(13, 13, 16)
+ConsoleScroll.Size = UDim2.new(1, 0, 0, 210)
+ConsoleScroll.BackgroundColor3 = Color3.fromRGB(12, 16, 26)
 ConsoleScroll.BorderSizePixel = 0
 ConsoleScroll.ScrollBarThickness = 3
-ConsoleScroll.ScrollBarImageColor3 = C_AMBER
+ConsoleScroll.ScrollBarImageColor3 = C_BLUE
 ConsoleScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-ConsoleScroll.Parent = LogConsoleCard
-addCorner(ConsoleScroll, 6)
-addStroke(ConsoleScroll, C_ITEM_STROKE, 1, 0)
+ConsoleScroll.Parent = ConsoleCard
+addCorner(ConsoleScroll, 5)
+addStroke(ConsoleScroll, C_BORDER, 1)
 
-local ConsoleLabel = Instance.new("TextLabel")
-ConsoleLabel.Size = UDim2.new(1, -12, 1, -12)
-ConsoleLabel.Position = UDim2.new(0, 6, 0, 6)
-ConsoleLabel.BackgroundTransparency = 1
-ConsoleLabel.TextColor3 = Color3.fromRGB(0, 220, 180)
-ConsoleLabel.TextSize = 10.5
-ConsoleLabel.Font = Enum.Font.Code
-ConsoleLabel.TextXAlignment = Enum.TextXAlignment.Left
-ConsoleLabel.TextYAlignment = Enum.TextYAlignment.Top
-ConsoleLabel.Text = "=== EGGVISION DIAGNÓSTICO LOCAL ==="
-ConsoleLabel.Parent = ConsoleScroll
+local ConsoleText = Instance.new("TextLabel")
+ConsoleText.Size = UDim2.new(1, -10, 1, -10)
+ConsoleText.Position = UDim2.new(0, 5, 0, 5)
+ConsoleText.BackgroundTransparency = 1
+ConsoleText.TextColor3 = Color3.fromRGB(148, 163, 184)
+ConsoleText.TextSize = 10
+ConsoleText.Font = Enum.Font.Code
+ConsoleText.TextXAlignment = Enum.TextXAlignment.Left
+ConsoleText.TextYAlignment = Enum.TextYAlignment.Top
+ConsoleText.Text = "=== TELEMETRY OBSERVER READY ==="
+ConsoleText.Parent = ConsoleScroll
 
-local function updateLogConsole()
-    local text = table.concat(LogHistory, "\n")
-    ConsoleLabel.Text = text
-    ConsoleScroll.CanvasSize = UDim2.new(0, 0, 0, #LogHistory * 18 + 20)
+local function updateConsole()
+    ConsoleText.Text = table.concat(LogHistory, "\n")
+    ConsoleScroll.CanvasSize = UDim2.new(0, 0, 0, #LogHistory * 16 + 20)
 end
-_G.UpdateLogConsole = updateLogConsole
-updateLogConsole()
+_G_InternalUpdateConsole = updateConsole
+updateConsole()
 
-addToggle(LogConsoleCard, "Salvar Registros no Disco (.txt)", Flags.SaveToDisk, function(state)
-    Flags.SaveToDisk = state
-end)
-
-addButton(LogConsoleCard, "Copiar Histórico de Logs", function()
+addButton(ConsoleCard, "COPY LOG STREAM TO CLIPBOARD", function()
     pcall(function()
-        if setclipboard then
-            setclipboard(table.concat(LogHistory, "\n----------------------------------------\n"))
-            addLog("SISTEMA", "Logs copiados.")
-        end
+        if setclipboard then setclipboard(table.concat(LogHistory, "\n")) end
+        addLog("SYSTEM", "Logs copied to clipboard.")
     end)
 end)
 
-addButton(LogConsoleCard, "Limpar Histórico", function()
+addButton(ConsoleCard, "PURGE LOG HISTORY", function()
     LogHistory = {}
-    addLog("SISTEMA", "Histórico limpo.")
+    updateConsole()
 end)
 
 --================================================================--
--- 4. PÁGINA: AUTOMAÇÃO SEGURA (OPCIONAL)
+-- 5. TAB: SETTINGS
 --================================================================--
 
-local AutoPage = createPage("Automacao")
-local AutoCard = createCard(AutoPage, "Coleta e Retorno Suave (Física)", "⚔")
+local SettingsPage = createPage("Settings")
+local SettCard = createCard(SettingsPage, "GENERAL SETTINGS")
 
-addToggle(AutoCard, "Ativar Roubo Automático Suave", Flags.AutoSteal, function(state)
-    Flags.AutoSteal = state
-    if state then
-        addLog("ROUBO", "Ciclo de roubo iniciado com voo físico.")
-        task.spawn(function()
-            while scriptActive and Flags.AutoSteal do
-                local eggs = scanAllEggsInMap()
-                if #eggs > 0 then
-                    local target = eggs[1]
-                    addLog("ROUBO", "Indo até o alvo: " .. target.Name .. " (" .. target.Rarity .. ")")
-                    flyToPosition(target.Position + Vector3.new(0, 1, 0), Flags.FlySpeed)
-                    stealEgg(target.Prompt)
-                    task.wait(0.3)
-                    if Flags.ReturnToPlot then
-                        local basePos = getBasePosition()
-                        if basePos then
-                            flyToPosition(basePos + Vector3.new(0, 3, 0), Flags.FlySpeed)
-                        end
-                    end
-                end
-                task.wait(Flags.StealDelay)
-            end
-        end)
-    else
-        addLog("ROUBO", "Roubo automático pausado.")
-    end
-end)
+local KeyInfo = Instance.new("TextLabel")
+KeyInfo.Size = UDim2.new(1, 0, 0, 20)
+KeyInfo.BackgroundTransparency = 1
+KeyInfo.Text = "Toggle Menu Key: [LeftControl]"
+KeyInfo.Font = Enum.Font.GothamMedium
+KeyInfo.TextSize = 11.5
+KeyInfo.TextColor3 = C_TEXT
+KeyInfo.TextXAlignment = Enum.TextXAlignment.Left
+KeyInfo.Parent = SettCard
 
-addSlider(AutoCard, "Velocidade de Voo Suave", 100, 800, Flags.FlySpeed or 400, "studs/s", function(val)
-    Flags.FlySpeed = val
-end)
-
-addToggle(AutoCard, "Retornar à Base Após Coleta", Flags.ReturnToPlot, function(state)
-    Flags.ReturnToPlot = state
-end)
-
-addButton(AutoCard, "Registrar Posição Atual como Base", function()
-    local hrp = getHRP()
-    if hrp then
-        Flags.CustomBasePos = hrp.Position
-        Flags.SavedBasePos = hrp.Position
-        addLog("BASE", string.format("Base fixada em: (%.1f, %.1f, %.1f)", hrp.Position.X, hrp.Position.Y, hrp.Position.Z))
-    end
-end)
-
---================================================================--
--- 5. PÁGINA: CONFIGURAÇÕES GERAIS & ATALHOS
---================================================================--
-
-local SettingsPage = createPage("Configuracoes")
-local SettCard = createCard(SettingsPage, "Configurações Gerais", "⚙")
-
-addToggle(SettCard, "Proteção Anti-AFK (Evita Desconexão)", Flags.AntiAFK, function(state)
-    Flags.AntiAFK = state
-end)
-
-addButton(SettCard, "Ocultar / Mostrar Interface (LeftControl)", function()
-    ScreenGui.Enabled = not ScreenGui.Enabled
-end)
-
-addButton(SettCard, "Descarregar e Encerrar Script", function()
+addButton(SettCard, "UNLOAD OBSERVER SCRIPT", function()
     scriptActive = false
-    Flags.AutoSteal = false
-    clearAllESP()
+    clearESP()
     ScreenGui:Destroy()
 end)
 
--- Montagem da Sidebar
-addSidebarTab("Radar", "Radar de Ovos", "🎯", 1)
-addSidebarTab("Visual", "Visual & ESP", "👁", 2)
-addSidebarTab("Diagnostico", "Diagnóstico & Dump", "📦", 3)
-addSidebarTab("Automacao", "Automação Suave", "⚔", 4)
-addSidebarTab("Configuracoes", "Configurações", "⚙", 5)
+-- Montagem da Sidebar (Zero Emojis)
+addNavTab("Radar", "RADAR")
+addNavTab("Inspector", "INSPECTOR")
+addNavTab("Visuals", "VISUALS")
+addNavTab("Console", "CONSOLE")
+addNavTab("Settings", "SETTINGS")
 
--- Iniciar na aba principal do Radar
+-- Inicialização
 switchTab("Radar")
-task.spawn(function()
-    task.wait(0.5)
-    local eggs = scanAllEggsInMap()
-    renderEggCards(eggs)
+task.delay(0.2, function()
+    executeScan()
 end)
 
--- Tecla de Atalho (LeftControl)
-UserInputService.InputBegan:Connect(function(input, gpe)
-    if scriptActive and not gpe and input.KeyCode == Enum.KeyCode.LeftControl then
-        ScreenGui.Enabled = not ScreenGui.Enabled
+-- Atalho LeftControl
+UserInputService.InputBegan:Connect(function(i, proc)
+    if not proc and i.KeyCode == Enum.KeyCode.LeftControl then
+        MainFrame.Visible = not MainFrame.Visible
     end
 end)
 
--- Botão Flutuante Mobile com Ícone de Ovo
-local MobileToggleBtn = Instance.new("TextButton")
-MobileToggleBtn.Name = getRandomName()
-MobileToggleBtn.Size = UDim2.new(0, 36, 0, 36)
-MobileToggleBtn.Position = UDim2.new(0, 10, 0.4, 0)
-MobileToggleBtn.BackgroundColor3 = C_SIDEBAR
-MobileToggleBtn.Text = "🥚"
-MobileToggleBtn.Font = Enum.Font.GothamBold
-MobileToggleBtn.TextSize = 16
-MobileToggleBtn.ZIndex = 1000
-MobileToggleBtn.Parent = ScreenGui
-addCorner(MobileToggleBtn, 18)
-addStroke(MobileToggleBtn, C_AMBER, 1.5, 0.3)
-enableDragging(MobileToggleBtn)
+-- Botão Flutuante Mobile Minimalista (Sem Emojis, Apenas Dot/Badge)
+local MobileBtn = Instance.new("TextButton")
+MobileBtn.Name = getRandomName()
+MobileBtn.Size = UDim2.new(0, 32, 0, 32)
+MobileBtn.Position = UDim2.new(0, 8, 0.4, 0)
+MobileBtn.BackgroundColor3 = C_SIDEBAR
+MobileBtn.Text = "RAD"
+MobileBtn.Font = Enum.Font.GothamBold
+MobileBtn.TextSize = 10.5
+MobileBtn.TextColor3 = C_BLUE
+MobileBtn.ZIndex = 1000
+MobileBtn.Parent = ScreenGui
+addCorner(MobileBtn, 6)
+addStroke(MobileBtn, C_BLUE, 1)
+makeDraggable(MobileBtn)
 
-MobileToggleBtn.MouseButton1Click:Connect(function()
+MobileBtn.MouseButton1Click:Connect(function()
     MainFrame.Visible = not MainFrame.Visible
 end)
-
--- Proteger e Inserir Interface
-protectGui(ScreenGui)
-ScreenGui.Parent = getGuiContainer()
