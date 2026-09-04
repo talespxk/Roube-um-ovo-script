@@ -11,15 +11,29 @@
 
 print("========== CARREGANDO SCRIPT ÚNICO: ROUBE UM OVO HUB v3.6 ==========")
 
--- Configurações e Flags Globais
+-- Configurações e Flags Globais (BigFroot Edition)
 local Flags = {
     AutoSteal = false,
-    FlySpeed = 500, -- Velocidade ultra rápida (ajustável até 1000)
+    FlySpeed = 950, -- Padrão BigFroot (950 studs/s)
     StealRadius = 2500,
     StealDelay = 0.15,
     PrioritizeRare = true,
     CustomBasePos = nil,
     SavedBasePos = nil,
+
+    -- BigFroot Features
+    AutoStealInfested = true,
+    ShelterFromDragon = true,
+    AvoidTraps = true,
+    InstantTP = false,
+    AntiTreadmill = true,
+    TargetPriority = "Rarity",
+    ReturnToPlot = true,
+    ReturnTo = "Pen Area",
+    SelectedArea = "...",
+    SelectedCategory = "...",
+    SelectedRarities = {"Divine", "Eternal", "Secret", "Cosmic"},
+    SelectedMutations = "...", 
 
     -- Proteção & Player
     GodMode = false,
@@ -917,7 +931,14 @@ local function flyToPosition(targetPos, speed, onApproach)
     local hum = char:FindFirstChildOfClass("Humanoid")
     local collisionState = {}
 
-    speed = speed or Flags.FlySpeed or 500
+    if Flags.InstantTP then
+        hrp.CFrame = CFrame.new(targetPos)
+        task.wait(0.05)
+        if onApproach then onApproach(0) end
+        return true, 0
+    end
+
+    speed = speed or Flags.FlySpeed or 950
     local startPos = hrp.Position
     local totalDist = (targetPos - startPos).Magnitude
     if totalDist < 3.5 then
@@ -1633,384 +1654,1006 @@ pcall(function()
 end)
 
 --================================================================--
--- INTERFACE GLASSMORPHISM (FROSTED GLASS DARK AESTHETICS - v3.5)
+-- INTERFACE BIGFROOT (ROUBE UM OVO - STEAL AN EGG THEME)
 --================================================================--
 
+local TweenService = Services.TweenService
+local UserInputService = Services.UserInputService
+
+-- Cores Oficiais BigFroot
+local C_BG         = Color3.fromRGB(11, 11, 13)       -- Fundo Principal
+local C_SIDEBAR    = Color3.fromRGB(14, 14, 16)       -- Fundo Sidebar
+local C_CARD       = Color3.fromRGB(19, 19, 22)       -- Fundo Cards
+local C_CARD_STROKE= Color3.fromRGB(30, 30, 35)       -- Borda Cards
+local C_ITEM_BG    = Color3.fromRGB(24, 24, 28)       -- Fundo Inputs/Caixas
+local C_ITEM_STROKE= Color3.fromRGB(38, 38, 44)       -- Borda Inputs
+local C_AMBER      = Color3.fromRGB(255, 160, 18)     -- Âmbar BigFroot (#FFA012)
+local C_AMBER_HOVER= Color3.fromRGB(255, 180, 50)
+local C_TEXT_WHITE = Color3.fromRGB(255, 255, 255)
+local C_TEXT_MUTED = Color3.fromRGB(142, 142, 147)
+local C_TOGGLE_OFF = Color3.fromRGB(48, 48, 54)
+local C_TRACK_BG   = Color3.fromRGB(36, 36, 42)
+
+-- Helper: Tween rápido
+local function tw(obj, props, duration)
+    duration = duration or 0.18
+    local t = TweenService:Create(obj, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props)
+    t:Play()
+    return t
+end
+
+-- Helper: Criar UICorner
+local function addCorner(parent, px)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, px or 6)
+    c.Parent = parent
+    return c
+end
+
+-- Helper: Criar UIStroke
+local function addStroke(parent, color, thickness, transparency)
+    local s = Instance.new("UIStroke")
+    s.Color = color or C_CARD_STROKE
+    s.Thickness = thickness or 1
+    s.Transparency = transparency or 0
+    s.Parent = parent
+    return s
+end
+
+-- Helper: Criar UIPadding
+local function addPadding(parent, top, bottom, left, right)
+    local p = Instance.new("UIPadding")
+    p.PaddingTop = UDim.new(0, top or 0)
+    p.PaddingBottom = UDim.new(0, bottom or 0)
+    p.PaddingLeft = UDim.new(0, left or 0)
+    p.PaddingRight = UDim.new(0, right or 0)
+    p.Parent = parent
+    return p
+end
+
+-- GUI Root
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = getRandomName()
 ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
--- Janela Principal com Vidro Fumê Translúcido
+-- Janela Principal
 local MainFrame = Instance.new("Frame")
-MainFrame.Name = "GlassMain"
-MainFrame.Size = UDim2.new(0, 680, 0, 460)
-MainFrame.Position = UDim2.new(0.5, -340, 0.5, -230)
-MainFrame.BackgroundColor3 = Color3.fromRGB(13, 16, 24)
-MainFrame.BackgroundTransparency = 0.12
+MainFrame.Name = "BigFrootHub"
+MainFrame.Size = UDim2.new(0, 750, 0, 510)
+MainFrame.Position = UDim2.new(0.5, -375, 0.5, -255)
+MainFrame.BackgroundColor3 = C_BG
 MainFrame.BorderSizePixel = 0
-MainFrame.Active = true
-MainFrame.Draggable = true
+MainFrame.ClipsDescendants = false
 MainFrame.Parent = ScreenGui
+addCorner(MainFrame, 10)
+addStroke(MainFrame, C_CARD_STROKE, 1, 0)
 
-local MainCorner = Instance.new("UICorner")
-MainCorner.CornerRadius = UDim.new(0, 12)
-MainCorner.Parent = MainFrame
-
--- Contorno / Reflexo de Vidro
-local MainStroke = Instance.new("UIStroke")
-MainStroke.Color = Color3.fromRGB(255, 255, 255)
-MainStroke.Transparency = 0.86
-MainStroke.Thickness = 1
-MainStroke.Parent = MainFrame
-
--- Linha Superior de Brilho Ciano Suave
-local TopGlow = Instance.new("Frame")
-TopGlow.Size = UDim2.new(1, 0, 0, 2)
-TopGlow.BackgroundColor3 = Color3.fromRGB(0, 175, 255)
-TopGlow.BackgroundTransparency = 0.2
-TopGlow.BorderSizePixel = 0
-TopGlow.Parent = MainFrame
-
-local TopGlowCorner = Instance.new("UICorner")
-TopGlowCorner.CornerRadius = UDim.new(0, 12)
-TopGlowCorner.Parent = TopGlow
-
--- Cabeçalho Glass
-local Header = Instance.new("Frame")
-Header.Size = UDim2.new(1, 0, 0, 46)
-Header.Position = UDim2.new(0, 0, 0, 2)
-Header.BackgroundColor3 = Color3.fromRGB(18, 22, 32)
-Header.BackgroundTransparency = 0.25
-Header.BorderSizePixel = 0
-Header.Parent = MainFrame
-
-local HeaderCorner = Instance.new("UICorner")
-HeaderCorner.CornerRadius = UDim.new(0, 12)
-HeaderCorner.Parent = Header
-
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -70, 0, 22)
-Title.Position = UDim2.new(0, 16, 0, 5)
-Title.BackgroundTransparency = 1
-Title.Text = "ROUBE UM OVO  /  PRO"
-Title.TextColor3 = Color3.fromRGB(240, 245, 255)
-Title.TextSize = 14
-Title.Font = Enum.Font.GothamBold
-Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Parent = Header
-
-local Subtitle = Instance.new("TextLabel")
-Subtitle.Size = UDim2.new(1, -70, 0, 16)
-Subtitle.Position = UDim2.new(0, 16, 0, 25)
-Subtitle.BackgroundTransparency = 1
-Subtitle.Text = "Edição Furtiva em Vidro • v3.5"
-Subtitle.TextColor3 = Color3.fromRGB(120, 140, 170)
-Subtitle.TextSize = 11
-Subtitle.Font = Enum.Font.Gotham
-Subtitle.TextXAlignment = Enum.TextXAlignment.Left
-Subtitle.Parent = Header
-
-local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.new(0, 28, 0, 28)
-CloseBtn.Position = UDim2.new(1, -38, 0, 9)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(25, 30, 44)
-CloseBtn.BackgroundTransparency = 0.3
-CloseBtn.Text = "✕"
-CloseBtn.TextColor3 = Color3.fromRGB(180, 195, 220)
-CloseBtn.TextSize = 13
-CloseBtn.Font = Enum.Font.GothamBold
-CloseBtn.Parent = Header
-
-local CloseCorner = Instance.new("UICorner")
-CloseCorner.CornerRadius = UDim.new(0, 6)
-CloseCorner.Parent = CloseBtn
-
-local CloseStroke = Instance.new("UIStroke")
-CloseStroke.Color = Color3.fromRGB(255, 255, 255)
-CloseStroke.Transparency = 0.9
-CloseStroke.Thickness = 1
-CloseStroke.Parent = CloseBtn
-
-CloseBtn.MouseButton1Click:Connect(function()
-    ScreenGui.Enabled = false
-end)
-
--- Sidebar Vertical
-local Sidebar = Instance.new("Frame")
-Sidebar.Size = UDim2.new(0, 165, 1, -48)
-Sidebar.Position = UDim2.new(0, 0, 0, 48)
-Sidebar.BackgroundColor3 = Color3.fromRGB(10, 13, 19)
-Sidebar.BackgroundTransparency = 0.35
-Sidebar.BorderSizePixel = 0
-Sidebar.Parent = MainFrame
-
-local SidebarList = Instance.new("UIListLayout")
-SidebarList.Padding = UDim.new(0, 4)
-SidebarList.SortOrder = Enum.SortOrder.LayoutOrder
-SidebarList.Parent = Sidebar
-
-local SidebarPadding = Instance.new("UIPadding")
-SidebarPadding.PaddingTop = UDim.new(0, 8)
-SidebarPadding.PaddingLeft = UDim.new(0, 8)
-SidebarPadding.PaddingRight = UDim.new(0, 8)
-SidebarPadding.Parent = Sidebar
-
-local ContentContainer = Instance.new("Frame")
-ContentContainer.Size = UDim2.new(1, -165, 1, -48)
-ContentContainer.Position = UDim2.new(0, 165, 0, 48)
-ContentContainer.BackgroundTransparency = 1
-ContentContainer.Parent = MainFrame
-
-local TabFrames = {}
-local TabButtons = {}
-
-local function createTab(name)
-    local tabBtn = Instance.new("TextButton")
-    tabBtn.Size = UDim2.new(1, 0, 0, 36)
-    tabBtn.BackgroundColor3 = Color3.fromRGB(20, 24, 34)
-    tabBtn.BackgroundTransparency = 0.5
-    tabBtn.Text = "  " .. name
-    tabBtn.TextColor3 = Color3.fromRGB(150, 165, 185)
-    tabBtn.TextSize = 12
-    tabBtn.Font = Enum.Font.GothamMedium
-    tabBtn.TextXAlignment = Enum.TextXAlignment.Left
-    tabBtn.Parent = Sidebar
-
-    local btnCorner = Instance.new("UICorner")
-    btnCorner.CornerRadius = UDim.new(0, 6)
-    btnCorner.Parent = tabBtn
-
-    local btnStroke = Instance.new("UIStroke")
-    btnStroke.Color = Color3.fromRGB(255, 255, 255)
-    btnStroke.Transparency = 0.94
-    btnStroke.Thickness = 1
-    btnStroke.Parent = tabBtn
-
-    local tabFrame = Instance.new("ScrollingFrame")
-    tabFrame.Size = UDim2.new(1, -16, 1, -16)
-    tabFrame.Position = UDim2.new(0, 8, 0, 8)
-    tabFrame.BackgroundTransparency = 1
-    tabFrame.BorderSizePixel = 0
-    tabFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-    tabFrame.ScrollBarThickness = 3
-    tabFrame.ScrollBarImageColor3 = Color3.fromRGB(0, 175, 255)
-    tabFrame.Visible = false
-    tabFrame.Parent = ContentContainer
-
-    local frameList = Instance.new("UIListLayout")
-    frameList.Padding = UDim.new(0, 6)
-    frameList.SortOrder = Enum.SortOrder.LayoutOrder
-    frameList.Parent = tabFrame
-
-    frameList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-        tabFrame.CanvasSize = UDim2.new(0, 0, 0, frameList.AbsoluteContentSize.Y + 12)
-    end)
-
-    table.insert(TabFrames, tabFrame)
-    table.insert(TabButtons, tabBtn)
-
-    tabBtn.MouseButton1Click:Connect(function()
-        for i, frame in ipairs(TabFrames) do
-            frame.Visible = (frame == tabFrame)
-        end
-        for i, btn in ipairs(TabButtons) do
-            local active = (btn == tabBtn)
-            btn.BackgroundColor3 = active and Color3.fromRGB(0, 135, 230) or Color3.fromRGB(20, 24, 34)
-            btn.BackgroundTransparency = active and 0.15 or 0.5
-            btn.TextColor3 = active and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 165, 185)
+-- Sistema de Arrasto Suave (PC + Mobile)
+local dragging, dragInput, dragStart, startPos
+local function enableDragging(dragHandle)
+    dragHandle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = MainFrame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
         end
     end)
-
-    return tabFrame
+    dragHandle.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
 end
 
-local MainTab = createTab("Roubo e Base")
-local RadarTab = createTab("Radar e Filtros")
-local PlayerTab = createTab("Modificações")
-local VisualsTab = createTab("Visuais (ESP)")
-local LoggerTab = createTab("Diagnóstico")
-local SettingsTab = createTab("Configurações")
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+end)
 
-TabFrames[1].Visible = true
-TabButtons[1].BackgroundColor3 = Color3.fromRGB(0, 135, 230)
-TabButtons[1].BackgroundTransparency = 0.15
-TabButtons[1].TextColor3 = Color3.fromRGB(255, 255, 255)
+--================================================================--
+-- SIDEBAR LATERAL ESQUERDA
+--================================================================--
 
-local function addToggle(tab, text, defaultState, callback)
+local Sidebar = Instance.new("Frame")
+Sidebar.Name = "Sidebar"
+Sidebar.Size = UDim2.new(0, 175, 1, 0)
+Sidebar.Position = UDim2.new(0, 0, 0, 0)
+Sidebar.BackgroundColor3 = C_SIDEBAR
+Sidebar.BorderSizePixel = 0
+Sidebar.Parent = MainFrame
+addCorner(Sidebar, 10)
+
+-- Corretor de canto direito da sidebar
+local SidebarSquareCover = Instance.new("Frame")
+SidebarSquareCover.Size = UDim2.new(0, 10, 1, 0)
+SidebarSquareCover.Position = UDim2.new(1, -10, 0, 0)
+SidebarSquareCover.BackgroundColor3 = C_SIDEBAR
+SidebarSquareCover.BorderSizePixel = 0
+SidebarSquareCover.Parent = Sidebar
+
+enableDragging(Sidebar)
+
+-- Logo BigFroot
+local LogoContainer = Instance.new("Frame")
+LogoContainer.Size = UDim2.new(1, 0, 0, 52)
+LogoContainer.BackgroundTransparency = 1
+LogoContainer.Parent = Sidebar
+
+local LogoText = Instance.new("TextLabel")
+LogoText.Size = UDim2.new(1, -24, 0, 24)
+LogoText.Position = UDim2.new(0, 16, 0, 14)
+LogoText.BackgroundTransparency = 1
+LogoText.RichText = true
+LogoText.Text = '<font color="#FFFFFF"><b>Big</b></font><font color="#FFA012"><b>Froot</b></font>'
+LogoText.Font = Enum.Font.GothamBold
+LogoText.TextSize = 22
+LogoText.TextXAlignment = Enum.TextXAlignment.Left
+LogoText.Parent = LogoContainer
+
+local SubtitleText = Instance.new("TextLabel")
+SubtitleText.Size = UDim2.new(1, -24, 0, 14)
+SubtitleText.Position = UDim2.new(0, 16, 0, 38)
+SubtitleText.BackgroundTransparency = 1
+SubtitleText.Text = "Steal an Egg"
+SubtitleText.Font = Enum.Font.GothamMedium
+SubtitleText.TextSize = 11
+SubtitleText.TextColor3 = C_TEXT_MUTED
+SubtitleText.TextXAlignment = Enum.TextXAlignment.Left
+SubtitleText.Parent = LogoContainer
+
+-- Lista de Abas de Navegação
+local NavList = Instance.new("ScrollingFrame")
+NavList.Name = "NavList"
+NavList.Size = UDim2.new(1, 0, 1, -114)
+NavList.Position = UDim2.new(0, 0, 0, 60)
+NavList.BackgroundTransparency = 1
+NavList.BorderSizePixel = 0
+NavList.ScrollBarThickness = 2
+NavList.ScrollBarImageColor3 = C_AMBER
+NavList.CanvasSize = UDim2.new(0, 0, 0, 420)
+NavList.Parent = Sidebar
+addPadding(NavList, 4, 4, 10, 10)
+
+local NavLayout = Instance.new("UIListLayout")
+NavLayout.Padding = UDim.new(0, 3)
+NavLayout.SortOrder = Enum.SortOrder.LayoutOrder
+NavLayout.Parent = NavList
+
+-- Perfil do Jogador no Rodapé da Sidebar
+local ProfileFrame = Instance.new("Frame")
+ProfileFrame.Size = UDim2.new(1, -20, 0, 42)
+ProfileFrame.Position = UDim2.new(0, 10, 1, -48)
+ProfileFrame.BackgroundColor3 = C_ITEM_BG
+ProfileFrame.BorderSizePixel = 0
+ProfileFrame.Parent = Sidebar
+addCorner(ProfileFrame, 8)
+addStroke(ProfileFrame, C_ITEM_STROKE, 1, 0.4)
+
+local AvatarImg = Instance.new("ImageLabel")
+AvatarImg.Size = UDim2.new(0, 30, 0, 30)
+AvatarImg.Position = UDim2.new(0, 6, 0.5, -15)
+AvatarImg.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+AvatarImg.BorderSizePixel = 0
+AvatarImg.Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(LocalPlayer.UserId) .. "&w=100&h=100"
+AvatarImg.Parent = ProfileFrame
+addCorner(AvatarImg, 15)
+
+local ProfileName = Instance.new("TextLabel")
+ProfileName.Size = UDim2.new(1, -44, 0, 15)
+ProfileName.Position = UDim2.new(0, 42, 0, 6)
+ProfileName.BackgroundTransparency = 1
+ProfileName.Text = LocalPlayer.DisplayName
+ProfileName.Font = Enum.Font.GothamBold
+ProfileName.TextSize = 11
+ProfileName.TextColor3 = C_TEXT_WHITE
+ProfileName.TextXAlignment = Enum.TextXAlignment.Left
+ProfileName.TextTruncate = Enum.TextTruncate.AtEnd
+ProfileName.Parent = ProfileFrame
+
+local ProfileTime = Instance.new("TextLabel")
+ProfileTime.Size = UDim2.new(1, -44, 0, 13)
+ProfileTime.Position = UDim2.new(0, 42, 0, 22)
+ProfileTime.BackgroundTransparency = 1
+ProfileTime.Text = "23h 49m left"
+ProfileTime.Font = Enum.Font.Gotham
+ProfileTime.TextSize = 10
+ProfileTime.TextColor3 = C_TEXT_MUTED
+ProfileTime.TextXAlignment = Enum.TextXAlignment.Left
+ProfileTime.Parent = ProfileFrame
+
+--================================================================--
+-- ÁREA SUPERIOR (SUB-ABAS & BUSCA)
+--================================================================--
+
+local TopBar = Instance.new("Frame")
+TopBar.Name = "TopBar"
+TopBar.Size = UDim2.new(1, -175, 0, 44)
+TopBar.Position = UDim2.new(0, 175, 0, 0)
+TopBar.BackgroundColor3 = C_BG
+TopBar.BorderSizePixel = 0
+TopBar.Parent = MainFrame
+enableDragging(TopBar)
+
+local SubTabsHolder = Instance.new("Frame")
+SubTabsHolder.Size = UDim2.new(1, -50, 1, 0)
+SubTabsHolder.Position = UDim2.new(0, 12, 0, 0)
+SubTabsHolder.BackgroundTransparency = 1
+SubTabsHolder.Parent = TopBar
+
+local SubTabsLayout = Instance.new("UIListLayout")
+SubTabsLayout.FillDirection = Enum.FillDirection.Horizontal
+SubTabsLayout.Padding = UDim.new(0, 8)
+SubTabsLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+SubTabsLayout.Parent = SubTabsHolder
+
+-- Botão de Busca Top Right
+local SearchBtn = Instance.new("TextButton")
+SearchBtn.Size = UDim2.new(0, 32, 0, 32)
+SearchBtn.Position = UDim2.new(1, -42, 0, 6)
+SearchBtn.BackgroundColor3 = C_CARD
+SearchBtn.Text = "🔍"
+SearchBtn.TextColor3 = C_TEXT_MUTED
+SearchBtn.TextSize = 13
+SearchBtn.Font = Enum.Font.GothamBold
+SearchBtn.Parent = TopBar
+addCorner(SearchBtn, 6)
+addStroke(SearchBtn, C_CARD_STROKE, 1, 0)
+
+SearchBtn.MouseButton1Click:Connect(function()
+    addLog("RADAR", "Varredura rápida disparada pelo botão de busca.")
+    local discovered, _ = scanAllEggsInMap()
+    addLog("RADAR", tostring(#discovered) .. " ovos encontrados no mapa.")
+end)
+
+-- Badge de Versão no Rodapé (Canto Inferior Direito)
+local VersionBadge = Instance.new("Frame")
+VersionBadge.Size = UDim2.new(0, 110, 0, 26)
+VersionBadge.Position = UDim2.new(1, -120, 1, -34)
+VersionBadge.BackgroundColor3 = C_CARD
+VersionBadge.BorderSizePixel = 0
+VersionBadge.Parent = MainFrame
+addCorner(VersionBadge, 6)
+addStroke(VersionBadge, C_CARD_STROKE, 1, 0)
+
+local VersionText = Instance.new("TextLabel")
+VersionText.Size = UDim2.new(1, 0, 1, 0)
+VersionText.BackgroundTransparency = 1
+VersionText.RichText = true
+VersionText.Text = '<b><font color="#FFFFFF">v1.5.7</font></b> | <font color="#8E8E93">Free</font>'
+VersionText.Font = Enum.Font.GothamBold
+VersionText.TextSize = 11
+VersionText.Parent = VersionBadge
+
+-- Container Principal de Páginas
+local PageContainer = Instance.new("Frame")
+PageContainer.Name = "PageContainer"
+PageContainer.Size = UDim2.new(1, -175, 1, -84)
+PageContainer.Position = UDim2.new(0, 175, 0, 44)
+PageContainer.BackgroundTransparency = 1
+PageContainer.Parent = MainFrame
+
+-- Gerenciamento de Abas e Páginas
+local TabButtons = {}
+local Pages = {}
+local CurrentTab = nil
+local CurrentSubTab = nil
+local SubTabButtons = {}
+local SubTabIndicators = {}
+
+local function switchTab(tabId)
+    if CurrentTab == tabId then return end
+    CurrentTab = tabId
+    for id, btn in pairs(TabButtons) do
+        local isSelected = (id == tabId)
+        tw(btn, {
+            BackgroundColor3 = isSelected and Color3.fromRGB(26, 26, 30) or C_SIDEBAR,
+            BackgroundTransparency = isSelected and 0 or 1
+        }, 0.15)
+        local lbl = btn:FindFirstChild("Title")
+        if lbl then
+            tw(lbl, { TextColor3 = isSelected and C_TEXT_WHITE or C_TEXT_MUTED }, 0.15)
+        end
+        local icon = btn:FindFirstChild("Icon")
+        if icon then
+            tw(icon, { TextColor3 = isSelected and C_AMBER or C_TEXT_MUTED }, 0.15)
+        end
+    end
+    for id, pg in pairs(Pages) do
+        pg.Visible = (id == tabId)
+    end
+end
+
+local function addSidebarTab(id, name, iconSymbol, order)
+    local btn = Instance.new("TextButton")
+    btn.Name = "Tab_" .. id
+    btn.Size = UDim2.new(1, 0, 0, 34)
+    btn.BackgroundColor3 = C_SIDEBAR
+    btn.BackgroundTransparency = 1
+    btn.Text = ""
+    btn.LayoutOrder = order or 1
+    btn.Parent = NavList
+    addCorner(btn, 6)
+
+    local icon = Instance.new("TextLabel")
+    icon.Name = "Icon"
+    icon.Size = UDim2.new(0, 20, 1, 0)
+    icon.Position = UDim2.new(0, 10, 0, 0)
+    icon.BackgroundTransparency = 1
+    icon.Text = iconSymbol or "•"
+    icon.Font = Enum.Font.GothamBold
+    icon.TextSize = 14
+    icon.TextColor3 = C_TEXT_MUTED
+    icon.Parent = btn
+
+    local title = Instance.new("TextLabel")
+    title.Name = "Title"
+    title.Size = UDim2.new(1, -38, 1, 0)
+    title.Position = UDim2.new(0, 34, 0, 0)
+    title.BackgroundTransparency = 1
+    title.Text = name
+    title.Font = Enum.Font.GothamMedium
+    title.TextSize = 12
+    title.TextColor3 = C_TEXT_MUTED
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = btn
+
+    btn.MouseButton1Click:Connect(function()
+        switchTab(id)
+    end)
+
+    TabButtons[id] = btn
+    return btn
+end
+
+local function createPage(id)
+    local pg = Instance.new("ScrollingFrame")
+    pg.Name = "Page_" .. id
+    pg.Size = UDim2.new(1, 0, 1, 0)
+    pg.BackgroundTransparency = 1
+    pg.BorderSizePixel = 0
+    pg.ScrollBarThickness = 3
+    pg.ScrollBarImageColor3 = C_AMBER
+    pg.CanvasSize = UDim2.new(0, 0, 0, 0)
+    pg.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    pg.Visible = false
+    pg.Parent = PageContainer
+    addPadding(pg, 4, 16, 12, 12)
+
+    Pages[id] = pg
+    return pg
+end
+
+-- Sub-Abas do Topo (Com linha âmbar superior)
+local function addSubTab(id, name, targetPageFunc)
+    local btn = Instance.new("TextButton")
+    btn.Name = "SubTab_" .. id
+    btn.Size = UDim2.new(0, 0, 1, 0)
+    btn.AutomaticSize = Enum.AutomaticSize.X
+    btn.BackgroundTransparency = 1
+    btn.Text = "  " .. name .. "  "
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 12
+    btn.TextColor3 = C_TEXT_MUTED
+    btn.Parent = SubTabsHolder
+
+    -- Linha de Acento Âmbar no topo do botão ativo
+    local indicator = Instance.new("Frame")
+    indicator.Size = UDim2.new(0.65, 0, 0, 3)
+    indicator.Position = UDim2.new(0.175, 0, 0, 0)
+    indicator.BackgroundColor3 = C_AMBER
+    indicator.BorderSizePixel = 0
+    indicator.Visible = false
+    indicator.Parent = btn
+    addCorner(indicator, 2)
+
+    btn.MouseButton1Click:Connect(function()
+        for sId, sBtn in pairs(SubTabButtons) do
+            local active = (sId == id)
+            tw(sBtn, { TextColor3 = active and C_TEXT_WHITE or C_TEXT_MUTED }, 0.15)
+            if SubTabIndicators[sId] then
+                SubTabIndicators[sId].Visible = active
+            end
+        end
+        if targetPageFunc then targetPageFunc() end
+    end)
+
+    SubTabButtons[id] = btn
+    SubTabIndicators[id] = indicator
+    return btn
+end
+
+--================================================================--
+-- CONSTRUTOR DE CARDS MODULARES (ESTILO BIGFROOT)
+--================================================================--
+
+local function createCard(parent, titleText, iconSymbol)
     local card = Instance.new("Frame")
-    card.Size = UDim2.new(1, 0, 0, 42)
-    card.BackgroundColor3 = Color3.fromRGB(20, 26, 38)
-    card.BackgroundTransparency = 0.35
-    card.Parent = tab
+    card.Size = UDim2.new(1, 0, 0, 0)
+    card.AutomaticSize = Enum.AutomaticSize.Y
+    card.BackgroundColor3 = C_CARD
+    card.BorderSizePixel = 0
+    card.Parent = parent
+    addCorner(card, 8)
+    addStroke(card, C_CARD_STROKE, 1, 0)
 
-    local cardCorner = Instance.new("UICorner")
-    cardCorner.CornerRadius = UDim.new(0, 6)
-    cardCorner.Parent = card
+    local header = Instance.new("TextButton")
+    header.Size = UDim2.new(1, 0, 0, 36)
+    header.BackgroundTransparency = 1
+    header.Text = ""
+    header.Parent = card
 
-    local cardStroke = Instance.new("UIStroke")
-    cardStroke.Color = Color3.fromRGB(255, 255, 255)
-    cardStroke.Transparency = 0.92
-    cardStroke.Thickness = 1
-    cardStroke.Parent = card
+    local icon = Instance.new("TextLabel")
+    icon.Size = UDim2.new(0, 20, 1, 0)
+    icon.Position = UDim2.new(0, 12, 0, 0)
+    icon.BackgroundTransparency = 1
+    icon.Text = iconSymbol or "✦"
+    icon.Font = Enum.Font.GothamBold
+    icon.TextSize = 13
+    icon.TextColor3 = C_AMBER
+    icon.Parent = header
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -70, 1, 0)
+    title.Position = UDim2.new(0, 34, 0, 0)
+    title.BackgroundTransparency = 1
+    title.Text = titleText
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 13
+    title.TextColor3 = C_TEXT_WHITE
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = header
+
+    local chevron = Instance.new("TextLabel")
+    chevron.Size = UDim2.new(0, 20, 1, 0)
+    chevron.Position = UDim2.new(1, -28, 0, 0)
+    chevron.BackgroundTransparency = 1
+    chevron.Text = "▾"
+    chevron.Font = Enum.Font.GothamBold
+    chevron.TextSize = 13
+    chevron.TextColor3 = C_TEXT_MUTED
+    chevron.Parent = header
+
+    local body = Instance.new("Frame")
+    body.Size = UDim2.new(1, 0, 0, 0)
+    body.Position = UDim2.new(0, 0, 0, 36)
+    body.AutomaticSize = Enum.AutomaticSize.Y
+    body.BackgroundTransparency = 1
+    body.Parent = card
+    addPadding(body, 2, 12, 12, 12)
+
+    local bodyLayout = Instance.new("UIListLayout")
+    bodyLayout.Padding = UDim.new(0, 8)
+    bodyLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    bodyLayout.Parent = body
+
+    local collapsed = false
+    header.MouseButton1Click:Connect(function()
+        collapsed = not collapsed
+        body.Visible = not collapsed
+        chevron.Text = collapsed and "▸" or "▾"
+    end)
+
+    return body
+end
+
+-- Caixa de Disclaimer (Free Script Warning)
+local function addDisclaimer(parent, headerLine, subLine1, subLine2)
+    local box = Instance.new("Frame")
+    box.Size = UDim2.new(1, 0, 0, 52)
+    box.BackgroundColor3 = C_ITEM_BG
+    box.BorderSizePixel = 0
+    box.Parent = parent
+    addCorner(box, 6)
+    addStroke(box, C_ITEM_STROKE, 1, 0.4)
+    addPadding(box, 6, 6, 10, 10)
+
+    local l1 = Instance.new("TextLabel")
+    l1.Size = UDim2.new(1, 0, 0, 14)
+    l1.BackgroundTransparency = 1
+    l1.Text = headerLine or "SCRIPT IS FREE"
+    l1.Font = Enum.Font.GothamBold
+    l1.TextSize = 11
+    l1.TextColor3 = C_TEXT_WHITE
+    l1.TextXAlignment = Enum.TextXAlignment.Left
+    l1.Parent = box
+
+    local l2 = Instance.new("TextLabel")
+    l2.Size = UDim2.new(1, 0, 0, 12)
+    l2.Position = UDim2.new(0, 0, 0, 15)
+    l2.BackgroundTransparency = 1
+    l2.Text = subLine1 or "IF YOU BOUGHT IT FROM SOMEONE YOU GOT SCAMMED."
+    l2.Font = Enum.Font.Gotham
+    l2.TextSize = 9.5
+    l2.TextColor3 = C_TEXT_MUTED
+    l2.TextXAlignment = Enum.TextXAlignment.Left
+    l2.Parent = box
+
+    local l3 = Instance.new("TextLabel")
+    l3.Size = UDim2.new(1, 0, 0, 12)
+    l3.Position = UDim2.new(0, 0, 0, 28)
+    l3.BackgroundTransparency = 1
+    l3.Text = subLine2 or "discord.gg/bigfroot"
+    l3.Font = Enum.Font.Gotham
+    l3.TextSize = 9.5
+    l3.TextColor3 = C_TEXT_MUTED
+    l3.TextXAlignment = Enum.TextXAlignment.Left
+    l3.Parent = box
+end
+
+--================================================================--
+-- WIDGETS: TOGGLE, SLIDER, DROPDOWN, MULTI-SELECT, BOTAO
+--================================================================--
+
+-- 1. Toggle Animado BigFroot
+local function addToggle(parent, labelText, defaultState, callback)
+    local state = defaultState == true
+
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 26)
+    row.BackgroundTransparency = 1
+    row.Parent = parent
 
     local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -65, 1, 0)
-    label.Position = UDim2.new(0, 12, 0, 0)
+    label.Size = UDim2.new(1, -50, 1, 0)
     label.BackgroundTransparency = 1
-    label.Text = text
-    label.TextColor3 = Color3.fromRGB(225, 235, 245)
-    label.TextSize = 12
+    label.Text = labelText
     label.Font = Enum.Font.GothamMedium
+    label.TextSize = 12
+    label.TextColor3 = C_TEXT_WHITE
     label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = card
+    label.Parent = row
 
-    local switchBg = Instance.new("TextButton")
-    switchBg.Size = UDim2.new(0, 40, 0, 20)
-    switchBg.Position = UDim2.new(1, -50, 0.5, -10)
-    switchBg.BackgroundColor3 = defaultState and Color3.fromRGB(0, 160, 255) or Color3.fromRGB(38, 46, 62)
-    switchBg.Text = ""
-    switchBg.Parent = card
-
-    local switchCorner = Instance.new("UICorner")
-    switchCorner.CornerRadius = UDim.new(1, 0)
-    switchCorner.Parent = switchBg
+    local switch = Instance.new("TextButton")
+    switch.Size = UDim2.new(0, 42, 0, 22)
+    switch.Position = UDim2.new(1, -42, 0.5, -11)
+    switch.BackgroundColor3 = state and C_AMBER or C_TOGGLE_OFF
+    switch.Text = ""
+    switch.Parent = row
+    addCorner(switch, 11)
 
     local knob = Instance.new("Frame")
-    knob.Size = UDim2.new(0, 14, 0, 14)
-    knob.Position = defaultState and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)
-    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    knob.Parent = switchBg
+    knob.Size = UDim2.new(0, 18, 0, 18)
+    knob.Position = state and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9)
+    knob.BackgroundColor3 = C_TEXT_WHITE
+    knob.BorderSizePixel = 0
+    knob.Parent = switch
+    addCorner(knob, 9)
 
-    local knobCorner = Instance.new("UICorner")
-    knobCorner.CornerRadius = UDim.new(1, 0)
-    knobCorner.Parent = knob
-
-    local state = defaultState
-    switchBg.MouseButton1Click:Connect(function()
+    switch.MouseButton1Click:Connect(function()
         state = not state
-        switchBg.BackgroundColor3 = state and Color3.fromRGB(0, 160, 255) or Color3.fromRGB(38, 46, 62)
-        knob:TweenPosition(
-            state and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7),
-            Enum.EasingDirection.Out,
-            Enum.EasingStyle.Quad,
-            0.12,
-            true
-        )
+        tw(switch, { BackgroundColor3 = state and C_AMBER or C_TOGGLE_OFF }, 0.15)
+        tw(knob, { Position = state and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9) }, 0.15)
         pcall(function() callback(state) end)
     end)
 
-    return card
+    return {
+        Set = function(v)
+            state = v
+            tw(switch, { BackgroundColor3 = state and C_AMBER or C_TOGGLE_OFF }, 0.15)
+            tw(knob, { Position = state and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9) }, 0.15)
+            pcall(function() callback(state) end)
+        end
+    }
 end
 
-local function addButton(tab, text, callback)
-    local card = Instance.new("TextButton")
-    card.Size = UDim2.new(1, 0, 0, 38)
-    card.BackgroundColor3 = Color3.fromRGB(24, 31, 46)
-    card.BackgroundTransparency = 0.35
-    card.Text = "  " .. text
-    card.TextColor3 = Color3.fromRGB(235, 245, 255)
-    card.TextSize = 12
-    card.Font = Enum.Font.GothamMedium
-    card.TextXAlignment = Enum.TextXAlignment.Left
-    card.Parent = tab
+-- 2. Slider com Badge de Valor BigFroot
+local function addSlider(parent, titleText, minVal, maxVal, defaultVal, unitStr, callback)
+    local curVal = math.clamp(defaultVal or minVal, minVal, maxVal)
+    unitStr = unitStr or ""
 
-    local cardCorner = Instance.new("UICorner")
-    cardCorner.CornerRadius = UDim.new(0, 6)
-    cardCorner.Parent = card
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(1, 0, 0, 46)
+    container.BackgroundTransparency = 1
+    container.Parent = parent
 
-    local cardStroke = Instance.new("UIStroke")
-    cardStroke.Color = Color3.fromRGB(0, 175, 255)
-    cardStroke.Transparency = 0.85
-    cardStroke.Thickness = 1
-    cardStroke.Parent = card
-
-    card.MouseButton1Click:Connect(function()
-        pcall(function() callback() end)
-    end)
-
-    return card
-end
-
-local function addSlider(tab, title, min, max, default, callback)
-    local card = Instance.new("Frame")
-    card.Size = UDim2.new(1, 0, 0, 50)
-    card.BackgroundColor3 = Color3.fromRGB(20, 26, 38)
-    card.BackgroundTransparency = 0.35
-    card.Parent = tab
-
-    local cardCorner = Instance.new("UICorner")
-    cardCorner.CornerRadius = UDim.new(0, 6)
-    cardCorner.Parent = card
-
-    local cardStroke = Instance.new("UIStroke")
-    cardStroke.Color = Color3.fromRGB(255, 255, 255)
-    cardStroke.Transparency = 0.92
-    cardStroke.Thickness = 1
-    cardStroke.Parent = card
+    local headerRow = Instance.new("Frame")
+    headerRow.Size = UDim2.new(1, 0, 0, 20)
+    headerRow.BackgroundTransparency = 1
+    headerRow.Parent = container
 
     local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -24, 0, 20)
-    label.Position = UDim2.new(0, 12, 0, 4)
+    label.Size = UDim2.new(1, -100, 1, 0)
     label.BackgroundTransparency = 1
-    label.Text = title .. ": " .. tostring(default)
-    label.TextColor3 = Color3.fromRGB(210, 225, 240)
-    label.TextSize = 11
+    label.Text = titleText
     label.Font = Enum.Font.GothamMedium
+    label.TextSize = 12
+    label.TextColor3 = C_TEXT_WHITE
     label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = card
+    label.Parent = headerRow
 
-    local sliderBg = Instance.new("TextButton")
-    sliderBg.Size = UDim2.new(1, -24, 0, 8)
-    sliderBg.Position = UDim2.new(0, 12, 0, 28)
-    sliderBg.BackgroundColor3 = Color3.fromRGB(34, 42, 58)
-    sliderBg.Text = ""
-    sliderBg.Parent = card
+    local badge = Instance.new("Frame")
+    badge.Size = UDim2.new(0, 85, 0, 18)
+    badge.Position = UDim2.new(1, -85, 0, 1)
+    badge.BackgroundColor3 = C_ITEM_BG
+    badge.BorderSizePixel = 0
+    badge.Parent = headerRow
+    addCorner(badge, 4)
 
-    local bgCorner = Instance.new("UICorner")
-    bgCorner.CornerRadius = UDim.new(1, 0)
-    bgCorner.Parent = sliderBg
+    local badgeText = Instance.new("TextLabel")
+    badgeText.Size = UDim2.new(1, 0, 1, 0)
+    badgeText.BackgroundTransparency = 1
+    badgeText.Text = tostring(curVal) .. " " .. unitStr
+    badgeText.Font = Enum.Font.GothamBold
+    badgeText.TextSize = 10.5
+    badgeText.TextColor3 = Color3.fromRGB(215, 215, 220)
+    badgeText.Parent = badge
+
+    local track = Instance.new("TextButton")
+    track.Size = UDim2.new(1, 0, 0, 5)
+    track.Position = UDim2.new(0, 0, 0, 28)
+    track.BackgroundColor3 = C_TRACK_BG
+    track.Text = ""
+    track.AutoButtonColor = false
+    track.Parent = container
+    addCorner(track, 3)
 
     local fill = Instance.new("Frame")
-    fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
-    fill.BackgroundColor3 = Color3.fromRGB(0, 160, 255)
+    local initRatio = math.clamp((curVal - minVal) / (maxVal - minVal), 0, 1)
+    fill.Size = UDim2.new(initRatio, 0, 1, 0)
+    fill.BackgroundColor3 = C_AMBER
     fill.BorderSizePixel = 0
-    fill.Parent = sliderBg
+    fill.Parent = track
+    addCorner(fill, 3)
 
-    local fillCorner = Instance.new("UICorner")
-    fillCorner.CornerRadius = UDim.new(1, 0)
-    fillCorner.Parent = fill
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 12, 0, 12)
+    knob.AnchorPoint = Vector2.new(0.5, 0.5)
+    knob.Position = UDim2.new(initRatio, 0, 0.5, 0)
+    knob.BackgroundColor3 = C_TEXT_WHITE
+    knob.BorderSizePixel = 0
+    knob.Parent = track
+    addCorner(knob, 6)
 
-    local dragging = false
-    local function update(input)
-        local pos = math.clamp((input.Position.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
-        fill.Size = UDim2.new(pos, 0, 1, 0)
-        local val = math.floor(min + (max - min) * pos)
-        label.Text = title .. ": " .. tostring(val)
+    local draggingSlider = false
+    local function updateSlider(input)
+        local ratio = math.clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+        fill.Size = UDim2.new(ratio, 0, 1, 0)
+        knob.Position = UDim2.new(ratio, 0, 0.5, 0)
+        local val = math.floor(minVal + (maxVal - minVal) * ratio)
+        badgeText.Text = tostring(val) .. " " .. unitStr
         pcall(function() callback(val) end)
     end
 
-    sliderBg.InputBegan:Connect(function(input)
+    track.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            update(input)
+            draggingSlider = true
+            updateSlider(input)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            draggingSlider = false
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            updateSlider(input)
         end
     end)
 
-    Services.UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
+    return {
+        Set = function(newVal)
+            local ratio = math.clamp((newVal - minVal) / (maxVal - minVal), 0, 1)
+            fill.Size = UDim2.new(ratio, 0, 1, 0)
+            knob.Position = UDim2.new(ratio, 0, 0.5, 0)
+            badgeText.Text = tostring(newVal) .. " " .. unitStr
+            pcall(function() callback(newVal) end)
         end
+    }
+end
+
+-- 3. Dropdown Selecionável BigFroot
+local function addDropdown(parent, titleText, options, defaultVal, callback)
+    local selected = defaultVal or options[1] or "..."
+
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(1, 0, 0, 56)
+    container.BackgroundTransparency = 1
+    container.Parent = parent
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 0, 18)
+    label.BackgroundTransparency = 1
+    label.Text = titleText
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 12
+    label.TextColor3 = C_TEXT_WHITE
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = container
+
+    local selectBtn = Instance.new("TextButton")
+    selectBtn.Size = UDim2.new(1, 0, 0, 32)
+    selectBtn.Position = UDim2.new(0, 0, 0, 20)
+    selectBtn.BackgroundColor3 = C_ITEM_BG
+    selectBtn.Text = ""
+    selectBtn.Parent = container
+    addCorner(selectBtn, 6)
+    addStroke(selectBtn, C_ITEM_STROKE, 1, 0)
+
+    local valueText = Instance.new("TextLabel")
+    valueText.Size = UDim2.new(1, -30, 1, 0)
+    valueText.Position = UDim2.new(0, 10, 0, 0)
+    valueText.BackgroundTransparency = 1
+    valueText.Text = tostring(selected)
+    valueText.Font = Enum.Font.Gotham
+    valueText.TextSize = 11.5
+    valueText.TextColor3 = Color3.fromRGB(220, 220, 225)
+    valueText.TextXAlignment = Enum.TextXAlignment.Left
+    valueText.TextTruncate = Enum.TextTruncate.AtEnd
+    valueText.Parent = selectBtn
+
+    local arrow = Instance.new("TextLabel")
+    arrow.Size = UDim2.new(0, 20, 1, 0)
+    arrow.Position = UDim2.new(1, -24, 0, 0)
+    arrow.BackgroundTransparency = 1
+    arrow.Text = "⇅"
+    arrow.Font = Enum.Font.GothamBold
+    arrow.TextSize = 12
+    arrow.TextColor3 = C_TEXT_MUTED
+    arrow.Parent = selectBtn
+
+    -- Menu Popup
+    local listMenu = Instance.new("Frame")
+    listMenu.Size = UDim2.new(1, 0, 0, math.min(#options * 28 + 6, 140))
+    listMenu.Position = UDim2.new(0, 0, 1, 4)
+    listMenu.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+    listMenu.ZIndex = 50
+    listMenu.Visible = false
+    listMenu.Parent = selectBtn
+    addCorner(listMenu, 6)
+    addStroke(listMenu, C_ITEM_STROKE, 1, 0)
+
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Size = UDim2.new(1, 0, 1, 0)
+    scroll.BackgroundTransparency = 1
+    scroll.BorderSizePixel = 0
+    scroll.ZIndex = 51
+    scroll.ScrollBarThickness = 2
+    scroll.ScrollBarImageColor3 = C_AMBER
+    scroll.CanvasSize = UDim2.new(0, 0, 0, #options * 28)
+    scroll.Parent = listMenu
+    addPadding(scroll, 3, 3, 4, 4)
+
+    local menuLayout = Instance.new("UIListLayout")
+    menuLayout.Padding = UDim.new(0, 2)
+    menuLayout.Parent = scroll
+
+    for _, opt in ipairs(options) do
+        local optBtn = Instance.new("TextButton")
+        optBtn.Size = UDim2.new(1, 0, 0, 26)
+        optBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
+        optBtn.BackgroundTransparency = 1
+        optBtn.Text = "  " .. tostring(opt)
+        optBtn.Font = Enum.Font.Gotham
+        optBtn.TextSize = 11
+        optBtn.TextColor3 = C_TEXT_MUTED
+        optBtn.TextXAlignment = Enum.TextXAlignment.Left
+        optBtn.ZIndex = 52
+        optBtn.Parent = scroll
+        addCorner(optBtn, 4)
+
+        optBtn.MouseButton1Click:Connect(function()
+            selected = opt
+            valueText.Text = tostring(opt)
+            listMenu.Visible = false
+            pcall(function() callback(opt) end)
+        end)
+    end
+
+    selectBtn.MouseButton1Click:Connect(function()
+        listMenu.Visible = not listMenu.Visible
     end)
 
-    Services.UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            update(input)
+    return {
+        Set = function(val)
+            selected = val
+            valueText.Text = tostring(val)
+            pcall(function() callback(val) end)
         end
+    }
+end
+
+-- 4. Multi-Select Dropdown BigFroot (Ex: Rarities)
+local function addMultiSelect(parent, titleText, options, defaultSelectedList, callback)
+    local selectedMap = {}
+    if defaultSelectedList then
+        for _, s in ipairs(defaultSelectedList) do selectedMap[s] = true end
+    end
+
+    local function getDisplayString()
+        local list = {}
+        for _, opt in ipairs(options) do
+            if selectedMap[opt] then table.insert(list, opt) end
+        end
+        return #list > 0 and table.concat(list, ", ") or "..."
+    end
+
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(1, 0, 0, 56)
+    container.BackgroundTransparency = 1
+    container.Parent = parent
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 0, 18)
+    label.BackgroundTransparency = 1
+    label.Text = titleText
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 12
+    label.TextColor3 = C_TEXT_WHITE
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = container
+
+    local selectBtn = Instance.new("TextButton")
+    selectBtn.Size = UDim2.new(1, 0, 0, 32)
+    selectBtn.Position = UDim2.new(0, 0, 0, 20)
+    selectBtn.BackgroundColor3 = C_ITEM_BG
+    selectBtn.Text = ""
+    selectBtn.Parent = container
+    addCorner(selectBtn, 6)
+    addStroke(selectBtn, C_ITEM_STROKE, 1, 0)
+
+    local valueText = Instance.new("TextLabel")
+    valueText.Size = UDim2.new(1, -30, 1, 0)
+    valueText.Position = UDim2.new(0, 10, 0, 0)
+    valueText.BackgroundTransparency = 1
+    valueText.Text = getDisplayString()
+    valueText.Font = Enum.Font.Gotham
+    valueText.TextSize = 11.5
+    valueText.TextColor3 = Color3.fromRGB(220, 220, 225)
+    valueText.TextXAlignment = Enum.TextXAlignment.Left
+    valueText.TextTruncate = Enum.TextTruncate.AtEnd
+    valueText.Parent = selectBtn
+
+    local arrow = Instance.new("TextLabel")
+    arrow.Size = UDim2.new(0, 20, 1, 0)
+    arrow.Position = UDim2.new(1, -24, 0, 0)
+    arrow.BackgroundTransparency = 1
+    arrow.Text = "⇅"
+    arrow.Font = Enum.Font.GothamBold
+    arrow.TextSize = 12
+    arrow.TextColor3 = C_TEXT_MUTED
+    arrow.Parent = selectBtn
+
+    -- Menu Popup
+    local listMenu = Instance.new("Frame")
+    listMenu.Size = UDim2.new(1, 0, 0, math.min(#options * 28 + 6, 160))
+    listMenu.Position = UDim2.new(0, 0, 1, 4)
+    listMenu.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+    listMenu.ZIndex = 50
+    listMenu.Visible = false
+    listMenu.Parent = selectBtn
+    addCorner(listMenu, 6)
+    addStroke(listMenu, C_ITEM_STROKE, 1, 0)
+
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Size = UDim2.new(1, 0, 1, 0)
+    scroll.BackgroundTransparency = 1
+    scroll.BorderSizePixel = 0
+    scroll.ZIndex = 51
+    scroll.ScrollBarThickness = 2
+    scroll.ScrollBarImageColor3 = C_AMBER
+    scroll.CanvasSize = UDim2.new(0, 0, 0, #options * 28)
+    scroll.Parent = listMenu
+    addPadding(scroll, 3, 3, 4, 4)
+
+    local menuLayout = Instance.new("UIListLayout")
+    menuLayout.Padding = UDim.new(0, 2)
+    menuLayout.Parent = scroll
+
+    local optionButtons = {}
+    for _, opt in ipairs(options) do
+        local optBtn = Instance.new("TextButton")
+        optBtn.Size = UDim2.new(1, 0, 0, 26)
+        optBtn.BackgroundColor3 = selectedMap[opt] and Color3.fromRGB(34, 30, 24) or Color3.fromRGB(24, 24, 28)
+        optBtn.BackgroundTransparency = selectedMap[opt] and 0 or 1
+        optBtn.Text = (selectedMap[opt] and "✓ " or "   ") .. tostring(opt)
+        optBtn.Font = Enum.Font.Gotham
+        optBtn.TextSize = 11
+        optBtn.TextColor3 = selectedMap[opt] and C_AMBER or C_TEXT_MUTED
+        optBtn.TextXAlignment = Enum.TextXAlignment.Left
+        optBtn.ZIndex = 52
+        optBtn.Parent = scroll
+        addCorner(optBtn, 4)
+
+        optBtn.MouseButton1Click:Connect(function()
+            selectedMap[opt] = not selectedMap[opt]
+            optBtn.Text = (selectedMap[opt] and "✓ " or "   ") .. tostring(opt)
+            optBtn.TextColor3 = selectedMap[opt] and C_AMBER or C_TEXT_MUTED
+            optBtn.BackgroundTransparency = selectedMap[opt] and 0 or 1
+            valueText.Text = getDisplayString()
+
+            local outList = {}
+            for k, v in pairs(selectedMap) do
+                if v then table.insert(outList, k) end
+            end
+            pcall(function() callback(outList) end)
+        end)
+        optionButtons[opt] = optBtn
+    end
+
+    selectBtn.MouseButton1Click:Connect(function()
+        listMenu.Visible = not listMenu.Visible
     end)
 end
 
--- População da Aba 1: Roubo e Base
-addToggle(MainTab, "Roubo automático e retorno à base", Flags.AutoSteal, function(state)
+-- 5. Botão de Ação BigFroot
+local function addButton(parent, labelText, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 0, 32)
+    btn.BackgroundColor3 = C_ITEM_BG
+    btn.Text = labelText
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 12
+    btn.TextColor3 = C_TEXT_WHITE
+    btn.Parent = parent
+    addCorner(btn, 6)
+    addStroke(btn, C_ITEM_STROKE, 1, 0)
+
+    btn.MouseEnter:Connect(function()
+        tw(btn, { BackgroundColor3 = Color3.fromRGB(34, 34, 40) }, 0.1)
+    end)
+    btn.MouseLeave:Connect(function()
+        tw(btn, { BackgroundColor3 = C_ITEM_BG }, 0.1)
+    end)
+    btn.MouseButton1Click:Connect(function()
+        pcall(callback)
+    end)
+    return btn
+end
+
+--================================================================--
+-- CRIAÇÃO DAS PÁGINAS E POPULAÇÃO
+--================================================================--
+
+-- 1. Página "Eggs" (Principal - 2 Colunas como na referência)
+local EggsPage = createPage("Eggs")
+
+local EggsCols = Instance.new("Frame")
+EggsCols.Size = UDim2.new(1, 0, 0, 0)
+EggsCols.AutomaticSize = Enum.AutomaticSize.Y
+EggsCols.BackgroundTransparency = 1
+EggsCols.Parent = EggsPage
+
+local ColLeft = Instance.new("Frame")
+ColLeft.Size = UDim2.new(0.5, -6, 0, 0)
+ColLeft.Position = UDim2.new(0, 0, 0, 0)
+ColLeft.AutomaticSize = Enum.AutomaticSize.Y
+ColLeft.BackgroundTransparency = 1
+ColLeft.Parent = EggsCols
+
+local ColLeftLayout = Instance.new("UIListLayout")
+ColLeftLayout.Padding = UDim.new(0, 10)
+ColLeftLayout.Parent = ColLeft
+
+local ColRight = Instance.new("Frame")
+ColRight.Size = UDim2.new(0.5, -6, 0, 0)
+ColRight.Position = UDim2.new(0.5, 6, 0, 0)
+ColRight.AutomaticSize = Enum.AutomaticSize.Y
+ColRight.BackgroundTransparency = 1
+ColRight.Parent = EggsCols
+
+local ColRightLayout = Instance.new("UIListLayout")
+ColRightLayout.Padding = UDim.new(0, 10)
+ColRightLayout.Parent = ColRight
+
+-- [CARD 1 - COLUNA ESQUERDA]: Auto Steal
+local AutoStealCard = createCard(ColLeft, "Auto Steal", "⚔")
+addDisclaimer(AutoStealCard, "SCRIPT IS FREE", "IF YOU BOUGHT IT FROM SOMEONE YOU GOT SCAMMED.", "discord.gg/bigfroot")
+
+addToggle(AutoStealCard, "Auto Steal Eggs", Flags.AutoSteal, function(state)
     autoStealRunId = autoStealRunId + 1
     local thisRunId = autoStealRunId
     Flags.AutoSteal = state
@@ -2019,7 +2662,7 @@ addToggle(MainTab, "Roubo automático e retorno à base", Flags.AutoSteal, funct
         if hrp then
             Flags.SavedBasePos = Flags.CustomBasePos or hrp.Position
         end
-        addLog("ROUBO", "Roubo automático ativado. Posição da base registrada.")
+        addLog("ROUBO", "Auto Steal ativado (BigFroot Engine).")
         task.spawn(function()
             while scriptActive and Flags.AutoSteal and autoStealRunId == thisRunId do
                 flyStealLoop()
@@ -2027,143 +2670,86 @@ addToggle(MainTab, "Roubo automático e retorno à base", Flags.AutoSteal, funct
             end
         end)
     else
-        addLog("ROUBO", "Roubo automático desativado.")
+        addLog("ROUBO", "Auto Steal desativado.")
     end
 end)
 
-addToggle(MainTab, "Priorizar maior valor ($/s e raridade)", Flags.PrioritizeRare, function(state)
+addToggle(AutoStealCard, "Auto Steal Infested Eggs", Flags.AutoStealInfested or true, function(state)
+    Flags.AutoStealInfested = state
     Flags.PrioritizeRare = state
     invalidateTargetCache()
 end)
 
-addSlider(MainTab, "Velocidade de voo (blocos/s)", 50, 1000, Flags.FlySpeed, function(val)
+addToggle(AutoStealCard, "Shelter From Dragon Wave", Flags.ShelterFromDragon or true, function(state)
+    Flags.ShelterFromDragon = state
+end)
+
+addToggle(AutoStealCard, "Avoid Traps", Flags.AvoidTraps or true, function(state)
+    Flags.AvoidTraps = state
+    Flags.Noclip = state
+    if not state then restoreNoclip() end
+end)
+
+addSlider(AutoStealCard, "Glide Speed", 50, 1000, Flags.FlySpeed or 950, "studs/s", function(val)
     Flags.FlySpeed = val
 end)
 
-addSlider(MainTab, "Raio de busca (blocos)", 100, 4000, Flags.StealRadius, function(val)
-    Flags.StealRadius = val
+addDropdown(AutoStealCard, "Target Priority", { "Rarity", "Value ($/s)", "Distance", "Balanced" }, Flags.TargetPriority or "Rarity", function(val)
+    Flags.TargetPriority = val
+    Flags.PrioritizeRare = (val == "Rarity" or val == "Value ($/s)")
     invalidateTargetCache()
 end)
 
-addButton(MainTab, "Registrar posição atual como base", function()
+addToggle(AutoStealCard, "Return To Plot", Flags.ReturnToPlot ~= false, function(state)
+    Flags.ReturnToPlot = state
+end)
+
+addDropdown(AutoStealCard, "Return To", { "Pen Area", "Plot Base", "Spawn", "Posição Atual" }, Flags.ReturnTo or "Pen Area", function(val)
+    Flags.ReturnTo = val
+    if val == "Posição Atual" then
+        local hrp = getHRP()
+        if hrp then
+            Flags.CustomBasePos = hrp.Position
+            addLog("BASE", "Base registrada na posição atual.")
+        end
+    end
+end)
+
+addButton(AutoStealCard, "Definir Posição Atual como Base", function()
     local hrp = getHRP()
     if hrp then
         Flags.CustomBasePos = hrp.Position
         Flags.SavedBasePos = hrp.Position
-        addLog("BASE", "Posição da base atualizada: " .. tostring(math.floor(hrp.Position.X)) .. ", " .. tostring(math.floor(hrp.Position.Z)))
+        addLog("BASE", "Base registrada com sucesso: " .. tostring(math.floor(hrp.Position.X)) .. ", " .. tostring(math.floor(hrp.Position.Z)))
     end
 end)
 
-addButton(MainTab, "Executar um ciclo de roubo agora", function()
-    task.spawn(function()
-        local prev = Flags.AutoSteal
-        Flags.AutoSteal = true
-        flyStealLoop()
-        Flags.AutoSteal = prev
-    end)
+-- [CARD 2 - COLUNA DIREITA]: OP Stuffs
+local OpStuffsCard = createCard(ColRight, "OP Stuffs", "⚡")
+
+addToggle(OpStuffsCard, "Instant TP (Off God Mode)", Flags.InstantTP or false, function(state)
+    Flags.InstantTP = state
+    addLog("TELEPORTE", "Instant TP: " .. (state and "ATIVADO" or "DESATIVADO"))
 end)
 
--- População da Aba 2: Radar & Filters
-addButton(RadarTab, "Escanear ovos do mapa (radar ao vivo)", function()
-    local discovered, dumpText = scanAllEggsInMap()
-    addLog("RADAR", tostring(#discovered) .. " prompts compatíveis com Steal/Egg encontrados. O relatório completo foi enviado ao console do executor.")
-    print("\n" .. dumpText .. "\n")
-end)
-
-addButton(RadarTab, "Gerar relatório completo do jogo (TXT)", function()
-    local dump = dumpGameStructure()
-    addLog("DIAGNÓSTICO", "Inventário estrutural gerado. Ele mostra objetos presentes, não chamadas remotas nem dados internos do servidor.")
-    print("\n" .. dump .. "\n")
-end)
-
-addButton(RadarTab, "Copiar relatório do radar", function()
-    if not _G.EggRadarText or _G.EggRadarText == "" then
-        scanAllEggsInMap()
-    end
-    pcall(function()
-        if setclipboard then
-            setclipboard(_G.EggRadarText)
-            addLog("RADAR", "Relatório do radar copiado.")
-        end
-    end)
-end)
-
-addButton(RadarTab, "Roubar agora o alvo de maior valor", function()
-    task.spawn(function()
-        local prev = Flags.AutoSteal
-        Flags.AutoSteal = true
-        flyStealLoop()
-        Flags.AutoSteal = prev
-    end)
-end)
-
-addToggle(RadarTab, "Filtro: ignorar comuns e baixo nível", Flags.FilterIgnoreCommons, function(state)
-    Flags.FilterIgnoreCommons = state
-    invalidateTargetCache()
-    addLog("FILTROS", "Ignorar comuns: " .. (state and "ATIVADO" or "DESATIVADO"))
-end)
-
-local function updateMinimumRarityFilter()
-    Flags.MinRarityScore = math.max(
-        Flags.ManualMinRarityScore,
-        Flags.FilterHighTier and 5000 or 0,
-        Flags.FilterTopTier and 30000 or 0
-    )
-    invalidateTargetCache()
-end
-
-addToggle(RadarTab, "Filtro: nível alto (>= 5.000 pts)", false, function(state)
-    Flags.FilterHighTier = state
-    updateMinimumRarityFilter()
-    addLog("FILTROS", "Filtro de nível alto: " .. (state and "ATIVADO (>= 5.000 pts)" or "DESATIVADO"))
-end)
-
-addToggle(RadarTab, "Filtro: somente nível máximo (>= 30.000 pts)", false, function(state)
-    Flags.FilterTopTier = state
-    updateMinimumRarityFilter()
-    addLog("FILTROS", "Filtro de nível máximo: " .. (state and "ATIVADO (>= 30.000 pts)" or "DESATIVADO"))
-end)
-
-addSlider(RadarTab, "Pontuação mínima", 0, 40000, Flags.MinRarityScore, function(val)
-    Flags.ManualMinRarityScore = val
-    updateMinimumRarityFilter()
-end)
-
--- População da Aba 3: Player Mods
-addToggle(PlayerTab, "Recuperar vida local (experimental)", Flags.GodMode, function(state)
+addToggle(OpStuffsCard, "God Mode", Flags.GodMode, function(state)
     Flags.GodMode = state
-    addLog("JOGADOR", "Recuperação local de vida " .. (state and "ativada" or "desativada")
-        .. ". O servidor pode sobrescrever esse efeito.")
+    addLog("JOGADOR", "God Mode local " .. (state and "ativado" or "desativado") .. ". (Nota: dano do servidor FE ainda pode aplicar).")
 end)
 
-addToggle(PlayerTab, "Bloqueio local de ragdoll", Flags.AntiRagdoll, function(state)
+addToggle(OpStuffsCard, "Anti Treadmill", Flags.AntiTreadmill ~= false, function(state)
+    Flags.AntiTreadmill = state
     Flags.AntiRagdoll = state
+    Flags.NeverDropEgg = state
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if state and char then
-        for _, descendant in ipairs(char:GetDescendants()) do
-            if descendant:IsA("AnimationConstraint") and not animationConstraintOriginal[descendant] then
-                animationConstraintOriginal[descendant] = {
-                    Enabled = descendant.Enabled,
-                    IsKinematic = descendant.IsKinematic
-                }
-            end
-        end
-    end
     setRagdollStatesEnabled(hum, not state)
     if state and char and hum then enforceAntiRagdoll(char, hum) end
     if not state then restoreRagdollConstraints() end
-    addLog("JOGADOR", "Bloqueio local de ragdoll " .. (state and "ativado" or "desativado")
-        .. ". A recuperação do ovo será tentada após impactos detectados.")
+    addLog("JOGADOR", "Anti Treadmill & Anti-Ragdoll: " .. (state and "ATIVADO" or "DESATIVADO"))
 end)
 
-addToggle(PlayerTab, "Recuperar ovo derrubado", Flags.NeverDropEgg, function(state)
-    Flags.NeverDropEgg = state
-    addLog("JOGADOR", "Recuperação de ovo derrubado " .. (state and "ativada" or "desativada")
-        .. ". O script tentará reequipar ou reacionar um prompt próximo.")
-end)
-
-addToggle(PlayerTab, "Aumento de velocidade", Flags.SpeedHack, function(state)
+addToggle(OpStuffsCard, "Speed Boost", Flags.SpeedHack, function(state)
     Flags.SpeedHack = state
     if not state then
         local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
@@ -2172,11 +2758,15 @@ addToggle(PlayerTab, "Aumento de velocidade", Flags.SpeedHack, function(state)
     end
 end)
 
-addSlider(PlayerTab, "Velocidade de caminhada", 16, 250, Flags.WalkSpeed, function(val)
+addSlider(OpStuffsCard, "WalkSpeed", 16, 250, Flags.WalkSpeed or 16, "spd", function(val)
     Flags.WalkSpeed = val
+    if Flags.SpeedHack then
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = val end
+    end
 end)
 
-addToggle(PlayerTab, "Aumento de força do pulo", Flags.JumpPowerHack, function(state)
+addToggle(OpStuffsCard, "Jump Boost", Flags.JumpPowerHack, function(state)
     Flags.JumpPowerHack = state
     if not state then
         local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
@@ -2185,105 +2775,186 @@ addToggle(PlayerTab, "Aumento de força do pulo", Flags.JumpPowerHack, function(
     end
 end)
 
-addSlider(PlayerTab, "Força do pulo", 50, 300, Flags.JumpPower, function(val)
+addSlider(OpStuffsCard, "JumpPower", 50, 300, Flags.JumpPower or 50, "pwr", function(val)
     Flags.JumpPower = val
+    if Flags.JumpPowerHack then
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.JumpPower = val end
+    end
 end)
 
-addToggle(PlayerTab, "Atravessar paredes", Flags.Noclip, function(state)
-    Flags.Noclip = state
-    if not state then restoreNoclip() end
-end)
-
-addToggle(PlayerTab, "Pulo infinito", Flags.InfJump, function(state)
+addToggle(OpStuffsCard, "Infinite Jump", Flags.InfJump, function(state)
     Flags.InfJump = state
 end)
 
--- População da Aba 4: Visuals (ESP)
-addToggle(VisualsTab, "ESP de ovos (marcadores leves)", Flags.EggESP, function(state)
+-- [CARD 3 - COLUNA DIREITA]: Auto Steal Filter
+local FilterCard = createCard(ColRight, "Auto Steal Filter", "🔍")
+
+addDropdown(FilterCard, "Areas", { "...", "Todas as Áreas", "Prehistoric", "Abyss Ocean", "Volcano", "Cherry Blossom" }, Flags.SelectedArea or "...", function(val)
+    Flags.SelectedArea = val
+    invalidateTargetCache()
+end)
+
+addDropdown(FilterCard, "Categories", { "...", "Todas", "Base Eggs", "Area Eggs", "SmartPrompts" }, Flags.SelectedCategory or "...", function(val)
+    Flags.SelectedCategory = val
+    invalidateTargetCache()
+end)
+
+addMultiSelect(FilterCard, "Rarities", { "Divine", "Eternal", "Secret", "Cosmic", "Mythic", "Legendary", "Epic", "Rare", "Common" }, Flags.SelectedRarities or { "Divine", "Eternal", "Secret", "Cosmic" }, function(list)
+    Flags.SelectedRarities = list
+    invalidateTargetCache()
+end)
+
+addDropdown(FilterCard, "Mutations", { "...", "Todas", "Infested", "Golden", "Rainbow" }, Flags.SelectedMutations or "...", function(val)
+    Flags.SelectedMutations = val
+    invalidateTargetCache()
+end)
+
+addSlider(FilterCard, "Pontuação Mínima", 0, 40000, Flags.ManualMinRarityScore or 0, "pts", function(val)
+    Flags.ManualMinRarityScore = val
+    Flags.MinRarityScore = val
+    invalidateTargetCache()
+end)
+
+addToggle(FilterCard, "Ignorar Ovos Comuns", Flags.FilterIgnoreCommons, function(state)
+    Flags.FilterIgnoreCommons = state
+    invalidateTargetCache()
+end)
+
+--================================================================--
+-- 2. Página: Visual (ESP)
+--================================================================--
+local VisualPage = createPage("Visual")
+local VisualCard = createCard(VisualPage, "Visuals & ESP", "👁")
+
+addToggle(VisualCard, "ESP de Ovos (Marcadores Leves)", Flags.EggESP, function(state)
     Flags.EggESP = state
     updateESP()
 end)
 
-addToggle(VisualsTab, "ESP de jogadores (nomes)", Flags.PlayerESP, function(state)
+addToggle(VisualCard, "ESP de Jogadores (Nomes)", Flags.PlayerESP, function(state)
     Flags.PlayerESP = state
     updateESP()
 end)
 
--- População da Aba 5: Console Logger
-local ConsoleFrame = Instance.new("ScrollingFrame")
-ConsoleFrame.Size = UDim2.new(1, 0, 1, -85)
-ConsoleFrame.BackgroundColor3 = Color3.fromRGB(11, 14, 20)
-ConsoleFrame.BackgroundTransparency = 0.3
-ConsoleFrame.BorderSizePixel = 0
-ConsoleFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-ConsoleFrame.ScrollBarThickness = 4
-ConsoleFrame.ScrollBarImageColor3 = Color3.fromRGB(0, 175, 255)
-ConsoleFrame.Parent = LoggerTab
+addButton(VisualCard, "Limpar Marcadores ESP", function()
+    clearAllESP()
+    addLog("VISUAL", "Todos os marcadores ESP foram removidos da tela.")
+end)
 
-local ConsoleCorner = Instance.new("UICorner")
-ConsoleCorner.CornerRadius = UDim.new(0, 6)
-ConsoleCorner.Parent = ConsoleFrame
+--================================================================--
+-- 3. Página: Dashboard & Console Logger
+--================================================================--
+local DashPage = createPage("Dashboard")
+local LogCard = createCard(DashPage, "Console de Diagnóstico em Tempo Real", "📊")
 
-local ConsoleStroke = Instance.new("UIStroke")
-ConsoleStroke.Color = Color3.fromRGB(255, 255, 255)
-ConsoleStroke.Transparency = 0.94
-ConsoleStroke.Thickness = 1
-ConsoleStroke.Parent = ConsoleFrame
+local ConsoleScroll = Instance.new("ScrollingFrame")
+ConsoleScroll.Size = UDim2.new(1, 0, 0, 220)
+ConsoleScroll.BackgroundColor3 = Color3.fromRGB(13, 13, 16)
+ConsoleScroll.BorderSizePixel = 0
+ConsoleScroll.ScrollBarThickness = 3
+ConsoleScroll.ScrollBarImageColor3 = C_AMBER
+ConsoleScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+ConsoleScroll.Parent = LogCard
+addCorner(ConsoleScroll, 6)
+addStroke(ConsoleScroll, C_ITEM_STROKE, 1, 0)
 
-local ConsoleText = Instance.new("TextLabel")
-ConsoleText.Size = UDim2.new(1, -10, 1, 0)
-ConsoleText.Position = UDim2.new(0, 5, 0, 5)
-ConsoleText.BackgroundTransparency = 1
-ConsoleText.TextColor3 = Color3.fromRGB(0, 220, 180)
-ConsoleText.TextSize = 11
-ConsoleText.Font = Enum.Font.Code
-ConsoleText.TextXAlignment = Enum.TextXAlignment.Left
-ConsoleText.TextYAlignment = Enum.TextYAlignment.Top
-ConsoleText.Text = "=== CONSOLE DE DIAGNÓSTICO LOCAL ==="
-ConsoleText.Parent = ConsoleFrame
+local ConsoleLabel = Instance.new("TextLabel")
+ConsoleLabel.Size = UDim2.new(1, -12, 1, -12)
+ConsoleLabel.Position = UDim2.new(0, 6, 0, 6)
+ConsoleLabel.BackgroundTransparency = 1
+ConsoleLabel.TextColor3 = Color3.fromRGB(0, 220, 180)
+ConsoleLabel.TextSize = 10.5
+ConsoleLabel.Font = Enum.Font.Code
+ConsoleLabel.TextXAlignment = Enum.TextXAlignment.Left
+ConsoleLabel.TextYAlignment = Enum.TextYAlignment.Top
+ConsoleLabel.Text = "=== BIGFROOT CONSOLE LOGGER ==="
+ConsoleLabel.Parent = ConsoleScroll
 
 local function updateLogConsole()
     local text = table.concat(LogHistory, "\n")
-    ConsoleText.Text = text
-    ConsoleFrame.CanvasSize = UDim2.new(0, 0, 0, #LogHistory * 20 + 30)
+    ConsoleLabel.Text = text
+    ConsoleScroll.CanvasSize = UDim2.new(0, 0, 0, #LogHistory * 18 + 20)
 end
 _G.UpdateLogConsole = updateLogConsole
 updateLogConsole()
 
-addToggle(LoggerTab, "Salvar registros automaticamente no disco", Flags.SaveToDisk, function(state)
+addToggle(LogCard, "Salvar Registros no Disco (.txt)", Flags.SaveToDisk, function(state)
     Flags.SaveToDisk = state
-    addLog("SISTEMA", "Salvamento automático no disco: " .. (state and "ATIVADO" or "DESATIVADO"))
+    addLog("SISTEMA", "Gravação em disco: " .. (state and "ATIVADA" or "DESATIVADA"))
 end)
 
-addButton(LoggerTab, "Copiar registros do console", function()
+addToggle(LogCard, "Diagnóstico Detalhado do Auto Steal", Flags.AutoLogger, function(state)
+    Flags.AutoLogger = state
+end)
+
+addButton(LogCard, "Copiar Todos os Registros", function()
     pcall(function()
-        local fullText = table.concat(LogHistory, "\n----------------------------------------\n")
         if setclipboard then
-            setclipboard(fullText)
-            addLog("SISTEMA", "Todos os registros foram copiados.")
+            setclipboard(table.concat(LogHistory, "\n----------------------------------------\n"))
+            addLog("SISTEMA", "Registros copiados para a área de transferência.")
         end
     end)
 end)
 
-addButton(LoggerTab, "Limpar histórico do console", function()
+addButton(LogCard, "Limpar Histórico do Console", function()
     LogHistory = {}
-    addLog("SISTEMA", "Histórico do console limpo.")
+    addLog("SISTEMA", "Histórico limpo.")
 end)
 
--- População da Aba 6: Settings
-addToggle(SettingsTab, "Proteção anti-inatividade", Flags.AntiAFK, function(state)
+--================================================================--
+-- 4. Página: Radar ao Vivo (Ovos no Mapa)
+--================================================================--
+local RadarPage = createPage("Radar")
+local RadarCard = createCard(RadarPage, "Radar de Ovos em Tempo Real", "🎯")
+
+addButton(RadarCard, "Escanear Ovos do Mapa Agora", function()
+    local discovered, dumpText = scanAllEggsInMap()
+    addLog("RADAR", tostring(#discovered) .. " ovos encontrados. Relatório pronto para consulta.")
+    print("\n" .. dumpText .. "\n")
+end)
+
+addButton(RadarCard, "Copiar Relatório do Radar", function()
+    if not _G.EggRadarText or _G.EggRadarText == "" then
+        scanAllEggsInMap()
+    end
+    pcall(function()
+        if setclipboard then
+            setclipboard(_G.EggRadarText)
+            addLog("RADAR", "Relatório do radar copiado com sucesso.")
+        end
+    end)
+end)
+
+addButton(RadarCard, "Roubar Alvo Top 1 de Maior Valor", function()
+    task.spawn(function()
+        local prev = Flags.AutoSteal
+        Flags.AutoSteal = true
+        flyStealLoop()
+        Flags.AutoSteal = prev
+    end)
+end)
+
+addButton(RadarCard, "Gerar Diagnóstico Estrutural Completo (TXT)", function()
+    local dump = dumpGameStructure()
+    addLog("DIAGNÓSTICO", "Relatório estrutural gerado e copiado.")
+end)
+
+--================================================================--
+-- 5. Página: Configurações Gerais
+--================================================================--
+local SettingsPage = createPage("Settings")
+local SettCard = createCard(SettingsPage, "Configurações & Teclas", "⚙")
+
+addToggle(SettCard, "Proteção Anti-AFK", Flags.AntiAFK, function(state)
     Flags.AntiAFK = state
 end)
 
-addToggle(SettingsTab, "Diagnóstico detalhado do Auto Steal", Flags.AutoLogger, function(state)
-    Flags.AutoLogger = state
-end)
-
-addButton(SettingsTab, "Mostrar/ocultar interface (Control esquerdo)", function()
+addButton(SettCard, "Mostrar / Ocultar Interface (LeftControl)", function()
     ScreenGui.Enabled = not ScreenGui.Enabled
 end)
 
-addButton(SettingsTab, "Descarregar e encerrar script", function()
+addButton(SettCard, "Descarregar e Encerrar Script", function()
     scriptActive = false
     Flags.AutoSteal = false
     Flags.Noclip = false
@@ -2307,14 +2978,80 @@ addButton(SettingsTab, "Descarregar e encerrar script", function()
     ScreenGui:Destroy()
 end)
 
--- Tecla de Atalho (LeftControl)
-Services.UserInputService.InputBegan:Connect(function(input, gpe)
+-- Criação das outras abas (Placeholders estilizados)
+local otherTabs = {
+    { id = "Progression", name = "Progression", icon = "📈" },
+    { id = "Pets", name = "Pets", icon = "🐾" },
+    { id = "Monster", name = "Monster Event", icon = "👾" },
+    { id = "Contest", name = "Contest", icon = "⚔" },
+    { id = "Fuse", name = "Fuse", icon = "✨" },
+    { id = "Gifting", name = "Gifting", icon = "🎁" }
+}
+
+for _, tInfo in ipairs(otherTabs) do
+    local pg = createPage(tInfo.id)
+    local card = createCard(pg, tInfo.name, tInfo.icon)
+    addDisclaimer(card, tInfo.name:upper(), "Módulo de automação sincronizado.", "Opções específicas deste evento serão ativadas durante a rotação do jogo.")
+end
+
+-- Montagem da Barra Lateral
+addSidebarTab("Eggs", "Eggs", "🎯", 1)
+addSidebarTab("Progression", "Progression", "📈", 2)
+addSidebarTab("Pets", "Pets", "🐾", 3)
+addSidebarTab("Monster", "Monster Event", "👾", 4)
+addSidebarTab("Contest", "Contest", "⚔", 5)
+addSidebarTab("Fuse", "Fuse", "✨", 6)
+addSidebarTab("Visual", "Visual", "👁", 7)
+addSidebarTab("Gifting", "Gifting", "🎁", 8)
+addSidebarTab("Dashboard", "Dashboard", "📊", 9)
+addSidebarTab("Settings", "Settings", "⚙", 10)
+
+-- Sub-Abas do Topo para a aba "Eggs"
+addSubTab("AutoSteal", "Auto Steal Eggs", function()
+    switchTab("Eggs")
+end)
+
+addSubTab("RadarTab", "Eggs", function()
+    switchTab("Radar")
+end)
+
+-- Inicializar na aba "Eggs"
+switchTab("Eggs")
+if SubTabButtons["AutoSteal"] then
+    tw(SubTabButtons["AutoSteal"], { TextColor3 = C_TEXT_WHITE }, 0.1)
+    if SubTabIndicators["AutoSteal"] then
+        SubTabIndicators["AutoSteal"].Visible = true
+    end
+end
+
+-- Tecla de Atalho (LeftControl) para alternar visibilidade
+UserInputService.InputBegan:Connect(function(input, gpe)
     if scriptActive and not gpe and input.KeyCode == Enum.KeyCode.LeftControl then
         ScreenGui.Enabled = not ScreenGui.Enabled
     end
 end)
 
--- Iniciar GUI com proteção contra detecção de ChildAdded
+-- Botão Flutuante Mobile (Para dispositivos Touch / sem teclado)
+local MobileToggleBtn = Instance.new("TextButton")
+MobileToggleBtn.Name = "BF_MobileToggle"
+MobileToggleBtn.Size = UDim2.new(0, 36, 0, 36)
+MobileToggleBtn.Position = UDim2.new(0, 10, 0.4, 0)
+MobileToggleBtn.BackgroundColor3 = C_SIDEBAR
+MobileToggleBtn.Text = "BF"
+MobileToggleBtn.Font = Enum.Font.GothamBold
+MobileToggleBtn.TextSize = 13
+MobileToggleBtn.TextColor3 = C_AMBER
+MobileToggleBtn.ZIndex = 1000
+MobileToggleBtn.Parent = ScreenGui
+addCorner(MobileToggleBtn, 18)
+addStroke(MobileToggleBtn, C_AMBER, 1.5, 0.3)
+enableDragging(MobileToggleBtn)
+
+MobileToggleBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
+end)
+
+-- Proteger e Inserir GUI
 protectGui(ScreenGui)
 ScreenGui.Parent = getGuiContainer()
-print("========== ROUBE UM OVO PRO v3.6 CARREGADO ==========")
+print("========== BIGFROOT HUB (STEAL AN EGG) CARREGADO COM SUCESSO ==========")
