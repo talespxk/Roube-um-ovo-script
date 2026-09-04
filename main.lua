@@ -1,16 +1,21 @@
 --[[
-    ROUBE UM OVO - HUB DE TELEMETRIA & AUTOMAÇÃO (v3.9)
+    ROUBE UM OVO - HUB DE TELEMETRIA & AUTOMAÇÃO (v4.0)
     -----------------------------------------------------------------------
-    - Leitura passiva e sob demanda de PlacedEggRenders, AreaEggSlotsClient e Prompts.
+    - Voo Aéreo Seguro Anti-Morte: Cruzeiro em alta altitude (Y >= 115) com
+      CanTouch = false e CanCollide = false contínuos (100% imune a kill-bricks,
+      lasers, espinhos, esteiras e void).
+    - Resolução Real de Ovos: Eliminação total de hashes UUIDs (ex: 2e05e5...).
+      Inspeção em camadas de ClientRenderedAssets, ReplicatedStorage.Data,
+      atributos, meshes internas e mapeamento de ilhas em português.
+    - Máquina de Estados de Posse (isHoldingEgg): Ao segurar ou roubar um ovo,
+      o script retorna imediatamente à base e aguarda o depósito antes de
+      buscar o próximo alvo.
     - Zero poluição de console (print/warn silenciados contra LogService).
     - Zero poluição de ambiente global (_G e getgenv limpos contra BAC).
-    - Radar ao vivo com coordenadas exatas (X, Y, Z), peso (Kg), raridade e zona.
-    - Deslocamento suave por interpolação de passos (sem teleporte brusco anti-cheat).
-    - Dumper estrutural completo de módulos, tabelas e instâncias do jogo.
-    - Interface minimalista em português, tema Tech Blue, 100% sem emojis.
+    - Interface minimalista em português, tema Tech Blue (#38BDF8), sem emojis.
 ]]
 
--- 1. Silenciamento Total Preventivo contra LogService.MessageOut
+-- 1. Silenciamento Preventivo Total contra LogService.MessageOut
 local function silentOutput(...) end
 local print = silentOutput
 local warn = silentOutput
@@ -98,26 +103,21 @@ end
 
 -- 5. Configurações Locais
 local Config = {
-    -- Radar & Filtros
     SearchQuery = "",
     MinWeightKg = 0,
     MinScore = 0,
 
-    -- ESP
     EggESP = false,
     PlayerESP = false,
     ESPMaxDistance = 3000,
 
-    -- Automação
     AutoSteal = false,
-    MoveMode = "Passos Suaves", -- "Passos Suaves" ou "Voo Fisico"
     MoveSpeed = 350,
-    StealDelay = 0.3,
+    StealDelay = 0.4,
     ReturnToBase = true,
     CustomBasePos = nil,
     SavedBasePos = nil,
 
-    -- Outros
     AntiAFK = true
 }
 
@@ -136,7 +136,7 @@ local function addLog(categoria, texto)
     end
 end
 
--- 6. Detecção do Personagem e Posições
+-- 6. Utilitários do Personagem e Posse de Ovos
 local function getHRP()
     local char = LocalPlayer.Character
     return char and char:FindFirstChild("HumanoidRootPart")
@@ -148,14 +148,16 @@ local function getBasePosition()
 
     pcall(function()
         local myName = LocalPlayer.Name:lower()
+        local myDisplay = LocalPlayer.DisplayName:lower()
         local plots = Services.Workspace:FindFirstChild("Plots")
         if plots then
             for _, plot in ipairs(plots:GetChildren()) do
-                local owner = plot:FindFirstChild("Owner") or plot:FindFirstChild("OwnerName")
-                if owner and tostring(owner.Value):lower() == myName then
+                local owner = plot:FindFirstChild("Owner") or plot:FindFirstChild("OwnerName") or plot:FindFirstChild("Player")
+                local val = owner and tostring(owner.Value):lower() or ""
+                if val ~= "" and (val == myName or val == myDisplay) then
                     local p = plot:IsA("BasePart") and plot.Position or (plot:IsA("Model") and plot:GetPivot().Position)
                     if p then
-                        Config.SavedBasePos = p + Vector3.new(0, 3, 0)
+                        Config.SavedBasePos = p + Vector3.new(0, 3.5, 0)
                         return
                     end
                 end
@@ -168,6 +170,55 @@ local function getBasePosition()
         if hrp then Config.SavedBasePos = hrp.Position end
     end
     return Config.SavedBasePos
+end
+
+-- Detecção Precisa de Posse de Ovo (Mãos / Costas / Mochila / Atributos)
+local function isHoldingEgg()
+    local char = LocalPlayer.Character
+    if not char then return false, nil end
+
+    -- 1. Ferramenta ativa no Personagem
+    for _, item in ipairs(char:GetChildren()) do
+        if item:IsA("Tool") then
+            local n = item.Name:lower()
+            return true, item.Name
+        end
+    end
+
+    -- 2. Modelo soldado ao tronco do personagem (Mecânica de carregar nas mãos/costas)
+    for _, item in ipairs(char:GetChildren()) do
+        if (item:IsA("Model") or item:IsA("BasePart")) and item.Name ~= "HumanoidRootPart" then
+            local n = item.Name:lower()
+            if n:find("egg") or n:find("ovo") or n:find("carry") or n:find("render") then
+                local weld = item:FindFirstChildWhichIsA("WeldConstraint", true) or item:FindFirstChildWhichIsA("Weld", true) or item:FindFirstChildWhichIsA("Motor6D", true)
+                if weld then
+                    return true, item.Name
+                end
+            end
+        end
+    end
+
+    -- 3. Mochila (Backpack)
+    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if bp then
+        for _, item in ipairs(bp:GetChildren()) do
+            if item:IsA("Tool") then
+                local n = item.Name:lower()
+                if n:find("egg") or n:find("ovo") or item:GetAttribute("IsEgg") or item:GetAttribute("EggType") then
+                    return true, item.Name
+                end
+            end
+        end
+    end
+
+    -- 4. Atributos no Personagem ou Player
+    local holdingAttr = char:GetAttribute("HoldingEgg") or char:GetAttribute("CarryingEgg") or char:GetAttribute("HasEgg")
+        or LocalPlayer:GetAttribute("HoldingEgg") or LocalPlayer:GetAttribute("CarryingEgg") or LocalPlayer:GetAttribute("HasEgg")
+    if holdingAttr then
+        return true, tostring(holdingAttr)
+    end
+
+    return false, nil
 end
 
 local function plainText(v)
@@ -191,30 +242,84 @@ local function getPositionOf(obj)
     return part and part.Position or nil
 end
 
--- 7. Avaliação e Extração Observacional de Ovos
-local RarityWeights = {
-    ["admin abuse"] = 80000,
-    ["monster parasite"] = 70000,
-    ["dragon"] = 65000,
-    ["sakura"] = 60000,
-    ["brainrot"] = 55000,
-    ["limited"] = 50000,
-    ["prehistoric"] = 35000,
-    ["abyss"] = 28000,
-    ["volcano"] = 20000,
-    ["cherry"] = 10000,
-    ["secret"] = 45000,
-    ["mythic"] = 25000,
-    ["legendary"] = 18000,
-    ["epic"] = 8000,
-    ["rare"] = 4000,
-    ["uncommon"] = 1500,
-    ["common"] = 300
+-- 7. Resolução Avançada de Nomes Reais de Ovos & Dados Internos
+local GameAssetsData = {}
+local GameAreasData = {}
+local GameRarityData = {}
+
+pcall(function()
+    local dataFolder = Services.ReplicatedStorage:FindFirstChild("Data")
+    if dataFolder then
+        local assetsMod = dataFolder:FindFirstChild("Assets")
+        if assetsMod and assetsMod:IsA("ModuleScript") then
+            local res = require(assetsMod)
+            if type(res) == "table" then GameAssetsData = res end
+        end
+        local areasMod = dataFolder:FindFirstChild("Areas")
+        if areasMod and areasMod:IsA("ModuleScript") then
+            local res = require(areasMod)
+            if type(res) == "table" then GameAreasData = res end
+        end
+        local rarityMod = dataFolder:FindFirstChild("Rarity")
+        if rarityMod and rarityMod:IsA("ModuleScript") then
+            local res = require(rarityMod)
+            if type(res) == "table" then GameRarityData = res end
+        end
+    end
+end)
+
+local function isHexUUID(str)
+    if not str or #str < 18 then return false end
+    local clean = str:gsub("-", "")
+    return clean:match("^%x+$") ~= nil
+end
+
+local IslandZones = {
+    { MaxX = 950,   Name = "Floresta (Ilha 1)" },
+    { MaxX = 1650,  Name = "Deserto (Ilha 2)" },
+    { MaxX = 2550,  Name = "Selva (Ilha 3)" },
+    { MaxX = 3650,  Name = "Vulcão (Ilha 4)" },
+    { MaxX = 99999, Name = "Abismo / Místico (Ilha 5)" }
 }
 
-local function evaluateEgg(obj, prompt)
-    local maxScore = 0
-    local detectedRarity = "Normal"
+local function getIslandNameByPos(pos)
+    if not pos then return "Ilha Geral" end
+    for _, zone in ipairs(IslandZones) do
+        if pos.X <= zone.MaxX then
+            return zone.Name
+        end
+    end
+    return "Ilha Avançada"
+end
+
+local KnownEggKeywords = {
+    ["admin abuse"] = { Name = "Ovo Admin Abuse", Score = 100000, Rarity = "ADMIN ABUSE" },
+    ["monster parasite"] = { Name = "Ovo Parasita Monstro", Score = 85000, Rarity = "MONSTER PARASITE" },
+    ["dragon"] = { Name = "Ovo do Dragão", Score = 75000, Rarity = "DRAGON" },
+    ["sakura"] = { Name = "Ovo de Sakura", Score = 65000, Rarity = "SAKURA" },
+    ["brainrot"] = { Name = "Ovo Brainrot", Score = 60000, Rarity = "BRAINROT" },
+    ["limited"] = { Name = "Ovo Limitado", Score = 50000, Rarity = "LIMITED" },
+    ["prehistoric"] = { Name = "Ovo Pré-Histórico", Score = 40000, Rarity = "PREHISTORIC" },
+    ["abyss"] = { Name = "Ovo do Abismo", Score = 30000, Rarity = "ABYSS" },
+    ["volcano"] = { Name = "Ovo do Vulcão", Score = 22000, Rarity = "VOLCANO" },
+    ["forest"] = { Name = "Ovo da Floresta", Score = 5000, Rarity = "FOREST" },
+    ["cherry"] = { Name = "Ovo de Cerejeira", Score = 12000, Rarity = "CHERRY" },
+    ["golden"] = { Name = "Ovo Dourado", Score = 18000, Rarity = "GOLDEN" },
+    ["rainbow"] = { Name = "Ovo Arco-Íris", Score = 25000, Rarity = "RAINBOW" },
+    ["secret"] = { Name = "Ovo Secreto", Score = 45000, Rarity = "SECRET" },
+    ["mythic"] = { Name = "Ovo Mítico", Score = 20000, Rarity = "MÍTICO" },
+    ["legendary"] = { Name = "Ovo Lendário", Score = 15000, Rarity = "LENDÁRIO" },
+    ["epic"] = { Name = "Ovo Épico", Score = 8000, Rarity = "ÉPICO" },
+    ["rare"] = { Name = "Ovo Raro", Score = 3500, Rarity = "RARO" },
+    ["uncommon"] = { Name = "Ovo Incomum", Score = 1500, Rarity = "INCOMUM" },
+    ["common"] = { Name = "Ovo Comum", Score = 300, Rarity = "COMUM" }
+}
+
+local function resolveEggDetails(instance, prompt)
+    local pos = getPositionOf(prompt or instance)
+    local foundName = nil
+    local detectedRarity = "Comum"
+    local maxScore = 300
     local detectedWeight = 0
     local detectedIncome = nil
 
@@ -235,47 +340,112 @@ local function evaluateEgg(obj, prompt)
             detectedIncome = "$" .. num .. (suf or ""):upper() .. "/s"
         end
 
-        -- Raridade por palavras-chave
-        for kw, score in pairs(RarityWeights) do
+        -- Identificação por palavras-chave
+        for kw, meta in pairs(KnownEggKeywords) do
             if low:find(kw, 1, true) then
-                if score > maxScore then
-                    maxScore = score
-                    detectedRarity = kw:upper()
+                if meta.Score > maxScore then
+                    maxScore = meta.Score
+                    detectedRarity = meta.Rarity
+                    if not foundName or isHexUUID(foundName) or foundName:find("Ovo") == nil then
+                        foundName = meta.Name
+                    end
                 end
             end
         end
     end
 
+    -- Camada 1: Localizar visual correspondente em ClientRenderedAssets
+    pcall(function()
+        if pos then
+            local renderedFolder = Services.Workspace:FindFirstChild("ClientRenderedAssets")
+            if renderedFolder then
+                for _, renderItem in ipairs(renderedFolder:GetChildren()) do
+                    local rPos = getPositionOf(renderItem)
+                    if rPos and (rPos - pos).Magnitude <= 3.5 then
+                        if not isHexUUID(renderItem.Name) and renderItem.Name ~= "Model" and renderItem.Name ~= "MeshPart" then
+                            foundName = renderItem.Name
+                        end
+                        inspectStr(renderItem.Name)
+                        for k, v in pairs(renderItem:GetAttributes()) do
+                            inspectStr(k); inspectStr(v)
+                        end
+                        break
+                    end
+                end
+            end
+        end
+    end)
+
+    -- Camada 2: Inspecionar Prompt
     if prompt then
+        local pObj = prompt.ObjectText
+        if pObj and pObj ~= "" and pObj:lower() ~= "egg" and pObj:lower() ~= "ovo" and not isHexUUID(pObj) then
+            foundName = pObj
+        end
         inspectStr(prompt.ObjectText)
         inspectStr(prompt.ActionText)
         inspectStr(prompt.Name)
     end
 
-    if obj then
-        inspectStr(obj.Name)
+    -- Camada 3: Inspecionar Instância, Atributos e Filhos
+    if instance then
+        inspectStr(instance.Name)
+
         pcall(function()
-            for k, v in pairs(obj:GetAttributes()) do
+            for k, v in pairs(instance:GetAttributes()) do
+                if (k == "EggName" or k == "EggType" or k == "Egg") and tostring(v) ~= "" and not isHexUUID(tostring(v)) then
+                    foundName = tostring(v)
+                end
                 inspectStr(k); inspectStr(v)
             end
         end)
+
         pcall(function()
-            for _, child in ipairs(obj:GetChildren()) do
-                if child:IsA("ValueBase") then
+            for _, child in ipairs(instance:GetChildren()) do
+                if child:IsA("Model") and not isHexUUID(child.Name) and child.Name ~= "Model" then
+                    foundName = child.Name
+                elseif child:IsA("MeshPart") and not isHexUUID(child.Name) and child.Name ~= "MeshPart" and child.Name ~= "Part" then
+                    if not foundName then foundName = child.Name end
+                elseif child:IsA("ValueBase") then
                     inspectStr(child.Name); inspectStr(child.Value)
+                    if (child.Name:find("Egg") or child.Name:find("Name")) and tostring(child.Value) ~= "" and not isHexUUID(tostring(child.Value)) then
+                        foundName = tostring(child.Value)
+                    end
                 end
             end
         end)
+
         pcall(function()
-            local inspected = 0
-            for _, d in ipairs(obj:GetDescendants()) do
-                if inspected >= 25 then break end
+            local inspectedLabels = 0
+            for _, d in ipairs(instance:GetDescendants()) do
+                if inspectedLabels >= 30 then break end
                 if d:IsA("TextLabel") or d:IsA("TextButton") then
-                    inspected = inspected + 1
+                    inspectedLabels = inspectedLabels + 1
                     inspectStr(d.Text)
                 end
             end
         end)
+    end
+
+    -- Camada 4: Mapeamento de nome de slot (ex: FirstAreaEgg_..._Forest:Slot_004)
+    if not foundName or isHexUUID(foundName) then
+        local rawName = instance and instance.Name or ""
+        for kw, meta in pairs(KnownEggKeywords) do
+            if rawName:lower():find(kw, 1, true) then
+                foundName = meta.Name
+                if meta.Score > maxScore then
+                    maxScore = meta.Score
+                    detectedRarity = meta.Rarity
+                end
+                break
+            end
+        end
+    end
+
+    -- Camada 5: Fallback Limpo por Ilha / Coordenadas (Zero hashes UUIDs)
+    if not foundName or isHexUUID(foundName) or foundName:lower() == "egg" or foundName:lower() == "ovo" then
+        local island = getIslandNameByPos(pos)
+        foundName = "Ovo da " .. island
     end
 
     if detectedWeight > 0 and maxScore < (detectedWeight * 2) then
@@ -283,7 +453,7 @@ local function evaluateEgg(obj, prompt)
         detectedRarity = string.format("%s Kg", tostring(detectedWeight))
     end
 
-    return maxScore, detectedRarity, detectedWeight, detectedIncome
+    return foundName, detectedRarity, maxScore, detectedWeight, detectedIncome
 end
 
 local function identifyZone(instance)
@@ -306,7 +476,8 @@ local function identifyZone(instance)
             zone = "Base de Jogador"
             break
         elseif low:find("areaegg") or low:find("island") or low:find("zone") then
-            zone = "Ilha / Spawn de Area"
+            local p = getPositionOf(instance)
+            zone = getIslandNameByPos(p)
             break
         end
         cur = cur.Parent
@@ -314,12 +485,13 @@ local function identifyZone(instance)
     return zone, owner
 end
 
--- 8. MOTOR DE DETECÇÃO DUPLA (PROMPTS + MODELOS DE OVOS)
+-- 8. Motor de Varredura Completa de Ovos
 local function scanAllEggs()
     local discovered = {}
     local seenInstances = {}
     local hrp = getHRP()
     local myName = LocalPlayer.Name:lower()
+    local myDisplay = LocalPlayer.DisplayName:lower()
 
     local function addCandidate(instance, prompt, sourceTag)
         if not instance or seenInstances[instance] then return end
@@ -328,20 +500,15 @@ local function scanAllEggs()
         seenInstances[instance] = true
 
         local fullName = instance:GetFullName():lower()
-        local isMyPlot = fullName:find(myName) ~= nil
+        local isMyPlot = (fullName:find(myName) ~= nil) or (fullName:find(myDisplay) ~= nil)
         local dist = hrp and (hrp.Position - pos).Magnitude or 0
-        local score, rarity, weight, income = evaluateEgg(instance, prompt)
+        local cleanName, rarity, score, weight, income = resolveEggDetails(instance, prompt)
         local zone, owner = identifyZone(instance)
-
-        local dName = instance.Name
-        if prompt and prompt.ObjectText ~= "" then
-            dName = prompt.ObjectText
-        end
 
         table.insert(discovered, {
             Instance = instance,
             Prompt = prompt,
-            Name = dName,
+            Name = cleanName,
             Rarity = rarity,
             RarityScore = score,
             WeightKg = weight,
@@ -355,36 +522,36 @@ local function scanAllEggs()
         })
     end
 
-    -- 1. Varredura direta da pasta PlacedEggRenders (Ovos colocados nos plots!)
+    -- 1. PlacedEggRenders (Ovos colocados nos pedestais dos plots)
     pcall(function()
         local placed = Services.Workspace:FindFirstChild("PlacedEggRenders")
         if placed then
             for _, egg in ipairs(placed:GetChildren()) do
                 local p = egg:FindFirstChildWhichIsA("ProximityPrompt", true)
-                addCandidate(egg, p, "PlacedEgg")
+                addCandidate(egg, p, "Base/Plot")
             end
         end
     end)
 
-    -- 2. Varredura direta da pasta AreaEggSlotsClient (Ovos nas ilhas do mapa!)
+    -- 2. AreaEggSlotsClient (Ovos nas ilhas do mapa)
     pcall(function()
         local areaSlots = Services.Workspace:FindFirstChild("AreaEggSlotsClient")
         if areaSlots then
             for _, slot in ipairs(areaSlots:GetChildren()) do
                 local p = slot:FindFirstChildWhichIsA("ProximityPrompt", true)
-                addCandidate(slot, p, "AreaSlot")
+                addCandidate(slot, p, "Ilha Selvagem")
             end
         end
     end)
 
-    -- 3. Varredura dos Plots de Jogadores
+    -- 3. Plots dos Jogadores
     pcall(function()
         local plots = Services.Workspace:FindFirstChild("Plots")
         if plots then
             for _, plot in ipairs(plots:GetChildren()) do
                 for _, obj in ipairs(plot:GetDescendants()) do
                     if obj:IsA("ProximityPrompt") then
-                        addCandidate(obj.Parent, obj, "PlotPrompt")
+                        addCandidate(obj.Parent, obj, "Plot Prompt")
                     end
                 end
             end
@@ -401,13 +568,13 @@ local function scanAllEggs()
                     or obj:find("egg") or obj:find("ovo") or desc.Name:lower():find("egg")
 
                 if isCandidate and desc.Parent then
-                    addCandidate(desc.Parent, desc, "PromptGeral")
+                    addCandidate(desc.Parent, desc, "Prompt Geral")
                 end
             end
         end
     end)
 
-    -- Ordenar por raridade / pontuação e depois distância
+    -- Ordenação por raridade/score e distância
     table.sort(discovered, function(a, b)
         if a.RarityScore ~= b.RarityScore then
             return a.RarityScore > b.RarityScore
@@ -418,65 +585,135 @@ local function scanAllEggs()
     return discovered
 end
 
--- 9. MOVIMENTO SEGURO POR PASSOS (ANTI-BAC STEALTH MOVE)
+-- 9. SISTEMA DE VOO AÉREO SEGURO (ANTI-MORTE / IMUNIDADE A KILL BRICKS)
 local isMoving = false
+
 local function movePlayerTo(targetPos, speed, onStep)
     local hrp = getHRP()
     local char = LocalPlayer.Character
     if not hrp or not char or isMoving then return false end
-    isMoving = true
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return false end
 
+    isMoving = true
     speed = speed or Config.MoveSpeed or 350
     local startPos = hrp.Position
-    local dist = (targetPos - startPos).Magnitude
+    local totalDist = (targetPos - startPos).Magnitude
 
-    if dist < 4 then
+    if totalDist < 5 then
         isMoving = false
         return true
     end
 
-    -- Desativar colisão temporária do personagem para evitar travar em esteiras
-    local collParts = {}
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
-            collParts[part] = part.CanCollide
-            part.CanCollide = false
+    -- 1. Ativação Contínua de Noclip & Imunidade a Kill Bricks (CanTouch = false)
+    -- Definir CanTouch = false a cada frame impede que scripts de Touch do jogo matem o personagem!
+    local noclipConn = Services.RunService.Stepped:Connect(function()
+        if char and char.Parent then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                    part.CanTouch = false
+                end
+            end
         end
+    end)
+
+    -- 2. Congelar física do Humanoid para evitar dano de queda, tombos e flings
+    pcall(function()
+        humanoid.PlatformStand = true
+        humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+    end)
+
+    local function cleanup()
+        pcall(function()
+            if noclipConn then noclipConn:Disconnect() end
+        end)
+        if char and char.Parent then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = true
+                    part.CanTouch = true
+                    part.AssemblyLinearVelocity = Vector3.zero
+                    part.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
+            if humanoid and humanoid.Health > 0 then
+                humanoid.PlatformStand = false
+                humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end
+        end
+        isMoving = false
     end
 
-    local totalTime = dist / math.max(speed, 50)
-    local startTime = os.clock()
+    -- 3. Definição da Trajetória em Arco Aéreo Seguro
+    -- No Roube um Ovo, as ilhas e esteiras ficam entre Y=65 e Y=75.
+    -- Voar a Y >= 115 garante céu 100% livre de qualquer obstáculo, void ou kill-brick.
+    local waypoints = {}
+    if totalDist > 25 then
+        local safeY = math.max(startPos.Y, targetPos.Y) + 38
+        if safeY < 115 then safeY = 115 end
 
-    while (os.clock() - startTime) < (totalTime + 0.5) do
-        local elapsed = os.clock() - startTime
-        local alpha = math.clamp(elapsed / totalTime, 0, 1)
-
-        -- Interpolação de CFrame por micro-passos suaves (não aciona detecção de teleporte brusco)
-        local curTarget = startPos:Lerp(targetPos + Vector3.new(0, 1, 0), alpha)
-        hrp.CFrame = CFrame.new(curTarget, targetPos)
-        hrp.AssemblyLinearVelocity = Vector3.zero
-
-        local remaining = (targetPos - hrp.Position).Magnitude
-        if onStep then onStep(remaining) end
-        if remaining < 4 then break end
-
-        Services.RunService.Heartbeat:Wait()
+        table.insert(waypoints, Vector3.new(startPos.X, safeY, startPos.Z))       -- Decolagem vertical
+        table.insert(waypoints, Vector3.new(targetPos.X, safeY, targetPos.Z))      -- Cruzeiro em céu aberto
+        table.insert(waypoints, targetPos + Vector3.new(0, 2.5, 0))                -- Descida sobre o alvo
+    else
+        table.insert(waypoints, targetPos + Vector3.new(0, 2, 0))
     end
 
-    hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 1, 0))
+    -- 4. Execução Ponto a Ponto Suave
+    local currentPos = startPos
+    for _, wp in ipairs(waypoints) do
+        if not char or not char.Parent or not humanoid or humanoid.Health <= 0 then
+            cleanup()
+            return false
+        end
+
+        local segDist = (wp - currentPos).Magnitude
+        local segTime = segDist / math.max(speed, 60)
+        local segStartClock = os.clock()
+        local segStartPos = currentPos
+
+        while (os.clock() - segStartClock) < (segTime + 0.35) do
+            if not char or not char.Parent or not humanoid or humanoid.Health <= 0 then
+                cleanup()
+                return false
+            end
+
+            local elapsed = os.clock() - segStartClock
+            local alpha = math.clamp(elapsed / math.max(segTime, 0.001), 0, 1)
+            local targetStep = segStartPos:Lerp(wp, alpha)
+
+            local lookDir = (wp - segStartPos)
+            if lookDir.Magnitude > 0.1 then
+                hrp.CFrame = CFrame.new(targetStep, targetStep + lookDir)
+            else
+                hrp.CFrame = CFrame.new(targetStep)
+            end
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.AssemblyAngularVelocity = Vector3.zero
+
+            local distToFinal = (targetPos - hrp.Position).Magnitude
+            if onStep then onStep(distToFinal) end
+
+            if (wp - hrp.Position).Magnitude < 3 then
+                break
+            end
+
+            Services.RunService.Heartbeat:Wait()
+        end
+
+        currentPos = hrp.Position
+    end
+
+    hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 2.5, 0))
     hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
 
-    for part, wasCanCollide in pairs(collParts) do
-        if part and part.Parent then
-            part.CanCollide = wasCanCollide
-        end
-    end
-
-    isMoving = false
-    return (targetPos - hrp.Position).Magnitude < 8
+    cleanup()
+    return (targetPos - hrp.Position).Magnitude < 12
 end
 
--- Acionar Prompt de Roubo
+-- Acionamento Seguro de ProximityPrompt
 local function triggerPrompt(prompt)
     if not prompt then return false end
     local ok = false
@@ -494,7 +731,7 @@ local function triggerPrompt(prompt)
     return ok
 end
 
--- 10. DUMPER ESTRUTURAL COMPLETO
+-- 10. Dumper Estrutural Profundo
 local function dumpGameData()
     local lines = {}
     local function logL(s) table.insert(lines, s or "") end
@@ -514,9 +751,6 @@ local function dumpGameData()
                 local pos = getPositionOf(egg)
                 local posStr = pos and string.format("(%.1f, %.1f, %.1f)", pos.X, pos.Y, pos.Z) or "N/D"
                 logL(string.format("  - %s [%s] | Pos: %s", egg.Name, egg.ClassName, posStr))
-                for _, sub in ipairs(egg:GetChildren()) do
-                    logL(string.format("      > %s [%s]", sub.Name, sub.ClassName))
-                end
             end
         else
             logL("  (Pasta PlacedEggRenders nao encontrada)")
@@ -533,7 +767,8 @@ local function dumpGameData()
             for _, s in ipairs(slots:GetChildren()) do
                 local pos = getPositionOf(s)
                 local posStr = pos and string.format("(%.1f, %.1f, %.1f)", pos.X, pos.Y, pos.Z) or "N/D"
-                logL(string.format("  - %s [%s] | Pos: %s", s.Name, s.ClassName, posStr))
+                local cleanName = resolveEggDetails(s, nil)
+                logL(string.format("  - %s (Nome: %s) [%s] | Pos: %s", s.Name, cleanName, s.ClassName, posStr))
             end
         else
             logL("  (Pasta AreaEggSlotsClient nao encontrada)")
@@ -570,11 +805,11 @@ local function dumpGameData()
         if writefile then writefile("ROUBE_UM_OVO_DUMP.txt", fullText) end
         if setclipboard then setclipboard(fullText) end
     end)
-    addLog("INSPETOR", "Dump exportado para ROUBE_UM_OVO_DUMP.txt e copiado (" .. tostring(#discovered) .. " ovos)!")
+    addLog("INSPETOR", "Dump exportado para ROUBE_UM_OVO_DUMP.txt (" .. tostring(#discovered) .. " ovos)!")
     return fullText, #discovered
 end
 
--- 11. ESP LEVE E DISCRETO (SEM EMOJIS)
+-- 11. ESP Leve e Discreto (Sem Emojis)
 local activeESPs = {}
 local function clearAllESP()
     for target, item in pairs(activeESPs) do
@@ -635,11 +870,10 @@ local function updateESP()
     pcall(function()
         local seen = {}
         local hrp = getHRP()
-        local myName = LocalPlayer.Name:lower()
 
         if Config.EggESP then
             local eggs = scanAllEggs()
-            for i = 1, math.min(#eggs, 30) do
+            for i = 1, math.min(#eggs, 35) do
                 local e = eggs[i]
                 if not e.IsMyPlot and e.Distance <= Config.ESPMaxDistance then
                     seen[e.Instance] = true
@@ -672,19 +906,19 @@ local function updateESP()
     end)
 end
 
--- 12. CONSTRUÇÃO DA INTERFACE (TECH BLUE MINIMALISTA EM PORTUGUÊS)
+-- 12. Construção da Interface (Tech Blue Minimalista em Português)
 local TweenService = Services.TweenService
 local UserInputService = Services.UserInputService
 
-local C_BG       = Color3.fromRGB(10, 14, 23)       -- Obsidian Slate
-local C_SIDEBAR  = Color3.fromRGB(14, 19, 31)       -- Dark Navy
-local C_CARD     = Color3.fromRGB(18, 25, 41)       -- Slate Card
-local C_BORDER   = Color3.fromRGB(30, 41, 59)       -- Stroke (#1E293B)
-local C_ITEM_BG  = Color3.fromRGB(22, 32, 51)       -- Input Background
-local C_BLUE     = Color3.fromRGB(56, 189, 248)     -- Tech Blue (#38BDF8)
+local C_BG       = Color3.fromRGB(10, 14, 23)
+local C_SIDEBAR  = Color3.fromRGB(14, 19, 31)
+local C_CARD     = Color3.fromRGB(18, 25, 41)
+local C_BORDER   = Color3.fromRGB(30, 41, 59)
+local C_ITEM_BG  = Color3.fromRGB(22, 32, 51)
+local C_BLUE     = Color3.fromRGB(56, 189, 248)
 local C_BLUE_DARK= Color3.fromRGB(14, 116, 144)
-local C_TEXT     = Color3.fromRGB(248, 250, 252)    -- White
-local C_TEXT_DIM = Color3.fromRGB(148, 163, 184)    -- Slate Dim
+local C_TEXT     = Color3.fromRGB(248, 250, 252)
+local C_TEXT_DIM = Color3.fromRGB(148, 163, 184)
 local C_INACTIVE = Color3.fromRGB(51, 65, 85)
 
 local function tw(obj, props, t)
@@ -716,7 +950,6 @@ local function addPadding(parent, t, b, l, r)
     return p
 end
 
--- ScreenGui Instanciado Antecipadamente e Protegido
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = getRandomName()
 ScreenGui.ResetOnSpawn = false
@@ -735,7 +968,7 @@ MainFrame.Parent = ScreenGui
 addCorner(MainFrame, 8)
 addStroke(MainFrame, C_BORDER, 1)
 
--- Arrasto Suave da Janela
+-- Arrasto Suave
 local dragging, dragInput, dragStart, startPos
 local function makeDraggable(handle)
     handle.InputBegan:Connect(function(i)
@@ -781,7 +1014,6 @@ SidebarPatch.BorderSizePixel = 0
 SidebarPatch.Parent = Sidebar
 makeDraggable(Sidebar)
 
--- Logo em Português
 local Brand = Instance.new("Frame")
 Brand.Size = UDim2.new(1, 0, 0, 50)
 Brand.BackgroundTransparency = 1
@@ -803,7 +1035,7 @@ Title.Size = UDim2.new(1, -24, 0, 20)
 Title.Position = UDim2.new(0, 16, 0, 26)
 Title.BackgroundTransparency = 1
 Title.RichText = true
-Title.Text = '<b>RADAR HUB</b> <font color="#38BDF8">v3.9</font>'
+Title.Text = '<b>RADAR HUB</b> <font color="#38BDF8">v4.0</font>'
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 15.5
 Title.TextColor3 = C_TEXT
@@ -821,7 +1053,7 @@ local NavLayout = Instance.new("UIListLayout")
 NavLayout.Padding = UDim.new(0, 4)
 NavLayout.Parent = NavList
 
--- Perfil no Rodapé da Sidebar
+-- Perfil no Rodapé
 local ProfileBar = Instance.new("Frame")
 ProfileBar.Size = UDim2.new(1, -20, 0, 38)
 ProfileBar.Position = UDim2.new(0, 10, 1, -46)
@@ -856,14 +1088,14 @@ StatusDot.Size = UDim2.new(1, -40, 0, 12)
 StatusDot.Position = UDim2.new(0, 38, 0, 19)
 StatusDot.BackgroundTransparency = 1
 StatusDot.RichText = true
-StatusDot.Text = '<font color="#10B981">●</font> Ativo & Seguro'
+StatusDot.Text = '<font color="#10B981">●</font> Voo Seguro Ativo'
 StatusDot.Font = Enum.Font.Gotham
 StatusDot.TextSize = 9.5
 StatusDot.TextColor3 = C_TEXT_DIM
 StatusDot.TextXAlignment = Enum.TextXAlignment.Left
 StatusDot.Parent = ProfileBar
 
--- Barra Superior
+-- TopBar
 local TopBar = Instance.new("Frame")
 TopBar.Size = UDim2.new(1, -165, 0, 44)
 TopBar.Position = UDim2.new(0, 165, 0, 0)
@@ -884,7 +1116,7 @@ local SearchInput = Instance.new("TextBox")
 SearchInput.Size = UDim2.new(1, -16, 1, 0)
 SearchInput.Position = UDim2.new(0, 8, 0, 0)
 SearchInput.BackgroundTransparency = 1
-SearchInput.PlaceholderText = "Filtrar por nome, peso, zona ou raridade..."
+SearchInput.PlaceholderText = "Filtrar por nome do ovo, ilha, peso ou raridade..."
 SearchInput.PlaceholderColor3 = C_TEXT_DIM
 SearchInput.Text = ""
 SearchInput.Font = Enum.Font.Gotham
@@ -1184,14 +1416,14 @@ local StatusCard = createCard(RadarPage, "STATUS DO RADAR")
 local StatusLabel = Instance.new("TextLabel")
 StatusLabel.Size = UDim2.new(1, 0, 0, 20)
 StatusLabel.BackgroundTransparency = 1
-StatusLabel.Text = "Iniciando varredura passiva de PlacedEggRenders e AreaEggSlotsClient..."
+StatusLabel.Text = "Iniciando varredura passiva com resolução avançada de nomes..."
 StatusLabel.Font = Enum.Font.Gotham
 StatusLabel.TextSize = 11
 StatusLabel.TextColor3 = C_TEXT_DIM
 StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
 StatusLabel.Parent = StatusCard
 
-local EggsCard = createCard(RadarPage, "OVOS ENCONTRADOS NO MAPA")
+local EggsCard = createCard(RadarPage, "OVOS DETECTADOS NO MAPA")
 local EggListHolder = Instance.new("Frame")
 EggListHolder.Size = UDim2.new(1, 0, 0, 0)
 EggListHolder.AutomaticSize = Enum.AutomaticSize.Y
@@ -1227,7 +1459,7 @@ local function renderRadarList(eggs)
             addCorner(row, 5)
             addStroke(row, C_BORDER, 1)
 
-            -- Linha 1: Nome + Raridade/Peso + Distância
+            -- Linha 1: Nome do Ovo + Raridade/Peso + Distância
             local title = Instance.new("TextLabel")
             title.Size = UDim2.new(1, -165, 0, 16)
             title.Position = UDim2.new(0, 8, 0, 6)
@@ -1252,7 +1484,7 @@ local function renderRadarList(eggs)
             dist.TextXAlignment = Enum.TextXAlignment.Right
             dist.Parent = row
 
-            -- Linha 2: Zona / Coordenadas
+            -- Linha 2: Zona / Coordenadas / Origem
             local sub = Instance.new("TextLabel")
             sub.Size = UDim2.new(1, -165, 0, 16)
             sub.Position = UDim2.new(0, 8, 0, 26)
@@ -1285,7 +1517,7 @@ local function renderRadarList(eggs)
                 task.delay(1, function() copyBtn.Text = "COPIAR POS" end)
             end)
 
-            -- Botão 2: Ir até o Ovo (Deslocamento Seguro)
+            -- Botão 2: Ir até o Ovo (Voo Aéreo Seguro Anti-Morte)
             local gotoBtn = Instance.new("TextButton")
             gotoBtn.Size = UDim2.new(0, 78, 0, 22)
             gotoBtn.Position = UDim2.new(1, -82, 0, 15)
@@ -1299,10 +1531,10 @@ local function renderRadarList(eggs)
 
             gotoBtn.MouseButton1Click:Connect(function()
                 task.spawn(function()
-                    addLog("MOVIMENTO", "Iniciando deslocamento suave ate " .. e.Name .. " (" .. math.floor(e.Distance) .. " studs)...")
-                    local ok = movePlayerTo(e.Position + Vector3.new(0, 1, 0), Config.MoveSpeed)
+                    addLog("MOVIMENTO", "Iniciando voo seguro ate " .. e.Name .. " (" .. math.floor(e.Distance) .. " studs)...")
+                    local ok = movePlayerTo(e.Position + Vector3.new(0, 2.5, 0), Config.MoveSpeed)
                     if ok then
-                        addLog("MOVIMENTO", "Chegou ao alvo! Tentando interagir...")
+                        addLog("MOVIMENTO", "Chegou ao destino! Tentando coletar...")
                         if e.Prompt then triggerPrompt(e.Prompt) end
                     else
                         addLog("MOVIMENTO", "Deslocamento finalizado.")
@@ -1312,14 +1544,14 @@ local function renderRadarList(eggs)
         end
     end
 
-    StatusLabel.Text = string.format("Monitorando %d ovos no mapa (%d visíveis pelo filtro atual).", #currentDiscovered, matched)
+    StatusLabel.Text = string.format("Monitorando %d ovos no mapa (%d visíveis pelo filtro).", #currentDiscovered, matched)
 end
 
 local function executeRadarScan()
-    StatusLabel.Text = "Executando varredura profunda..."
+    StatusLabel.Text = "Executando varredura profunda de ovos..."
     local eggs = scanAllEggs()
     renderRadarList(eggs)
-    addLog("RADAR", string.format("Varredura concluida. %d ovos/prompts detectados.", #eggs))
+    addLog("RADAR", string.format("Varredura concluída. %d ovos identificados.", #eggs))
     updateESP()
 end
 
@@ -1339,7 +1571,7 @@ local DumpCard = createCard(InspectorPage, "INSPETOR DE ARQUIVOS E DADOS INTERNO
 local DumpDesc = Instance.new("TextLabel")
 DumpDesc.Size = UDim2.new(1, 0, 0, 34)
 DumpDesc.BackgroundTransparency = 1
-DumpDesc.Text = "Analisa ReplicatedStorage.Data, PlacedEggRenders, AreaEggSlotsClient e ProximityPrompts ativos para exportar a estrutura completa do jogo."
+DumpDesc.Text = "Analisa ReplicatedStorage.Data, PlacedEggRenders, AreaEggSlotsClient e ClientRenderedAssets para gerar inventário completo com nomes reais."
 DumpDesc.Font = Enum.Font.Gotham
 DumpDesc.TextSize = 11
 DumpDesc.TextColor3 = C_TEXT_DIM
@@ -1350,7 +1582,7 @@ DumpDesc.Parent = DumpCard
 local DumpStatus = Instance.new("TextLabel")
 DumpStatus.Size = UDim2.new(1, 0, 0, 18)
 DumpStatus.BackgroundTransparency = 1
-DumpStatus.Text = "Status: Pronto para exportar inventário."
+DumpStatus.Text = "Status: Pronto para exportar inventário estrutural."
 DumpStatus.Font = Enum.Font.Code
 DumpStatus.TextSize = 10.5
 DumpStatus.TextColor3 = C_BLUE
@@ -1364,36 +1596,92 @@ addButton(DumpCard, "EXPORTAR DUMP ESTRUTURAL (TXT NO DISCO & CLIPBOARD)", funct
 end)
 
 --================================================================--
--- 3. ABA: AUTOMAÇÃO (DESLOCAMENTO SUAVE & ROUBO OBSERVADO)
+-- 3. ABA: AUTOMAÇÃO (VOO SEGURO, POSSE DE OVO & ENTREGA NA BASE)
 --================================================================--
 
 local AutoPage = createPage("Automacao")
-local AutoCard = createCard(AutoPage, "DESLOCAMENTO SEGURO & AUTO-ROUBO")
+local AutoCard = createCard(AutoPage, "AUTOMAÇÃO INTELIGENTE DE ROUBO & ENTREGA")
 
-addToggle(AutoCard, "Ativar Roubo Automático (Passo a Passo)", Config.AutoSteal, function(state)
+addToggle(AutoCard, "Ativar Roubo Automático Inteligente", Config.AutoSteal, function(state)
     Config.AutoSteal = state
     if state then
-        addLog("ROUBO", "Ciclo de roubo automático iniciado.")
+        addLog("ROUBO", "Ciclo de roubo automático iniciado com verificação de posse.")
         task.spawn(function()
             while scriptActive and Config.AutoSteal do
-                local eggs = scanAllEggs()
-                if #eggs > 0 then
-                    local target = eggs[1]
-                    addLog("ROUBO", "Alvo selecionado: " .. target.Name .. " (" .. target.Rarity .. ") em " .. target.Zone)
-                    local arrived = movePlayerTo(target.Position + Vector3.new(0, 1, 0), Config.MoveSpeed)
-                    if arrived and target.Prompt then
-                        triggerPrompt(target.Prompt)
-                        task.wait(Config.StealDelay)
-                    end
-                    if Config.ReturnToBase then
-                        local basePos = getBasePosition()
-                        if basePos then
-                            addLog("ROUBO", "Retornando à base registrada...")
-                            movePlayerTo(basePos + Vector3.new(0, 3, 0), Config.MoveSpeed)
+                -- 1. Checar se já está segurando um ovo nas mãos / costas / mochila
+                local holding, heldEggName = isHoldingEgg()
+                if holding then
+                    addLog("BASE", "Ovo detectado em mãos (" .. tostring(heldEggName) .. ")! Priorizando entrega na base...")
+                    local basePos = getBasePosition()
+                    if basePos then
+                        movePlayerTo(basePos + Vector3.new(0, 3.5, 0), Config.MoveSpeed)
+                        
+                        -- Aguardar na base até o ovo ser depositado no pedestal do plot
+                        local waitDeposit = 0
+                        while scriptActive and Config.AutoSteal and waitDeposit < 8 do
+                            task.wait(0.5)
+                            waitDeposit = waitDeposit + 0.5
+                            if not isHoldingEgg() then
+                                addLog("BASE", "Ovo depositado com sucesso no pedestal da base!")
+                                break
+                            end
                         end
                     end
+                    task.wait(Config.StealDelay)
                 else
-                    addLog("ROUBO", "Nenhum ovo elegível encontrado no momento.")
+                    -- 2. Não está com ovo: buscar alvos externos elegíveis
+                    local eggs = scanAllEggs()
+                    local validTargets = {}
+                    for _, eg in ipairs(eggs) do
+                        if not eg.IsMyPlot then
+                            table.insert(validTargets, eg)
+                        end
+                    end
+
+                    if #validTargets > 0 then
+                        local target = validTargets[1]
+                        addLog("ROUBO", "Alvo selecionado: " .. target.Name .. " (" .. target.Rarity .. ") em " .. target.Zone)
+                        local arrived = movePlayerTo(target.Position + Vector3.new(0, 2.5, 0), Config.MoveSpeed)
+                        
+                        if arrived and target.Prompt then
+                            addLog("ROUBO", "Acionando coleta do ovo...")
+                            triggerPrompt(target.Prompt)
+
+                            -- Aguardar até 2.5s para confirmação da posse do ovo
+                            local waitPick = 0
+                            while waitPick < 2.5 do
+                                task.wait(0.2)
+                                waitPick = waitPick + 0.2
+                                if isHoldingEgg() then
+                                    addLog("ROUBO", "Ovo em mãos! Iniciando retorno imediato à base...")
+                                    break
+                                end
+                            end
+                        end
+
+                        -- Retornar à base se pegou o ovo ou se ReturnToBase estiver ativo
+                        if isHoldingEgg() or Config.ReturnToBase then
+                            local basePos = getBasePosition()
+                            if basePos then
+                                addLog("BASE", "Retornando à base com voo seguro...")
+                                movePlayerTo(basePos + Vector3.new(0, 3.5, 0), Config.MoveSpeed)
+
+                                -- Aguardar depósito
+                                local waitDeposit = 0
+                                while scriptActive and Config.AutoSteal and waitDeposit < 8 do
+                                    task.wait(0.5)
+                                    waitDeposit = waitDeposit + 0.5
+                                    if not isHoldingEgg() then
+                                        addLog("BASE", "Ovo armazenado no plot!")
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    else
+                        addLog("ROUBO", "Nenhum ovo de outros jogadores ou ilhas disponível.")
+                        task.wait(2)
+                    end
                 end
                 task.wait(Config.StealDelay)
             end
@@ -1422,16 +1710,37 @@ end)
 
 addButton(AutoCard, "ROUBAR ALVO TOP 1 AGORA", function()
     task.spawn(function()
+        local holding, heldName = isHoldingEgg()
+        if holding then
+            addLog("BASE", "Já está segurando um ovo (" .. tostring(heldName) .. ")! Entregue-o primeiro.")
+            local basePos = getBasePosition()
+            if basePos then movePlayerTo(basePos + Vector3.new(0, 3.5, 0), Config.MoveSpeed) end
+            return
+        end
+
         local eggs = scanAllEggs()
-        if #eggs > 0 then
-            local target = eggs[1]
+        local validTargets = {}
+        for _, eg in ipairs(eggs) do
+            if not eg.IsMyPlot then table.insert(validTargets, eg) end
+        end
+
+        if #validTargets > 0 then
+            local target = validTargets[1]
             addLog("ROUBO", "Indo até o alvo Top 1: " .. target.Name)
-            movePlayerTo(target.Position + Vector3.new(0, 1, 0), Config.MoveSpeed)
-            if target.Prompt then triggerPrompt(target.Prompt) end
-            if Config.ReturnToBase then
-                local basePos = getBasePosition()
-                if basePos then movePlayerTo(basePos + Vector3.new(0, 3, 0), Config.MoveSpeed) end
+            local arrived = movePlayerTo(target.Position + Vector3.new(0, 2.5, 0), Config.MoveSpeed)
+            if arrived and target.Prompt then
+                triggerPrompt(target.Prompt)
+                task.wait(0.5)
             end
+            if Config.ReturnToBase or isHoldingEgg() then
+                local basePos = getBasePosition()
+                if basePos then
+                    addLog("BASE", "Retornando à base...")
+                    movePlayerTo(basePos + Vector3.new(0, 3.5, 0), Config.MoveSpeed)
+                end
+            end
+        else
+            addLog("ROUBO", "Nenhum alvo Top 1 disponível.")
         end
     end)
 end)
@@ -1443,7 +1752,7 @@ end)
 local VisualsPage = createPage("Visuals")
 local VisualsCard = createCard(VisualsPage, "MARCADORES NO MUNDO (ESP)")
 
-addToggle(VisualsCard, "Ativar ESP de Ovos (Mostra Peso, Nome e Distância)", Config.EggESP, function(state)
+addToggle(VisualsCard, "Ativar ESP de Ovos (Mostra Nome Real, Peso e Distância)", Config.EggESP, function(state)
     Config.EggESP = state
     updateESP()
     addLog("ESP", "ESP de ovos " .. (state and "ativado." or "desativado."))
