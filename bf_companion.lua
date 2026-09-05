@@ -1,17 +1,15 @@
 --[[
-    BIGFROOT COMPANION - AUTO ESTEIRA, AUTO-EXECUTE & SPEED FARM (v2.0 DEFINITIVA)
+    BIGFROOT COMPANION - AUTO ESTEIRA, AUTO-EXECUTE & SPEED FARM (v2.1)
     -----------------------------------------------------------------------
     Script complementar ultra-leve desenvolvido para rodar EM CONJUNTO com o BigFroot (BF).
     
-    CORREÇÕES v2.0:
-    - Correção de Detecção de Ovo: Corrigido o bug onde o status ficava preso em
-      "BF Ativo (Plantando Ovo)" por conta do AssetEggData.Enabled ser sempre true.
-      Agora a verificação é estrita e exata (só ativa se houver de fato um ovo sendo carregado).
-    - Interface 100% Legível e Nítida: Tipografia refeita com fonte SourceSansBold / Arial,
-      tamanho aumentado para 13-14px, contraste calibrado e botões alargados para 32px de altura.
-    - Indicador de Telemetria ao Vivo: Exibe claramente na tela se há ovo em mãos e
-      qual é o estado real de ociosidade do BigFroot.
-    - Auto-Execute (queue_on_teleport) e Instalador de Autoexec mantidos e otimizados.
+    NOVIDADES v2.1:
+    - Botão UNLOAD Completo: Encerra instantaneamente todos os loops, desconecta
+      todos os eventos, para a movimentação do personagem e remove a interface da tela.
+    - Botão de fechar "X" rápido no cabeçalho + botão vermelho de Unload no card.
+    - Remoção do alternador inútil "Iniciar BF Junto" (o BF já tem auto-execute próprio).
+    - Botão "EXECUTAR BIGFROOT AGORA" com feedback visual em tempo real (Carregando / Sucesso / Erro).
+    - Detecção precisa de ovos em mãos (sem falso-positivo) e tipografia nítida SourceSansBold.
 ]]
 
 -- 1. Silenciamento Preventivo contra LogService
@@ -47,14 +45,17 @@ while not LocalPlayer do
     LocalPlayer = Services.Players.LocalPlayer
 end
 
--- 4. Configurações e Estado
+-- 4. Variáveis de Ciclo de Vida e Conexões
+local isRunning = true
+local activeConnections = {}
+
+-- 5. Configurações e Estado
 local Config = {
     AutoTreadmillEnabled = true,
     IdleThresholdSeconds = 2.0,
     WalkOnTreadmill = true,
     AntiAFK = true,
     AutoReloadOnTeleport = true,
-    AutoLaunchBF = false,
     TreadmillPosition = nil,
     PlotPosition = nil,
     SettingsFile = "bf_companion_settings.json",
@@ -81,8 +82,7 @@ local function saveSettings()
             IdleThresholdSeconds = Config.IdleThresholdSeconds,
             WalkOnTreadmill = Config.WalkOnTreadmill,
             AntiAFK = Config.AntiAFK,
-            AutoReloadOnTeleport = Config.AutoReloadOnTeleport,
-            AutoLaunchBF = Config.AutoLaunchBF
+            AutoReloadOnTeleport = Config.AutoReloadOnTeleport
         }
         if Config.TreadmillPosition then
             data.TreadmillX = Config.TreadmillPosition.X
@@ -104,7 +104,6 @@ local function loadSettings()
             if data.WalkOnTreadmill ~= nil then Config.WalkOnTreadmill = data.WalkOnTreadmill end
             if data.AntiAFK ~= nil then Config.AntiAFK = data.AntiAFK end
             if data.AutoReloadOnTeleport ~= nil then Config.AutoReloadOnTeleport = data.AutoReloadOnTeleport end
-            if data.AutoLaunchBF ~= nil then Config.AutoLaunchBF = data.AutoLaunchBF end
             if data.TreadmillX and data.TreadmillY and data.TreadmillZ then
                 Config.TreadmillPosition = Vector3.new(data.TreadmillX, data.TreadmillY, data.TreadmillZ)
             end
@@ -113,9 +112,9 @@ local function loadSettings()
 end
 loadSettings()
 
--- 5. MECANISMO DE AUTO-EXECUTE (QUEUE ON TELEPORT & AUTOEXEC INSTALLER)
+-- 6. MECANISMO DE AUTO-EXECUTE (QUEUE ON TELEPORT & AUTOEXEC INSTALLER)
 local function armTeleportAutoExecute()
-    if not Config.AutoReloadOnTeleport then return end
+    if not isRunning or not Config.AutoReloadOnTeleport then return end
     local qot = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
     if qot then
         local payload = string.format([[
@@ -131,14 +130,15 @@ end
 
 armTeleportAutoExecute()
 
-pcall(function()
-    LocalPlayer.OnTeleport:Connect(function()
+local tpConn = LocalPlayer.OnTeleport:Connect(function()
+    if isRunning then
         armTeleportAutoExecute()
-    end)
+    end
 end)
+table.insert(activeConnections, tpConn)
 
 local function installToAutoexec()
-    if not writefile then return false, "writefile indisponível" end
+    if not writefile then return false, "writefile indisponível no executor" end
     local scriptContent = string.format([[-- Auto-Execute Oficial: BF Companion (Roube um Ovo)
 if game.PlaceId == 107778070777162 or game.PlaceId == 0 then
     repeat task.wait() until game:IsLoaded()
@@ -154,21 +154,33 @@ end
     return ok, err
 end
 
-local function executeBigFrootNow()
+-- 7. Execução do BigFroot com Feedback Visual
+local function executeBigFrootNow(feedbackBtn)
+    if feedbackBtn then
+        feedbackBtn.Text = "CARREGANDO BIGFROOT..."
+        feedbackBtn.BackgroundColor3 = Color3.fromRGB(245, 158, 11)
+    end
     task.spawn(function()
-        pcall(function()
+        local ok, err = pcall(function()
             loadstring(game:HttpGet(Config.BFLoaderURL))()
         end)
+        if feedbackBtn then
+            if ok then
+                feedbackBtn.Text = "BIGFROOT INICIADO COM SUCESSO!"
+                feedbackBtn.BackgroundColor3 = Color3.fromRGB(16, 185, 129)
+            else
+                feedbackBtn.Text = "ERRO AO CARREGAR BIGFROOT"
+                feedbackBtn.BackgroundColor3 = Color3.fromRGB(239, 68, 68)
+            end
+            task.delay(2.5, function()
+                feedbackBtn.Text = "EXECUTAR BIGFROOT AGORA"
+                feedbackBtn.BackgroundColor3 = Color3.fromRGB(56, 189, 248)
+            end)
+        end
     end)
 end
 
-if Config.AutoLaunchBF then
-    task.delay(2, function()
-        executeBigFrootNow()
-    end)
-end
-
--- 6. Funções Auxiliares do Personagem
+-- 8. Funções Auxiliares do Personagem
 local function getHRP()
     local c = LocalPlayer.Character
     return c and c:FindFirstChild("HumanoidRootPart")
@@ -195,7 +207,7 @@ local function checkIsHoldingEgg()
     local char = LocalPlayer.Character
     if not char then return false, nil end
 
-    -- 1. Atributos ESPECÍFICOS de posse de ovo (não busca termos genéricos)
+    -- 1. Atributos específicos de posse de ovo
     for _, attr in ipairs({"EggUid", "CarryingEgg", "HoldingEgg", "HasEgg", "StolenEgg", "Carrying"}) do
         local val = char:GetAttribute(attr)
         if val ~= nil and val ~= "" and val ~= false then
@@ -207,7 +219,7 @@ local function checkIsHoldingEgg()
         end
     end
 
-    -- 2. Modelos ou Peças soldadas que contenham "egg" ou "ovo" (ex: Chicken Egg)
+    -- 2. Peças soldadas que contenham "egg" ou "ovo" (ex: Chicken Egg)
     for _, child in ipairs(char:GetChildren()) do
         local low = child.Name:lower()
         if not standardLimbNames[low] and not child:IsA("Accessory") and not child:IsA("Shirt")
@@ -229,7 +241,7 @@ local function checkIsHoldingEgg()
         end
     end
 
-    -- 3. Mochila
+    -- 3. Mochila (Backpack)
     local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
     if bp then
         for _, item in ipairs(bp:GetChildren()) do
@@ -242,14 +254,14 @@ local function checkIsHoldingEgg()
         end
     end
 
-    -- 4. GUI de dados do ovo (APENAS se houver frame VISÍVEL ativo, nunca checar só .Enabled)
+    -- 4. GUI de dados do ovo (apenas se frame visível com altura real)
     local pgui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
     if pgui then
         local eggDataGui = pgui:FindFirstChild("AssetEggData")
         if eggDataGui and eggDataGui.Enabled then
             for _, child in ipairs(eggDataGui:GetChildren()) do
                 if child:IsA("GuiObject") and child.Visible and child.Size.Y.Offset > 20 then
-                    return true, "AssetEggData (Visível)"
+                    return true, "AssetEggData"
                 end
             end
         end
@@ -343,6 +355,7 @@ local function walkToPosition(targetPos)
     local startTick = os.clock()
 
     while (os.clock() - startTick) < (dur + 0.1) do
+        if not isRunning then break end
         local holdingNow = checkIsHoldingEgg()
         if not hum or hum.Health <= 0 or holdingNow then
             State.IsCompanionMoving = false
@@ -359,15 +372,18 @@ local function walkToPosition(targetPos)
         Services.RunService.Heartbeat:Wait()
     end
 
-    hrp.CFrame = CFrame.new(targetPos)
+    if isRunning then
+        hrp.CFrame = CFrame.new(targetPos)
+    end
     State.IsCompanionMoving = false
     return true
 end
 
--- 7. LOOP DE COOPERAÇÃO COM O BIGFROOT
+-- 9. LOOP PRINCIPAL DE COOPERAÇÃO
 task.spawn(function()
-    while true do
+    while isRunning do
         task.wait(0.4)
+        if not isRunning then break end
 
         if not Config.AutoTreadmillEnabled then
             State.CurrentStatus = "Desativado pelo Usuário"
@@ -389,13 +405,13 @@ task.spawn(function()
                 local moveDelta = (currentPos - State.LastPosition).Magnitude
                 State.LastPosition = currentPos
 
-                -- CASO 1: Segurando ovo -> BigFroot está carregando/plantando!
+                -- CASO 1: Segurando ovo -> BigFroot plantando!
                 if holdingEgg then
                     State.LastActiveTick = os.clock()
                     State.IsOnTreadmill = false
                     State.CurrentStatus = "BF Plantando (" .. tostring(eggName) .. ")"
 
-                -- CASO 2: Movimento rápido para fora da esteira -> BigFroot roubando!
+                -- CASO 2: Movimento rápido para fora da base -> BigFroot roubando!
                 elseif moveDelta > 12 and not State.IsCompanionMoving then
                     State.LastActiveTick = os.clock()
                     State.IsOnTreadmill = false
@@ -423,7 +439,7 @@ task.spawn(function()
                                 State.IsOnTreadmill = true
                                 State.CurrentStatus = "Ocioso: Farmando Velocidade"
 
-                                if Config.WalkOnTreadmill then
+                                if Config.WalkOnTreadmill and isRunning then
                                     pcall(function()
                                         hum:Move(Vector3.new(0, 0, -1), false)
                                     end)
@@ -441,18 +457,49 @@ task.spawn(function()
     end
 end)
 
--- 8. Anti-AFK Seguro
-LocalPlayer.Idled:Connect(function()
-    if Config.AntiAFK then
+-- 10. Anti-AFK Seguro
+local afkConn = LocalPlayer.Idled:Connect(function()
+    if isRunning and Config.AntiAFK then
         pcall(function()
             Services.VirtualUser:CaptureController()
             Services.VirtualUser:ClickButton2(Vector2.new(0, 0))
         end)
     end
 end)
+table.insert(activeConnections, afkConn)
 
--- 9. INTERFACE VISUAL DE ALTA LEGIBILIDADE (FONTE NÍTIDA, ALTO CONTRASTE)
-local ScreenGui = Instance.new("ScreenGui")
+-- 11. FUNÇÃO UNLOAD COMPLETA
+local ScreenGui = nil
+
+local function unloadCompanion()
+    isRunning = false
+
+    -- Desconectar todas as conexões
+    for _, conn in ipairs(activeConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    activeConnections = {}
+
+    -- Parar movimentação do humanoid
+    pcall(function()
+        local hum = getHumanoid()
+        if hum then hum:Move(Vector3.zero, false) end
+    end)
+
+    -- Destruir a GUI completamente
+    if ScreenGui and ScreenGui.Parent then
+        ScreenGui:Destroy()
+    end
+
+    -- Limpar globais
+    pcall(function()
+        _G.BFCompanion_Active = nil
+        if getgenv then getgenv().BFCompanion_Active = nil end
+    end)
+end
+
+-- 12. INTERFACE VISUAL DE ALTA LEGIBILIDADE (v2.1)
+ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "BF_Companion_HUD"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -495,7 +542,7 @@ cardLayout.SortOrder = Enum.SortOrder.LayoutOrder
 cardLayout.Padding = UDim.new(0, 7)
 cardLayout.Parent = Card
 
--- Header
+-- Header: Título, Botão Minimizar e Botão Fechar X (Unload)
 local HeaderFrame = Instance.new("Frame")
 HeaderFrame.Size = UDim2.new(1, 0, 0, 24)
 HeaderFrame.BackgroundTransparency = 1
@@ -503,18 +550,18 @@ HeaderFrame.LayoutOrder = 1
 HeaderFrame.Parent = Card
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -30, 1, 0)
+Title.Size = UDim2.new(1, -56, 1, 0)
 Title.BackgroundTransparency = 1
 Title.Font = Enum.Font.SourceSansBold
 Title.TextSize = 15
 Title.TextColor3 = Color3.fromRGB(56, 189, 248)
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "BF COMPANION v2.0"
+Title.Text = "BF COMPANION v2.1"
 Title.Parent = HeaderFrame
 
 local MinBtn = Instance.new("TextButton")
-MinBtn.Size = UDim2.new(0, 24, 0, 22)
-MinBtn.Position = UDim2.new(1, -24, 0, 1)
+MinBtn.Size = UDim2.new(0, 22, 0, 22)
+MinBtn.Position = UDim2.new(1, -50, 0, 1)
 MinBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
 MinBtn.Text = "-"
 MinBtn.Font = Enum.Font.SourceSansBold
@@ -524,6 +571,23 @@ MinBtn.Parent = HeaderFrame
 local minCorner = Instance.new("UICorner")
 minCorner.CornerRadius = UDim.new(0, 4)
 minCorner.Parent = MinBtn
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 22, 0, 22)
+CloseBtn.Position = UDim2.new(1, -24, 0, 1)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(185, 28, 28)
+CloseBtn.Text = "X"
+CloseBtn.Font = Enum.Font.SourceSansBold
+CloseBtn.TextSize = 13
+CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseBtn.Parent = HeaderFrame
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 4)
+closeCorner.Parent = CloseBtn
+
+CloseBtn.MouseButton1Click:Connect(function()
+    unloadCompanion()
+end)
 
 -- Container de Conteúdo
 local ContentBox = Instance.new("Frame")
@@ -606,7 +670,7 @@ end)
 
 -- 4. Botão: Executar BigFroot Agora (Azul Céu)
 local RunBFBtn = Instance.new("TextButton")
-RunBFBtn.Size = UDim2.new(1, 0, 0, 30)
+RunBFBtn.Size = UDim2.new(1, 0, 0, 32)
 RunBFBtn.BackgroundColor3 = Color3.fromRGB(56, 189, 248)
 RunBFBtn.Text = "EXECUTAR BIGFROOT AGORA"
 RunBFBtn.Font = Enum.Font.SourceSansBold
@@ -618,34 +682,10 @@ btnCorner3.CornerRadius = UDim.new(0, 5)
 btnCorner3.Parent = RunBFBtn
 
 RunBFBtn.MouseButton1Click:Connect(function()
-    RunBFBtn.Text = "CARREGANDO BIGFROOT..."
-    executeBigFrootNow()
-    task.delay(2, function()
-        RunBFBtn.Text = "EXECUTAR BIGFROOT AGORA"
-    end)
+    executeBigFrootNow(RunBFBtn)
 end)
 
--- 5. Toggle: Auto-Iniciar BigFroot Junto
-local AutoLaunchBFBtn = Instance.new("TextButton")
-AutoLaunchBFBtn.Size = UDim2.new(1, 0, 0, 26)
-AutoLaunchBFBtn.BackgroundColor3 = Config.AutoLaunchBF and Color3.fromRGB(16, 185, 129) or Color3.fromRGB(51, 65, 85)
-AutoLaunchBFBtn.Text = Config.AutoLaunchBF and "INICIAR BF JUNTO: LIGADO" or "INICIAR BF JUNTO: DESLIGADO"
-AutoLaunchBFBtn.Font = Enum.Font.SourceSansBold
-AutoLaunchBFBtn.TextSize = 12
-AutoLaunchBFBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-AutoLaunchBFBtn.Parent = ContentBox
-local btnCorner4 = Instance.new("UICorner")
-btnCorner4.CornerRadius = UDim.new(0, 5)
-btnCorner4.Parent = AutoLaunchBFBtn
-
-AutoLaunchBFBtn.MouseButton1Click:Connect(function()
-    Config.AutoLaunchBF = not Config.AutoLaunchBF
-    AutoLaunchBFBtn.BackgroundColor3 = Config.AutoLaunchBF and Color3.fromRGB(16, 185, 129) or Color3.fromRGB(51, 65, 85)
-    AutoLaunchBFBtn.Text = Config.AutoLaunchBF and "INICIAR BF JUNTO: LIGADO" or "INICIAR BF JUNTO: DESLIGADO"
-    saveSettings()
-end)
-
--- 6. Botão: Instalar no Autoexec do Executor
+-- 5. Botão: Instalar no Autoexec do Executor
 local InstallAutoexecBtn = Instance.new("TextButton")
 InstallAutoexecBtn.Size = UDim2.new(1, 0, 0, 26)
 InstallAutoexecBtn.BackgroundColor3 = Color3.fromRGB(51, 65, 85)
@@ -673,6 +713,23 @@ InstallAutoexecBtn.MouseButton1Click:Connect(function()
     end)
 end)
 
+-- 6. Botão UNLOAD (Vermelho Destaque)
+local UnloadBtn = Instance.new("TextButton")
+UnloadBtn.Size = UDim2.new(1, 0, 0, 28)
+UnloadBtn.BackgroundColor3 = Color3.fromRGB(185, 28, 28)
+UnloadBtn.Text = "ENCERRAR COMPANION (UNLOAD)"
+UnloadBtn.Font = Enum.Font.SourceSansBold
+UnloadBtn.TextSize = 12
+UnloadBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+UnloadBtn.Parent = ContentBox
+local btnCorner6 = Instance.new("UICorner")
+btnCorner6.CornerRadius = UDim.new(0, 5)
+btnCorner6.Parent = UnloadBtn
+
+UnloadBtn.MouseButton1Click:Connect(function()
+    unloadCompanion()
+end)
+
 -- Minimização
 local isMinimized = false
 MinBtn.MouseButton1Click:Connect(function()
@@ -683,7 +740,7 @@ end)
 
 -- Atualização contínua do status na interface com cores dinâmicas
 task.spawn(function()
-    while true do
+    while isRunning do
         if StatusText and StatusText.Parent then
             StatusText.Text = "Status: " .. State.CurrentStatus
             if State.IsOnTreadmill then
