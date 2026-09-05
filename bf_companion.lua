@@ -1,26 +1,25 @@
 --[[
-    BIGFROOT COMPANION - AUTO ESTEIRA, AUTO-EXECUTE & SPEED FARM (v2.1)
+    AUTO ESTEIRA - ASSISTENTE DE VELOCIDADE (v3.0 STEALTH & MINIMALIST)
     -----------------------------------------------------------------------
-    Script complementar ultra-leve desenvolvido para rodar EM CONJUNTO com o BigFroot (BF).
-    
-    NOVIDADES v2.1:
-    - Botão UNLOAD Completo: Encerra instantaneamente todos os loops, desconecta
-      todos os eventos, para a movimentação do personagem e remove a interface da tela.
-    - Botão de fechar "X" rápido no cabeçalho + botão vermelho de Unload no card.
-    - Remoção do alternador inútil "Iniciar BF Junto" (o BF já tem auto-execute próprio).
-    - Botão "EXECUTAR BIGFROOT AGORA" com feedback visual em tempo real (Carregando / Sucesso / Erro).
-    - Detecção precisa de ovos em mãos (sem falso-positivo) e tipografia nítida SourceSansBold.
+    - Neutralização Preventiva: Proteção contra BAC-9519 eliminando assinaturas
+      de texto, teleporte artificial por CFrame e chamadas perigosas de input.
+    - Movimentação Física Nativa: Usa exclusivamente Humanoid:MoveTo, respeitando
+      a física e animação padrão do jogo (indetectável por sistema de servidor).
+    - Detecção Dinâmica da Própria Base: Identifica automaticamente o plot do jogador
+      em qualquer servidor/troca de mapa e localiza a sua esteira exclusiva.
+    - Interface Minimalista: Design limpo de vidro escuro (210px), sem poluição
+      visual, com minimização em pílula compacta e botão de encerramento rápido.
 ]]
 
--- 1. Silenciamento Preventivo contra LogService
+-- 1. Silenciamento Total Preventivo contra LogService.MessageOut
 local function silentOutput(...) end
 local print = silentOutput
 local warn = silentOutput
 
--- 2. Limpeza Preventiva de Globais
+-- 2. Limpeza de Instâncias Anteriores
 pcall(function()
-    _G.BFCompanion_Active = nil
-    if getgenv then getgenv().BFCompanion_Active = nil end
+    _G.AutoEsteira_Active = nil
+    if getgenv then getgenv().AutoEsteira_Active = nil end
 end)
 
 -- 3. Serviços Seguros via cloneref
@@ -34,9 +33,8 @@ local Services = {
     Players = safeService("Players"),
     RunService = safeService("RunService"),
     UserInputService = safeService("UserInputService"),
-    VirtualUser = safeService("VirtualUser"),
     HttpService = safeService("HttpService"),
-    TeleportService = safeService("TeleportService")
+    TweenService = safeService("TweenService")
 }
 
 local LocalPlayer = Services.Players.LocalPlayer
@@ -45,142 +43,63 @@ while not LocalPlayer do
     LocalPlayer = Services.Players.LocalPlayer
 end
 
--- 4. Variáveis de Ciclo de Vida e Conexões
+-- 4. Variáveis de Ciclo de Vida e Controle
 local isRunning = true
 local activeConnections = {}
 
--- 5. Configurações e Estado
+-- 5. Neutralização de Scripts Locais de Colisão no Personagem
+local function disableCharacterPushback(char)
+    if not char then return end
+    pcall(function()
+        for _, child in ipairs(char:GetChildren()) do
+            if child:IsA("LocalScript") then
+                local low = child.Name:lower()
+                if low:find("anticollision") or low:find("highseed") or low:find("highspeed")
+                    or low:find("pushback") or low:find("fixcollision") then
+                    child.Disabled = true
+                    child:Destroy()
+                end
+            end
+        end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+            hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        end
+    end)
+end
+
+if LocalPlayer.Character then
+    disableCharacterPushback(LocalPlayer.Character)
+end
+
+local charConn = LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.2)
+    disableCharacterPushback(char)
+end)
+table.insert(activeConnections, charConn)
+
+-- 6. Configurações e Estado
 local Config = {
-    AutoTreadmillEnabled = true,
+    Enabled = true,
     IdleThresholdSeconds = 2.0,
-    WalkOnTreadmill = true,
-    AntiAFK = true,
-    AutoReloadOnTeleport = true,
     TreadmillPosition = nil,
+    TreadmillLookVector = Vector3.new(0, 0, -1),
     PlotPosition = nil,
-    SettingsFile = "bf_companion_settings.json",
-    CompanionURL = "https://raw.githubusercontent.com/talespxk/Roube-um-ovo-script/refs/heads/main/bf_companion.lua",
-    BFLoaderURL = "https://raw.githubusercontent.com/hanniii1/Loader/refs/heads/main/BFLoader.lua"
+    SettingsFile = "auto_esteira_config.json"
 }
 
 local State = {
     CurrentStatus = "Iniciando...",
-    HoldingEggDetected = false,
-    HoldingEggName = nil,
+    PlotFound = false,
+    TreadmillFound = false,
+    HoldingEgg = false,
     IsOnTreadmill = false,
     LastActiveTick = os.clock(),
-    LastPosition = Vector3.zero,
-    IsCompanionMoving = false
+    LastPosition = Vector3.zero
 }
 
--- Carregar / Salvar Configurações Locais
-local function saveSettings()
-    pcall(function()
-        if not writefile then return end
-        local data = {
-            AutoTreadmillEnabled = Config.AutoTreadmillEnabled,
-            IdleThresholdSeconds = Config.IdleThresholdSeconds,
-            WalkOnTreadmill = Config.WalkOnTreadmill,
-            AntiAFK = Config.AntiAFK,
-            AutoReloadOnTeleport = Config.AutoReloadOnTeleport
-        }
-        if Config.TreadmillPosition then
-            data.TreadmillX = Config.TreadmillPosition.X
-            data.TreadmillY = Config.TreadmillPosition.Y
-            data.TreadmillZ = Config.TreadmillPosition.Z
-        end
-        writefile(Config.SettingsFile, Services.HttpService:JSONEncode(data))
-    end)
-end
-
-local function loadSettings()
-    pcall(function()
-        if not readfile or not isfile or not isfile(Config.SettingsFile) then return end
-        local raw = readfile(Config.SettingsFile)
-        local data = Services.HttpService:JSONDecode(raw)
-        if data then
-            if data.AutoTreadmillEnabled ~= nil then Config.AutoTreadmillEnabled = data.AutoTreadmillEnabled end
-            if data.IdleThresholdSeconds ~= nil then Config.IdleThresholdSeconds = data.IdleThresholdSeconds end
-            if data.WalkOnTreadmill ~= nil then Config.WalkOnTreadmill = data.WalkOnTreadmill end
-            if data.AntiAFK ~= nil then Config.AntiAFK = data.AntiAFK end
-            if data.AutoReloadOnTeleport ~= nil then Config.AutoReloadOnTeleport = data.AutoReloadOnTeleport end
-            if data.TreadmillX and data.TreadmillY and data.TreadmillZ then
-                Config.TreadmillPosition = Vector3.new(data.TreadmillX, data.TreadmillY, data.TreadmillZ)
-            end
-        end
-    end)
-end
-loadSettings()
-
--- 6. MECANISMO DE AUTO-EXECUTE (QUEUE ON TELEPORT & AUTOEXEC INSTALLER)
-local function armTeleportAutoExecute()
-    if not isRunning or not Config.AutoReloadOnTeleport then return end
-    local qot = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
-    if qot then
-        local payload = string.format([[
-            repeat task.wait() until game:IsLoaded()
-            task.wait(2)
-            pcall(function()
-                loadstring(game:HttpGet("%s"))()
-            end)
-        ]], Config.CompanionURL)
-        pcall(function() qot(payload) end)
-    end
-end
-
-armTeleportAutoExecute()
-
-local tpConn = LocalPlayer.OnTeleport:Connect(function()
-    if isRunning then
-        armTeleportAutoExecute()
-    end
-end)
-table.insert(activeConnections, tpConn)
-
-local function installToAutoexec()
-    if not writefile then return false, "writefile indisponível no executor" end
-    local scriptContent = string.format([[-- Auto-Execute Oficial: BF Companion (Roube um Ovo)
-if game.PlaceId == 107778070777162 or game.PlaceId == 0 then
-    repeat task.wait() until game:IsLoaded()
-    task.wait(2)
-    pcall(function()
-        loadstring(game:HttpGet("%s"))()
-    end)
-end
-]], Config.CompanionURL)
-    local ok, err = pcall(function()
-        writefile("autoexec/bf_companion_auto.lua", scriptContent)
-    end)
-    return ok, err
-end
-
--- 7. Execução do BigFroot com Feedback Visual
-local function executeBigFrootNow(feedbackBtn)
-    if feedbackBtn then
-        feedbackBtn.Text = "CARREGANDO BIGFROOT..."
-        feedbackBtn.BackgroundColor3 = Color3.fromRGB(245, 158, 11)
-    end
-    task.spawn(function()
-        local ok, err = pcall(function()
-            loadstring(game:HttpGet(Config.BFLoaderURL))()
-        end)
-        if feedbackBtn then
-            if ok then
-                feedbackBtn.Text = "BIGFROOT INICIADO COM SUCESSO!"
-                feedbackBtn.BackgroundColor3 = Color3.fromRGB(16, 185, 129)
-            else
-                feedbackBtn.Text = "ERRO AO CARREGAR BIGFROOT"
-                feedbackBtn.BackgroundColor3 = Color3.fromRGB(239, 68, 68)
-            end
-            task.delay(2.5, function()
-                feedbackBtn.Text = "EXECUTAR BIGFROOT AGORA"
-                feedbackBtn.BackgroundColor3 = Color3.fromRGB(56, 189, 248)
-            end)
-        end
-    end)
-end
-
--- 8. Funções Auxiliares do Personagem
+-- Funções Auxiliares do Personagem
 local function getHRP()
     local c = LocalPlayer.Character
     return c and c:FindFirstChild("HumanoidRootPart")
@@ -202,228 +121,249 @@ local standardLimbNames = {
     ["right leg"] = true, ["animate"] = true, ["humanoid"] = true
 }
 
--- DETECÇÃO CORRIGIDA DE OVO EM MÃOS (SEM FALSO-POSITIVO)
+-- 7. Detecção Rigorosa de Posse de Ovo (Sem Falso-Positivo)
 local function checkIsHoldingEgg()
     local char = LocalPlayer.Character
-    if not char then return false, nil end
+    if not char then return false end
 
-    -- 1. Atributos específicos de posse de ovo
+    -- Atributos de posse
     for _, attr in ipairs({"EggUid", "CarryingEgg", "HoldingEgg", "HasEgg", "StolenEgg", "Carrying"}) do
         local val = char:GetAttribute(attr)
         if val ~= nil and val ~= "" and val ~= false then
-            return true, attr .. "=" .. tostring(val)
+            return true
         end
         local valP = LocalPlayer:GetAttribute(attr)
         if valP ~= nil and valP ~= "" and valP ~= false then
-            return true, attr .. "=" .. tostring(valP)
+            return true
         end
     end
 
-    -- 2. Peças soldadas que contenham "egg" ou "ovo" (ex: Chicken Egg)
+    -- Modelos ou ferramentas soldadas que não sejam partes do corpo
     for _, child in ipairs(char:GetChildren()) do
         local low = child.Name:lower()
         if not standardLimbNames[low] and not child:IsA("Accessory") and not child:IsA("Shirt")
             and not child:IsA("Pants") and not child:IsA("BodyColors") and not child:IsA("CharacterMesh") then
             
-            local isEggName = low:find("egg") or low:find("ovo") or child:GetAttribute("IsEgg") == true
-            if isEggName then
+            if low:find("egg") or low:find("ovo") or child:GetAttribute("IsEgg") == true then
                 if child:IsA("Tool") then
-                    return true, child.Name
+                    return true
                 elseif child:IsA("Model") or child:IsA("BasePart") then
                     local hasWeld = child:FindFirstChildWhichIsA("WeldConstraint", true)
                         or child:FindFirstChildWhichIsA("Weld", true)
                         or child:FindFirstChildWhichIsA("Motor6D", true)
                     if hasWeld then
-                        return true, child.Name
+                        return true
                     end
                 end
             end
         end
     end
 
-    -- 3. Mochila (Backpack)
+    -- Mochila
     local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
     if bp then
         for _, item in ipairs(bp:GetChildren()) do
             if item:IsA("Tool") then
                 local n = item.Name:lower()
                 if n:find("egg") or n:find("ovo") or item:GetAttribute("IsEgg") then
-                    return true, item.Name
+                    return true
                 end
             end
         end
     end
 
-    -- 4. GUI de dados do ovo (apenas se frame visível com altura real)
-    local pgui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    if pgui then
-        local eggDataGui = pgui:FindFirstChild("AssetEggData")
-        if eggDataGui and eggDataGui.Enabled then
-            for _, child in ipairs(eggDataGui:GetChildren()) do
-                if child:IsA("GuiObject") and child.Visible and child.Size.Y.Offset > 20 then
-                    return true, "AssetEggData"
-                end
-            end
-        end
-    end
-
-    return false, nil
+    return false
 end
 
+-- 8. ALGORITMO ROBUSTO: DETECTAR A PRÓPRIA BASE (PLOT)
 local function findMyPlot()
     local plots = Services.Workspace:FindFirstChild("Plots")
     if not plots then return nil end
 
+    local myName = LocalPlayer.Name:lower()
+    local myDisplay = LocalPlayer.DisplayName:lower()
+    local myId = tostring(LocalPlayer.UserId)
+
+    -- Camada 1: Identificação direta por Objeto/Valor de Dono
     for _, plot in ipairs(plots:GetChildren()) do
-        local o = plot:FindFirstChild("Owner") or plot:FindFirstChild("Player") or plot:FindFirstChild("OwnerName")
-        if o and o.Value and (tostring(o.Value) == LocalPlayer.Name or tostring(o.Value) == LocalPlayer.DisplayName) then
-            return plot
+        for _, tag in ipairs({"Owner", "Player", "OwnerName", "OwnerId", "UserId", "PlayerId"}) do
+            local valObj = plot:FindFirstChild(tag)
+            if valObj then
+                if valObj:IsA("ObjectValue") and (valObj.Value == LocalPlayer or valObj.Value == LocalPlayer.Character) then
+                    return plot
+                elseif valObj:IsA("StringValue") then
+                    local s = valObj.Value:lower()
+                    if s == myName or s == myDisplay then return plot end
+                elseif valObj:IsA("IntValue") or valObj:IsA("NumberValue") then
+                    if tostring(valObj.Value) == myId then return plot end
+                end
+            end
         end
+
+        -- Camada 2: Atributos no Plot
         for k, v in pairs(plot:GetAttributes()) do
-            if tostring(v) == LocalPlayer.Name or tostring(v) == tostring(LocalPlayer.UserId) then
+            local s = tostring(v):lower()
+            if s == myName or s == myDisplay or s == myId then
                 return plot
             end
         end
-    end
-    return nil
-end
 
-local function autoDetectTreadmill()
-    local myPlot = findMyPlot()
-    if myPlot then
-        Config.PlotPosition = myPlot:GetPivot().Position
-        for _, desc in ipairs(myPlot:GetDescendants()) do
-            local low = desc.Name:lower()
-            if low:find("treadmill") or low:find("esteira") or low:find("belt") then
-                if desc:IsA("BasePart") then
-                    return desc.Position + Vector3.new(0, 2.5, 0)
-                elseif desc:IsA("Model") then
-                    return desc:GetPivot().Position + Vector3.new(0, 2.5, 0)
+        -- Camada 3: Placas de Texto com Nome do Jogador dentro da Base
+        for _, desc in ipairs(plot:GetDescendants()) do
+            if desc:IsA("TextLabel") or desc:IsA("TextButton") then
+                local txt = desc.Text:lower()
+                if txt:find(myName) or txt:find(myDisplay) then
+                    return plot
                 end
             end
         end
     end
 
+    -- Camada 4: Base mais próxima da posição atual do jogador na base
+    local hrp = getHRP()
+    if hrp then
+        local bestPlot = nil
+        local bestDist = 65
+        for _, plot in ipairs(plots:GetChildren()) do
+            local pPos = plot:IsA("Model") and plot:GetPivot().Position or (plot:IsA("BasePart") and plot.Position)
+            if pPos then
+                local d = (pPos - hrp.Position).Magnitude
+                if d < bestDist then
+                    bestDist = d
+                    bestPlot = plot
+                end
+            end
+        end
+        if bestPlot then return bestPlot end
+    end
+
+    return nil
+end
+
+-- 9. ALGORITMO EXCLUSIVO: DETECTAR A PRÓPRIA ESTEIRA (NUNCA A DOS OUTROS)
+local function findMyTreadmill(myPlot)
+    if not myPlot then return nil, nil end
+
+    local plotPivot = myPlot:GetPivot()
+    local plotCenter = plotPivot.Position
+
+    -- A. Buscar peças nomeadas dentro do próprio Plot
+    for _, desc in ipairs(myPlot:GetDescendants()) do
+        local low = desc.Name:lower()
+        if low:find("treadmill") or low:find("esteira") or low:find("belt") or low:find("speed") or low:find("treino") then
+            if desc:IsA("BasePart") then
+                return desc.Position + Vector3.new(0, 2.5, 0), desc.CFrame.LookVector
+            elseif desc:IsA("Model") then
+                return desc:GetPivot().Position + Vector3.new(0, 2.5, 0), desc:GetPivot().LookVector
+            end
+        end
+    end
+
+    -- B. Buscar na pasta __ClientTreadmillRenders (estritamente dentro de 45 studs do centro da base do jogador)
     local ctr = Services.Workspace:FindFirstChild("__ClientTreadmillRenders")
-    if ctr and Config.PlotPosition then
-        local best = nil
-        local bestDist = 60
+    if ctr then
+        local bestCandidate = nil
+        local bestDist = 45 -- Limite rigoroso: só aceita se estiver dentro do raio da própria base
+
         for _, child in ipairs(ctr:GetChildren()) do
             local pos = child:IsA("Model") and child:GetPivot().Position or (child:IsA("BasePart") and child.Position)
             if pos then
-                local d = (pos - Config.PlotPosition).Magnitude
-                if d < bestDist then
-                    bestDist = d
-                    best = pos + Vector3.new(0, 2.5, 0)
+                local distFromMyPlot = (pos - plotCenter).Magnitude
+                if distFromMyPlot < bestDist then
+                    bestDist = distFromMyPlot
+                    bestCandidate = child
                 end
             end
         end
-        if best then return best end
+
+        if bestCandidate then
+            local pos = bestCandidate:IsA("Model") and bestCandidate:GetPivot().Position or bestCandidate.Position
+            local look = bestCandidate:IsA("Model") and bestCandidate:GetPivot().LookVector or bestCandidate.CFrame.LookVector
+            return pos + Vector3.new(0, 2.5, 0), look
+        end
     end
 
-    local hrp = getHRP()
-    if hrp then
-        for _, desc in ipairs(Services.Workspace:GetDescendants()) do
-            local low = desc.Name:lower()
-            if (low:find("treadmill") or low:find("esteira")) and desc:IsA("BasePart") then
-                local d = (desc.Position - hrp.Position).Magnitude
-                if d < 120 then
-                    return desc.Position + Vector3.new(0, 2.5, 0)
+    -- C. Buscar partes com TouchInterest próximo ao piso do próprio plot
+    for _, desc in ipairs(myPlot:GetDescendants()) do
+        if desc:IsA("TouchTransmitter") or desc:IsA("TouchInterest") or desc.Name == "TouchInterest" then
+            local p = desc.Parent
+            if p and p:IsA("BasePart") then
+                local diffY = math.abs(p.Position.Y - plotCenter.Y)
+                if diffY < 12 then
+                    return p.Position + Vector3.new(0, 2.5, 0), p.CFrame.LookVector
                 end
             end
         end
     end
 
-    return nil
+    return nil, nil
 end
 
-local function walkToPosition(targetPos)
-    local hrp = getHRP()
+local function updateTreadmillTarget()
+    local myPlot = findMyPlot()
+    if myPlot then
+        State.PlotFound = true
+        Config.PlotPosition = myPlot:GetPivot().Position
+        local pos, look = findMyTreadmill(myPlot)
+        if pos then
+            Config.TreadmillPosition = pos
+            if look then Config.TreadmillLookVector = look end
+            State.TreadmillFound = true
+            return true
+        end
+    end
+    State.TreadmillFound = false
+    return false
+end
+
+-- 10. MOVIMENTAÇÃO 100% FÍSICA E SEGURA (HUMANOID:MOVETO)
+local function safeWalkTo(targetPos)
     local hum = getHumanoid()
-    if not hrp or not hum or hum.Health <= 0 then return false end
-
-    State.IsCompanionMoving = true
-    local startPos = hrp.Position
-    local dist = (targetPos - startPos).Magnitude
-
-    if dist < 2.5 then
-        State.IsCompanionMoving = false
-        return true
-    end
-
-    local dur = math.clamp(dist / 40, 0.3, 2.5)
-    local startTick = os.clock()
-
-    while (os.clock() - startTick) < (dur + 0.1) do
-        if not isRunning then break end
-        local holdingNow = checkIsHoldingEgg()
-        if not hum or hum.Health <= 0 or holdingNow then
-            State.IsCompanionMoving = false
-            return false
-        end
-
-        local alpha = math.clamp((os.clock() - startTick) / dur, 0, 1)
-        local cur = startPos:Lerp(targetPos, alpha)
-        hrp.CFrame = CFrame.new(cur, cur + (targetPos - cur))
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-
-        if (targetPos - hrp.Position).Magnitude < 2.0 then break end
-        Services.RunService.Heartbeat:Wait()
-    end
-
-    if isRunning then
-        hrp.CFrame = CFrame.new(targetPos)
-    end
-    State.IsCompanionMoving = false
-    return true
+    if not hum or hum.Health <= 0 then return end
+    hum:MoveTo(targetPos)
 end
 
--- 9. LOOP PRINCIPAL DE COOPERAÇÃO
+-- 11. LOOP PRINCIPAL DE COOPERAÇÃO DISCRETA
 task.spawn(function()
     while isRunning do
-        task.wait(0.4)
+        task.wait(0.35)
         if not isRunning then break end
 
-        if not Config.AutoTreadmillEnabled then
-            State.CurrentStatus = "Desativado pelo Usuário"
+        if not Config.Enabled then
+            State.CurrentStatus = "Pausado"
             State.IsOnTreadmill = false
         else
             local hrp = getHRP()
             local hum = getHumanoid()
 
             if hrp and hum and hum.Health > 0 then
-                if not Config.TreadmillPosition then
-                    Config.TreadmillPosition = autoDetectTreadmill()
+                -- Atualizar esteira se ainda não encontrada
+                if not Config.TreadmillPosition or not State.TreadmillFound then
+                    updateTreadmillTarget()
                 end
 
-                local holdingEgg, eggName = checkIsHoldingEgg()
-                State.HoldingEggDetected = holdingEgg
-                State.HoldingEggName = eggName
+                local holding = checkIsHoldingEgg()
+                State.HoldingEgg = holding
 
                 local currentPos = hrp.Position
                 local moveDelta = (currentPos - State.LastPosition).Magnitude
                 State.LastPosition = currentPos
 
-                -- CASO 1: Segurando ovo -> BigFroot plantando!
-                if holdingEgg then
+                local distFromPlot = Config.PlotPosition and (currentPos - Config.PlotPosition).Magnitude or 0
+
+                -- 1. Segurando ovo -> Outro script está plantando!
+                if holding then
                     State.LastActiveTick = os.clock()
                     State.IsOnTreadmill = false
-                    State.CurrentStatus = "BF Plantando (" .. tostring(eggName) .. ")"
+                    State.CurrentStatus = "Plantando Ovo"
 
-                -- CASO 2: Movimento rápido para fora da base -> BigFroot roubando!
-                elseif moveDelta > 12 and not State.IsCompanionMoving then
+                -- 2. Movimento rápido ou fora da base -> Outro script roubando/voando!
+                elseif (distFromPlot > 60 or moveDelta > 15) and Config.PlotPosition then
                     State.LastActiveTick = os.clock()
                     State.IsOnTreadmill = false
-                    State.CurrentStatus = "BF Ativo (Voando/Roubando)"
+                    State.CurrentStatus = "Operando no Mapa"
 
-                -- CASO 3: Longe da base (> 90 studs) -> Em outra ilha!
-                elseif Config.PlotPosition and (currentPos - Config.PlotPosition).Magnitude > 90 and not State.IsCompanionMoving then
-                    State.LastActiveTick = os.clock()
-                    State.IsOnTreadmill = false
-                    State.CurrentStatus = "BF Ativo (Na Ilha)"
-
-                -- CASO 4: Na base sem ovos em mãos!
+                -- 3. Na base sem ovos em mãos!
                 else
                     local idleTime = os.clock() - State.LastActiveTick
 
@@ -431,25 +371,22 @@ task.spawn(function()
                         if Config.TreadmillPosition then
                             local distToTreadmill = (currentPos - Config.TreadmillPosition).Magnitude
 
-                            if distToTreadmill > 3.0 and not State.IsCompanionMoving then
+                            if distToTreadmill > 3.5 then
                                 State.CurrentStatus = "Indo para a Esteira..."
-                                walkToPosition(Config.TreadmillPosition)
-                                State.IsOnTreadmill = true
+                                safeWalkTo(Config.TreadmillPosition)
+                                State.IsOnTreadmill = false
                             else
                                 State.IsOnTreadmill = true
-                                State.CurrentStatus = "Ocioso: Farmando Velocidade"
+                                State.CurrentStatus = "Na Esteira (Treinando)"
 
-                                if Config.WalkOnTreadmill and isRunning then
-                                    pcall(function()
-                                        hum:Move(Vector3.new(0, 0, -1), false)
-                                    end)
-                                end
+                                -- Manter caminhada na esteira contra o sentido da correia
+                                safeWalkTo(Config.TreadmillPosition + Config.TreadmillLookVector * 4)
                             end
                         else
-                            State.CurrentStatus = "Defina a Esteira no Botão Abaixo"
+                            State.CurrentStatus = "Procurando Esteira..."
                         end
                     else
-                        State.CurrentStatus = string.format("Aguardando Ociosidade (%.1fs)", math.max(0, Config.IdleThresholdSeconds - idleTime))
+                        State.CurrentStatus = string.format("Aguardando (%.1fs)", math.max(0, Config.IdleThresholdSeconds - idleTime))
                     end
                 end
             end
@@ -457,130 +394,159 @@ task.spawn(function()
     end
 end)
 
--- 10. Anti-AFK Seguro
-local afkConn = LocalPlayer.Idled:Connect(function()
-    if isRunning and Config.AntiAFK then
-        pcall(function()
-            Services.VirtualUser:CaptureController()
-            Services.VirtualUser:ClickButton2(Vector2.new(0, 0))
-        end)
-    end
-end)
-table.insert(activeConnections, afkConn)
-
--- 11. FUNÇÃO UNLOAD COMPLETA
+-- 12. FUNÇÃO UNLOAD COMPLETA
 local ScreenGui = nil
 
 local function unloadCompanion()
     isRunning = false
 
-    -- Desconectar todas as conexões
     for _, conn in ipairs(activeConnections) do
         pcall(function() conn:Disconnect() end)
     end
     activeConnections = {}
 
-    -- Parar movimentação do humanoid
     pcall(function()
         local hum = getHumanoid()
         if hum then hum:Move(Vector3.zero, false) end
     end)
 
-    -- Destruir a GUI completamente
     if ScreenGui and ScreenGui.Parent then
         ScreenGui:Destroy()
     end
 
-    -- Limpar globais
     pcall(function()
-        _G.BFCompanion_Active = nil
-        if getgenv then getgenv().BFCompanion_Active = nil end
+        _G.AutoEsteira_Active = nil
+        if getgenv then getgenv().AutoEsteira_Active = nil end
     end)
 end
 
--- 12. INTERFACE VISUAL DE ALTA LEGIBILIDADE (v2.1)
+-- 13. PROTEÇÃO ANTECIPADA DA INTERFACE GRÁFICA
+local function protectGui(gui)
+    pcall(function()
+        local env = (getgenv and getgenv()) or _G
+        local pgui = rawget(env, "protectgui") or env.protectgui
+        if type(pgui) == "function" then
+            pgui(gui)
+        else
+            local synTable = rawget(env, "syn") or env.syn
+            if type(synTable) == "table" and type(synTable.protect_gui) == "function" then
+                synTable.protect_gui(gui)
+            end
+        end
+    end)
+end
+
+local function getGuiContainer()
+    local container = nil
+    pcall(function()
+        if gethui then container = gethui() end
+    end)
+    if not container then
+        pcall(function()
+            local cg = Services.Workspace.Parent:FindFirstChild("CoreGui") or game:GetService("CoreGui")
+            container = (cloneref and cloneref(cg)) or cg
+        end)
+    end
+    if not container and LocalPlayer then
+        container = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    end
+    return container or Services.Workspace
+end
+
+-- 14. INTERFACE MINIMALISTA, ELEGANTE E DISCRETA (v3.0)
+local randomId = Services.HttpService:GenerateGUID(false):sub(1, 8)
 ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "BF_Companion_HUD"
+ScreenGui.Name = "HUD_" .. randomId
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
-pcall(function()
-    if gethui then ScreenGui.Parent = gethui()
-    elseif Services.CoreGui then ScreenGui.Parent = Services.CoreGui
-    else ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
-end)
+protectGui(ScreenGui)
+ScreenGui.Parent = getGuiContainer()
 
+-- Card Principal (apenas 210px de largura, vidro escuro fosco)
 local Card = Instance.new("Frame")
-Card.Name = "CompanionCard"
-Card.Size = UDim2.new(0, 310, 0, 0)
+Card.Name = "Panel"
+Card.Size = UDim2.new(0, 210, 0, 0)
 Card.AutomaticSize = Enum.AutomaticSize.Y
-Card.Position = UDim2.new(0.78, -10, 0.05, 0)
-Card.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
+Card.Position = UDim2.new(0.84, -10, 0.05, 0)
+Card.BackgroundColor3 = Color3.fromRGB(15, 20, 28)
+Card.BackgroundTransparency = 0.08
 Card.BorderSizePixel = 0
 Card.Active = true
 Card.Draggable = true
 Card.Parent = ScreenGui
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 8)
-corner.Parent = Card
+local cardCorner = Instance.new("UICorner")
+cardCorner.CornerRadius = UDim.new(0, 8)
+cardCorner.Parent = Card
 
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(56, 189, 248)
-stroke.Thickness = 1.5
-stroke.Parent = Card
+local cardStroke = Instance.new("UIStroke")
+cardStroke.Color = Color3.fromRGB(40, 52, 70)
+cardStroke.Thickness = 1.2
+cardStroke.Parent = Card
 
 local cardPad = Instance.new("UIPadding")
-cardPad.PaddingTop = UDim.new(0, 10)
-cardPad.PaddingBottom = UDim.new(0, 12)
-cardPad.PaddingLeft = UDim.new(0, 12)
-cardPad.PaddingRight = UDim.new(0, 12)
+cardPad.PaddingTop = UDim.new(0, 8)
+cardPad.PaddingBottom = UDim.new(0, 10)
+cardPad.PaddingLeft = UDim.new(0, 10)
+cardPad.PaddingRight = UDim.new(0, 10)
 cardPad.Parent = Card
 
 local cardLayout = Instance.new("UIListLayout")
 cardLayout.SortOrder = Enum.SortOrder.LayoutOrder
-cardLayout.Padding = UDim.new(0, 7)
+cardLayout.Padding = UDim.new(0, 6)
 cardLayout.Parent = Card
 
--- Header: Título, Botão Minimizar e Botão Fechar X (Unload)
-local HeaderFrame = Instance.new("Frame")
-HeaderFrame.Size = UDim2.new(1, 0, 0, 24)
-HeaderFrame.BackgroundTransparency = 1
-HeaderFrame.LayoutOrder = 1
-HeaderFrame.Parent = Card
+-- Header: Indicador, Título, Minimizar e Fechar
+local Header = Instance.new("Frame")
+Header.Size = UDim2.new(1, 0, 0, 20)
+Header.BackgroundTransparency = 1
+Header.LayoutOrder = 1
+Header.Parent = Card
+
+local StatusDot = Instance.new("Frame")
+StatusDot.Size = UDim2.new(0, 8, 0, 8)
+StatusDot.Position = UDim2.new(0, 0, 0.5, -4)
+StatusDot.BackgroundColor3 = Color3.fromRGB(16, 185, 129)
+StatusDot.BorderSizePixel = 0
+StatusDot.Parent = Header
+local dotCorner = Instance.new("UICorner")
+dotCorner.CornerRadius = UDim.new(1, 0)
+dotCorner.Parent = StatusDot
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -56, 1, 0)
+Title.Size = UDim2.new(1, -54, 1, 0)
+Title.Position = UDim2.new(0, 14, 0, 0)
 Title.BackgroundTransparency = 1
 Title.Font = Enum.Font.SourceSansBold
-Title.TextSize = 15
-Title.TextColor3 = Color3.fromRGB(56, 189, 248)
+Title.TextSize = 13
+Title.TextColor3 = Color3.fromRGB(240, 245, 255)
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "BF COMPANION v2.1"
-Title.Parent = HeaderFrame
+Title.Text = "Auto Esteira"
+Title.Parent = Header
 
 local MinBtn = Instance.new("TextButton")
-MinBtn.Size = UDim2.new(0, 22, 0, 22)
-MinBtn.Position = UDim2.new(1, -50, 0, 1)
-MinBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+MinBtn.Size = UDim2.new(0, 18, 0, 18)
+MinBtn.Position = UDim2.new(1, -38, 0.5, -9)
+MinBtn.BackgroundColor3 = Color3.fromRGB(26, 34, 48)
 MinBtn.Text = "-"
 MinBtn.Font = Enum.Font.SourceSansBold
-MinBtn.TextSize = 15
-MinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-MinBtn.Parent = HeaderFrame
+MinBtn.TextSize = 13
+MinBtn.TextColor3 = Color3.fromRGB(200, 210, 225)
+MinBtn.Parent = Header
 local minCorner = Instance.new("UICorner")
 minCorner.CornerRadius = UDim.new(0, 4)
 minCorner.Parent = MinBtn
 
 local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.new(0, 22, 0, 22)
-CloseBtn.Position = UDim2.new(1, -24, 0, 1)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(185, 28, 28)
-CloseBtn.Text = "X"
+CloseBtn.Size = UDim2.new(0, 18, 0, 18)
+CloseBtn.Position = UDim2.new(1, -18, 0.5, -9)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(153, 27, 27)
+CloseBtn.Text = "x"
 CloseBtn.Font = Enum.Font.SourceSansBold
-CloseBtn.TextSize = 13
+CloseBtn.TextSize = 12
 CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-CloseBtn.Parent = HeaderFrame
+CloseBtn.Parent = Header
 local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0, 4)
 closeCorner.Parent = CloseBtn
@@ -589,7 +555,7 @@ CloseBtn.MouseButton1Click:Connect(function()
     unloadCompanion()
 end)
 
--- Container de Conteúdo
+-- Container de Conteúdo Expansível
 local ContentBox = Instance.new("Frame")
 ContentBox.Size = UDim2.new(1, 0, 0, 0)
 ContentBox.AutomaticSize = Enum.AutomaticSize.Y
@@ -597,161 +563,118 @@ ContentBox.BackgroundTransparency = 1
 ContentBox.LayoutOrder = 2
 ContentBox.Parent = Card
 
-local boxLayout = Instance.new("UIListLayout")
-boxLayout.SortOrder = Enum.SortOrder.LayoutOrder
-boxLayout.Padding = UDim.new(0, 6)
-boxLayout.Parent = ContentBox
+local contentLayout = Instance.new("UIListLayout")
+contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+contentLayout.Padding = UDim.new(0, 5)
+contentLayout.Parent = ContentBox
 
--- 1. Status Principal
-local StatusRow = Instance.new("Frame")
-StatusRow.Size = UDim2.new(1, 0, 0, 28)
-StatusRow.BackgroundColor3 = Color3.fromRGB(24, 33, 53)
-StatusRow.BorderSizePixel = 0
-StatusRow.Parent = ContentBox
-local statusCorner = Instance.new("UICorner")
-statusCorner.CornerRadius = UDim.new(0, 5)
-statusCorner.Parent = StatusRow
+-- 1. Linha de Status Compacta
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Size = UDim2.new(1, 0, 0, 18)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Font = Enum.Font.SourceSansBold
+StatusLabel.TextSize = 12
+StatusLabel.TextColor3 = Color3.fromRGB(16, 185, 129)
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+StatusLabel.Text = "Status: Procurando..."
+StatusLabel.Parent = ContentBox
 
-local StatusText = Instance.new("TextLabel")
-StatusText.Size = UDim2.new(1, -12, 1, 0)
-StatusText.Position = UDim2.new(0, 8, 0, 0)
-StatusText.BackgroundTransparency = 1
-StatusText.Font = Enum.Font.SourceSansBold
-StatusText.TextSize = 13
-StatusText.TextColor3 = Color3.fromRGB(255, 255, 255)
-StatusText.TextXAlignment = Enum.TextXAlignment.Left
-StatusText.Text = "Status: Carregando..."
-StatusText.Parent = StatusRow
+-- 2. Linha de Detecção da Base & Esteira
+local EsteiraLabel = Instance.new("TextLabel")
+EsteiraLabel.Size = UDim2.new(1, 0, 0, 15)
+EsteiraLabel.BackgroundTransparency = 1
+EsteiraLabel.Font = Enum.Font.SourceSans
+EsteiraLabel.TextSize = 11
+EsteiraLabel.TextColor3 = Color3.fromRGB(148, 163, 184)
+EsteiraLabel.TextXAlignment = Enum.TextXAlignment.Left
+EsteiraLabel.Text = "Base: Buscando... | Esteira: ..."
+EsteiraLabel.Parent = ContentBox
 
--- 2. Toggle Auto-Esteira (Verde Nítido)
+-- 3. Botão Único Liga/Desliga Minimalista
 local ToggleBtn = Instance.new("TextButton")
-ToggleBtn.Size = UDim2.new(1, 0, 0, 32)
-ToggleBtn.BackgroundColor3 = Config.AutoTreadmillEnabled and Color3.fromRGB(16, 185, 129) or Color3.fromRGB(51, 65, 85)
-ToggleBtn.Text = Config.AutoTreadmillEnabled and "AUTO ESTEIRA: ATIVADO" or "AUTO ESTEIRA: DESATIVADO"
+ToggleBtn.Size = UDim2.new(1, 0, 0, 26)
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(16, 80, 50)
+ToggleBtn.Text = "ESTEIRA: LIGADA"
 ToggleBtn.Font = Enum.Font.SourceSansBold
-ToggleBtn.TextSize = 13
-ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleBtn.TextSize = 12
+ToggleBtn.TextColor3 = Color3.fromRGB(240, 255, 245)
 ToggleBtn.Parent = ContentBox
-local btnCorner1 = Instance.new("UICorner")
-btnCorner1.CornerRadius = UDim.new(0, 5)
-btnCorner1.Parent = ToggleBtn
+local toggleCorner = Instance.new("UICorner")
+toggleCorner.CornerRadius = UDim.new(0, 5)
+toggleCorner.Parent = ToggleBtn
 
 ToggleBtn.MouseButton1Click:Connect(function()
-    Config.AutoTreadmillEnabled = not Config.AutoTreadmillEnabled
-    ToggleBtn.BackgroundColor3 = Config.AutoTreadmillEnabled and Color3.fromRGB(16, 185, 129) or Color3.fromRGB(51, 65, 85)
-    ToggleBtn.Text = Config.AutoTreadmillEnabled and "AUTO ESTEIRA: ATIVADO" or "AUTO ESTEIRA: DESATIVADO"
-    saveSettings()
-end)
-
--- 3. Salvar Esteira (Azul Oceano Nítido)
-local SetTreadmillBtn = Instance.new("TextButton")
-SetTreadmillBtn.Size = UDim2.new(1, 0, 0, 32)
-SetTreadmillBtn.BackgroundColor3 = Color3.fromRGB(2, 132, 199)
-SetTreadmillBtn.Text = Config.TreadmillPosition and "ESTEIRA SALVA (CLIQUE P/ REDEFINIR)" or "SALVAR POSIÇÃO DA ESTEIRA AQUI"
-SetTreadmillBtn.Font = Enum.Font.SourceSansBold
-SetTreadmillBtn.TextSize = 13
-SetTreadmillBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-SetTreadmillBtn.Parent = ContentBox
-local btnCorner2 = Instance.new("UICorner")
-btnCorner2.CornerRadius = UDim.new(0, 5)
-btnCorner2.Parent = SetTreadmillBtn
-
-SetTreadmillBtn.MouseButton1Click:Connect(function()
-    local hrp = getHRP()
-    if hrp then
-        Config.TreadmillPosition = hrp.Position
-        saveSettings()
-        SetTreadmillBtn.Text = "ESTEIRA GRAVADA COM SUCESSO!"
-        task.delay(1.5, function()
-            SetTreadmillBtn.Text = "ESTEIRA SALVA (CLIQUE P/ REDEFINIR)"
-        end)
-    end
-end)
-
--- 4. Botão: Executar BigFroot Agora (Azul Céu)
-local RunBFBtn = Instance.new("TextButton")
-RunBFBtn.Size = UDim2.new(1, 0, 0, 32)
-RunBFBtn.BackgroundColor3 = Color3.fromRGB(56, 189, 248)
-RunBFBtn.Text = "EXECUTAR BIGFROOT AGORA"
-RunBFBtn.Font = Enum.Font.SourceSansBold
-RunBFBtn.TextSize = 13
-RunBFBtn.TextColor3 = Color3.fromRGB(15, 23, 42)
-RunBFBtn.Parent = ContentBox
-local btnCorner3 = Instance.new("UICorner")
-btnCorner3.CornerRadius = UDim.new(0, 5)
-btnCorner3.Parent = RunBFBtn
-
-RunBFBtn.MouseButton1Click:Connect(function()
-    executeBigFrootNow(RunBFBtn)
-end)
-
--- 5. Botão: Instalar no Autoexec do Executor
-local InstallAutoexecBtn = Instance.new("TextButton")
-InstallAutoexecBtn.Size = UDim2.new(1, 0, 0, 26)
-InstallAutoexecBtn.BackgroundColor3 = Color3.fromRGB(51, 65, 85)
-InstallAutoexecBtn.Text = "INSTALAR NO AUTOEXEC DO EXECUTOR"
-InstallAutoexecBtn.Font = Enum.Font.SourceSansBold
-InstallAutoexecBtn.TextSize = 12
-InstallAutoexecBtn.TextColor3 = Color3.fromRGB(203, 213, 225)
-InstallAutoexecBtn.Parent = ContentBox
-local btnCorner5 = Instance.new("UICorner")
-btnCorner5.CornerRadius = UDim.new(0, 5)
-btnCorner5.Parent = InstallAutoexecBtn
-
-InstallAutoexecBtn.MouseButton1Click:Connect(function()
-    local ok, err = installToAutoexec()
-    if ok then
-        InstallAutoexecBtn.Text = "GRAVADO NO AUTOEXEC COM SUCESSO!"
-        InstallAutoexecBtn.TextColor3 = Color3.fromRGB(16, 185, 129)
+    Config.Enabled = not Config.Enabled
+    if Config.Enabled then
+        ToggleBtn.Text = "ESTEIRA: LIGADA"
+        ToggleBtn.BackgroundColor3 = Color3.fromRGB(16, 80, 50)
+        ToggleBtn.TextColor3 = Color3.fromRGB(240, 255, 245)
     else
-        InstallAutoexecBtn.Text = "ERRO AO GRAVAR AUTOEXEC"
-        InstallAutoexecBtn.TextColor3 = Color3.fromRGB(239, 68, 68)
+        ToggleBtn.Text = "ESTEIRA: DESLIGADA"
+        ToggleBtn.BackgroundColor3 = Color3.fromRGB(35, 42, 54)
+        ToggleBtn.TextColor3 = Color3.fromRGB(160, 175, 195)
     end
-    task.delay(3, function()
-        InstallAutoexecBtn.Text = "INSTALAR NO AUTOEXEC DO EXECUTOR"
-        InstallAutoexecBtn.TextColor3 = Color3.fromRGB(203, 213, 225)
+end)
+
+-- 4. Ação Discreta de Re-escanear Base/Esteira
+local RescanBtn = Instance.new("TextButton")
+RescanBtn.Size = UDim2.new(1, 0, 0, 16)
+RescanBtn.BackgroundTransparency = 1
+RescanBtn.Text = "Reescanear Própria Base"
+RescanBtn.Font = Enum.Font.SourceSans
+RescanBtn.TextSize = 10
+RescanBtn.TextColor3 = Color3.fromRGB(56, 189, 248)
+RescanBtn.Parent = ContentBox
+
+RescanBtn.MouseButton1Click:Connect(function()
+    RescanBtn.Text = "Escaneando mapa..."
+    Config.TreadmillPosition = nil
+    updateTreadmillTarget()
+    task.delay(1, function()
+        RescanBtn.Text = "Reescanear Própria Base"
     end)
 end)
 
--- 6. Botão UNLOAD (Vermelho Destaque)
-local UnloadBtn = Instance.new("TextButton")
-UnloadBtn.Size = UDim2.new(1, 0, 0, 28)
-UnloadBtn.BackgroundColor3 = Color3.fromRGB(185, 28, 28)
-UnloadBtn.Text = "ENCERRAR COMPANION (UNLOAD)"
-UnloadBtn.Font = Enum.Font.SourceSansBold
-UnloadBtn.TextSize = 12
-UnloadBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-UnloadBtn.Parent = ContentBox
-local btnCorner6 = Instance.new("UICorner")
-btnCorner6.CornerRadius = UDim.new(0, 5)
-btnCorner6.Parent = UnloadBtn
-
-UnloadBtn.MouseButton1Click:Connect(function()
-    unloadCompanion()
-end)
-
--- Minimização
+-- Minimização Elegante (Pílula Compacta)
 local isMinimized = false
 MinBtn.MouseButton1Click:Connect(function()
     isMinimized = not isMinimized
     ContentBox.Visible = not isMinimized
     MinBtn.Text = isMinimized and "+" or "-"
+    if isMinimized then
+        Card.Size = UDim2.new(0, 120, 0, 20)
+        cardPad.PaddingBottom = UDim.new(0, 4)
+        cardPad.PaddingTop = UDim.new(0, 4)
+    else
+        Card.Size = UDim2.new(0, 210, 0, 0)
+        cardPad.PaddingBottom = UDim.new(0, 10)
+        cardPad.PaddingTop = UDim.new(0, 8)
+    end
 end)
 
--- Atualização contínua do status na interface com cores dinâmicas
+-- 15. Atualização Contínua e Suave do Status na Interface
 task.spawn(function()
     while isRunning do
-        if StatusText and StatusText.Parent then
-            StatusText.Text = "Status: " .. State.CurrentStatus
+        if StatusLabel and StatusLabel.Parent then
+            StatusLabel.Text = "Status: " .. State.CurrentStatus
+
             if State.IsOnTreadmill then
-                StatusText.TextColor3 = Color3.fromRGB(16, 185, 129) -- Verde
-            elseif State.CurrentStatus:find("BF") then
-                StatusText.TextColor3 = Color3.fromRGB(56, 189, 248) -- Azul ciano
+                StatusLabel.TextColor3 = Color3.fromRGB(16, 185, 129)
+                StatusDot.BackgroundColor3 = Color3.fromRGB(16, 185, 129)
             elseif State.CurrentStatus:find("Aguardando") then
-                StatusText.TextColor3 = Color3.fromRGB(251, 191, 36) -- Dourado
+                StatusLabel.TextColor3 = Color3.fromRGB(245, 158, 11)
+                StatusDot.BackgroundColor3 = Color3.fromRGB(245, 158, 11)
+            elseif State.CurrentStatus:find("Pausado") then
+                StatusLabel.TextColor3 = Color3.fromRGB(148, 163, 184)
+                StatusDot.BackgroundColor3 = Color3.fromRGB(100, 116, 139)
             else
-                StatusText.TextColor3 = Color3.fromRGB(255, 255, 255)
+                StatusLabel.TextColor3 = Color3.fromRGB(56, 189, 248)
+                StatusDot.BackgroundColor3 = Color3.fromRGB(56, 189, 248)
             end
+
+            local baseText = State.PlotFound and "Sua Base: OK" or "Buscando Base..."
+            local esteiraText = State.TreadmillFound and "Esteira: OK" or "Buscando..."
+            EsteiraLabel.Text = baseText .. " | " .. esteiraText
         end
         task.wait(0.3)
     end
