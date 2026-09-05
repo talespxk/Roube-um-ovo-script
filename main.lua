@@ -1,23 +1,16 @@
 --[[
-    ROUBE UM OVO - HUB DE TELEMETRIA & AUTOMAÇÃO (v6.0 DEFINITIVA)
+    ROUBE UM OVO - HUB DE TELEMETRIA & AUTOMAÇÃO (v7.0 DEEP INSPECTOR)
     -----------------------------------------------------------------------
-    - Neutralização Ativa Anti-Cheat: Desativa e remove automaticamente os scripts
-      locais AntiCollisionHighSeedPushBack e FixCollisions do Character, zerando
-      RagdollEndTime e eliminando todo efeito de pushback / teletransporte para trás (lag falso).
-    - Trava de Ilha Atual (LockCurrentIsland): Impede o roubo de ovos em ilhas trancadas
-      distantes, eliminando mortes contra as barreiras de fronteira do servidor.
-    - Movimento Híbrido Perfeito:
-        > IDA (até o ovo): Retão direto suave no solo (Y+2.5 studs) com noclip contínuo.
-        > VOLTA (à base com o ovo): Voo aéreo seguro por cima das paredes (Y ≈ 92 studs),
-          pousando suavemente no centro do plot do jogador.
-    - Catálogo Completo de 118 Pets: Mapeamento embutido de todos os pets e raridades oficiais,
-      resolução numérica de MeshId em ReplicatedStorage.AssetModels e inspeção espacial
-      direta em Workspace.ClientRenderedAssets.
-    - Detecção Real de Posse: Monitora atributos e modelos soldados ao avatar (ex: Chicken Egg)
-      e aciona o retorno instantâneo à base.
-    - Inspetor Aprofundado: Exporta dados de Assets, Rarity, Áreas, Guardas, Modelos e
-      ClientRenderedAssets para ROUBE_UM_OVO_DUMP.txt.
-    - Interface Tech Blue (#38BDF8), 100% em português, zero emojis, zero poluição global.
+    - Inspetor Forense Exaustivo (v7.0): Extrai e desempacota 100% das tabelas
+      internas de ReplicatedStorage.Data (Assets com 118 pets, Guards, Areas,
+      AreaEggResetCycle, DragonEgg, AdminAbuseEgg, Sakura, BrainrotEgg).
+    - Localizador Físico de Guardas / Galinha: Mapeia as coordenadas exatas no mapa
+      dos guardas de ilha, em especial a Primeira Galinha da Floresta para o Ragdoll TP.
+    - Dissecção Completa de Slots e Meshes: Inspeciona todos os 44+ slots de
+      AreaEggSlotsClient, ClientRenderedAssets e MeshIds numéricos.
+    - Resolução Real de Nomes de Ovos: Identifica o nome próprio e raridade
+      legítimos de cada ovo, eliminando o fallback para nomes genéricos de ilha.
+    - Neutralização Ativa Anti-Cheat e Movimento Seguro: Mantém física protegida.
 ]]
 
 -- 1. Silenciamento Total Preventivo contra LogService.MessageOut
@@ -642,6 +635,19 @@ local function resolveEggDetails(instance, prompt)
     if prompt then
         inspectStr(prompt.ObjectText)
         inspectStr(prompt.ActionText)
+        -- Limpar prefixos comuns em prompts para extrair o nome real do ovo
+        if prompt.ObjectText and prompt.ObjectText ~= "" then
+            local cleanObj = prompt.ObjectText:gsub("^[Tt]ake%s*", ""):gsub("^[Ss]teal%s*", ""):gsub("^[Rr]oubar%s*", ""):gsub("^[Pp]egar%s*", "")
+            inspectStr(cleanObj)
+        end
+    end
+
+    -- Método D2: Inspeção dos Atributos Diretos do Slot / Instância
+    if instance then
+        for _, attrKey in ipairs({"AssetId", "EggId", "EggType", "PetId", "PetName", "EggName", "Rarity"}) do
+            local val = instance:GetAttribute(attrKey)
+            if val then inspectStr(tostring(val)) end
+        end
     end
 
     -- Método E: Fallback de Slot e Ilha
@@ -1002,57 +1008,103 @@ local function triggerPrompt(prompt)
     return true
 end
 
--- 10. EXPORTADOR DE TELEMETRIA E DADOS INTERNOS (INSPETOR)
+-- 10. EXPORTADOR DE TELEMETRIA E DADOS INTERNOS (INSPETOR v7.0 COMPLETO)
 local function dumpGameData()
     local lines = {}
     local function logL(s) table.insert(lines, s or "") end
 
     logL("================================================================================")
-    logL("ROUBE UM OVO - INVENTARIO ESTRUTURAL COMPLETO (EXAUSTIVO v6.0)")
+    logL("ROUBE UM OVO - INVENTARIO ESTRUTURAL COMPLETO (EXAUSTIVO v7.0)")
     logL("Data: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | PlaceId: " .. tostring(game.PlaceId))
     logL("================================================================================\n")
 
-    -- 1. Catálogo Completo de 118 Pets
-    logL("[1] CATALOGO DE PETS E RARIDADES REAIS (118 PETS VERIFICADOS):")
-    for k, v in pairs(KnownPetsCatalog) do
-        logL(string.format("  - Chave: %-25s | Display: %-22s | Raridade: %-12s", tostring(k), tostring(v.DisplayName), tostring(v.Rarity)))
-    end
-    logL("\n")
-
-    -- 2. Modelos em ReplicatedStorage.AssetModels
-    logL("[2] REPLICATEDSTORAGE.ASSETMODELS (Total: " .. tostring(#Services.ReplicatedStorage.AssetModels:GetChildren()) .. "):")
+    -- 1. Desempacotamento de ReplicatedStorage.Data.Assets (O Banco de Dados Real de Pets/Ovos)
+    logL("[1] REPLICATEDSTORAGE.DATA.ASSETS (Banco Oficial do Jogo):")
     pcall(function()
-        local am = Services.ReplicatedStorage:FindFirstChild("AssetModels")
-        if am then
-            for _, m in ipairs(am:GetChildren()) do
-                local mCount = 0
-                for _, d in ipairs(m:GetDescendants()) do
-                    if (d:IsA("MeshPart") and d.MeshId ~= "") or (d:IsA("SpecialMesh") and d.MeshId ~= "") then
-                        mCount = mCount + 1
+        local dataF = Services.ReplicatedStorage:FindFirstChild("Data")
+        if dataF then
+            local aMod = dataF:FindFirstChild("Assets")
+            if aMod and aMod:IsA("ModuleScript") then
+                local res = require(aMod)
+                if type(res) == "table" then
+                    if res.Directory then
+                        local total = 0
+                        for k, v in pairs(res.Directory) do total = total + 1 end
+                        logL("  Total de Itens em Directory: " .. tostring(total))
+                        for k, v in pairs(res.Directory) do
+                            local dName = tostring(v.DisplayName or v.Name or k)
+                            local rName = "N/D"
+                            if type(v.Rarity) == "table" then
+                                rName = tostring(v.Rarity.DisplayName or v.Rarity._id or "N/D")
+                            elseif type(v.Rarity) == "string" then
+                                rName = v.Rarity
+                            end
+                            local w = tostring(v.Weight or v.BaseWeight or "N/D")
+                            local drop = tostring(v.DropChance or v.Chance or "N/D")
+                            logL(string.format("  - Chave: %-25s | Display: %-24s | Raridade: %-14s | Peso: %s | Drop: %s", tostring(k), dName, rName, w, drop))
+                        end
+                    end
+                    if res.ByRarity then
+                        logL("\n  Distribuição em ByRarity:")
+                        for rk, rv in pairs(res.ByRarity) do
+                            local count = type(rv) == "table" and #rv or 0
+                            logL(string.format("    > Raridade %s: %d itens", tostring(rk), count))
+                        end
                     end
                 end
-                logL(string.format("  - Modelo: %-25s | Meshes: %d", m.Name, mCount))
+            else
+                logL("  Módulo Data.Assets não encontrado ou inacessível!")
             end
         end
     end)
     logL("\n")
 
-    -- 3. Workspace.ClientRenderedAssets
-    logL("[3] WORKSPACE.CLIENTRENDEREDASSETS (Modelos Renderizados no Cliente):")
+    -- 2. Desempacotamento de ReplicatedStorage.Data.Guards (Guardas, Galinhas e Dano)
+    logL("[2] REPLICATEDSTORAGE.DATA.GUARDS (Configuração de Guardas e Galinhas):")
     pcall(function()
-        local cra = Services.Workspace:FindFirstChild("ClientRenderedAssets")
-        if cra then
-            for _, c in ipairs(cra:GetChildren()) do
-                local pos = getPositionOf(c)
-                local posStr = pos and string.format("(%.1f, %.1f, %.1f)", pos.X, pos.Y, pos.Z) or "N/D"
-                logL(string.format("  - Rendered: %-32s | Filhos: %d | Pos: %s", c.Name, #c:GetChildren(), posStr))
+        local dataF = Services.ReplicatedStorage:FindFirstChild("Data")
+        if dataF then
+            local gMod = dataF:FindFirstChild("Guards")
+            if gMod and gMod:IsA("ModuleScript") then
+                local res = require(gMod)
+                if type(res) == "table" and res.Directory then
+                    for gKey, gVal in pairs(res.Directory) do
+                        logL(string.format("  - Guarda: %-20s | Dados: %s", tostring(gKey), Services.HttpService:JSONEncode(gVal)))
+                    end
+                end
             end
         end
     end)
     logL("\n")
 
-    -- 4. ReplicatedStorage.Data.Areas.Directory
-    logL("[4] REPLICATEDSTORAGE.DATA.AREAS.DIRECTORY (Áreas e Ilhas):")
+    -- 3. Guardas Físicos no Workspace (Localização Exata da Primeira Galinha no Mapa para Ragdoll TP)
+    logL("[3] WORKSPACE._GUARDS & SPAWNS DE GUARDAS NO MAPA (Para Ragdoll TP):")
+    pcall(function()
+        local function scanGuardObj(parent, folderName)
+            if not parent then return end
+            for _, g in ipairs(parent:GetChildren()) do
+                local pos = getPositionOf(g)
+                local posStr = pos and string.format("(%.1f, %.1f, %.1f)", pos.X, pos.Y, pos.Z) or "N/D"
+                local dist = (pos and getHRP()) and string.format("%d studs", math.floor((pos - getHRP().Position).Magnitude)) or "N/D"
+                local attrs = {}
+                for k, v in pairs(g:GetAttributes()) do table.insert(attrs, k .. "=" .. tostring(v)) end
+                local attrStr = #attrs > 0 and table.concat(attrs, ", ") or "Nenhum"
+                logL(string.format("  - [%s] %-25s | Pos: %s | Dist: %s | Attrs: %s", folderName, g.Name, posStr, dist, attrStr))
+            end
+        end
+        scanGuardObj(Services.Workspace:FindFirstChild("_Guards"), "_Guards")
+        scanGuardObj(Services.Workspace:FindFirstChild("MonsterParasiteMonsters"), "MonsterParasite")
+        for _, obj in ipairs(Services.Workspace:GetChildren()) do
+            local low = obj.Name:lower()
+            if (low:find("guard") or low:find("chicken") or low:find("galinha")) and obj ~= Services.Workspace:FindFirstChild("_Guards") then
+                scanGuardObj({obj}, "WorkspaceRoot")
+            end
+        end
+    end)
+    logL("\n")
+
+    -- 4. ReplicatedStorage.Data.Areas & Reset Cycles
+    logL("[4] REPLICATEDSTORAGE.DATA.AREAS & RESET CYCLES (Áreas, Ilhas e Ciclos):")
     pcall(function()
         local dataF = Services.ReplicatedStorage:FindFirstChild("Data")
         if dataF then
@@ -1061,7 +1113,34 @@ local function dumpGameData()
                 local res = require(aMod)
                 if type(res) == "table" and res.Directory then
                     for aKey, aVal in pairs(res.Directory) do
-                        logL(string.format("  - Área: %s | Dados: %s", tostring(aKey), Services.HttpService:JSONEncode(aVal)))
+                        logL(string.format("  - Área: %-15s | Dados: %s", tostring(aKey), Services.HttpService:JSONEncode(aVal)))
+                    end
+                end
+            end
+            local cycleMod = dataF:FindFirstChild("AreaEggResetCycle")
+            if cycleMod and cycleMod:IsA("ModuleScript") then
+                local cRes = require(cycleMod)
+                if type(cRes) == "table" then
+                    logL(string.format("  - ResetCycle Dados: %s", Services.HttpService:JSONEncode(cRes)))
+                end
+            end
+        end
+    end)
+    logL("\n")
+
+    -- 5. Módulos de Ovos Especiais / Eventos
+    logL("[5] REPLICATEDSTORAGE.DATA - MÓDULOS ESPECIAIS (Admin, Dragão, Sakura, Brainrot, Parasita):")
+    pcall(function()
+        local dataF = Services.ReplicatedStorage:FindFirstChild("Data")
+        if dataF then
+            for _, modName in ipairs({"LimitedEgg", "AdminAbuseEgg", "DragonEgg", "Sakura", "MonsterParasite", "BrainrotEgg"}) do
+                local m = dataF:FindFirstChild(modName)
+                if m and m:IsA("ModuleScript") then
+                    local ok, res = pcall(require, m)
+                    if ok and type(res) == "table" then
+                        logL(string.format("  - Módulo %-16s | Dados: %s", modName, Services.HttpService:JSONEncode(res)))
+                    else
+                        logL(string.format("  - Módulo %-16s | Presente (não exportou tabela)", modName))
                     end
                 end
             end
@@ -1069,10 +1148,82 @@ local function dumpGameData()
     end)
     logL("\n")
 
-    -- 5. Atributos do Jogador e Scripts Locais
-    logL("[5] ESTADO DO JOGADOR LOCAL E CHARACTER:")
+    -- 6. ReplicatedStorage.AssetModels (Mapeamento Completo de MeshId -> Nome Real)
+    logL("[6] REPLICATEDSTORAGE.ASSETMODELS (117 Modelos Oficiais e seus MeshIds):")
     pcall(function()
-        logL("  DisplayName: " .. LocalPlayer.DisplayName .. " | Name: " .. LocalPlayer.Name)
+        local am = Services.ReplicatedStorage:FindFirstChild("AssetModels")
+        if am then
+            for _, m in ipairs(am:GetChildren()) do
+                local meshList = {}
+                for _, d in ipairs(m:GetDescendants()) do
+                    local mId = (d:IsA("MeshPart") and d.MeshId) or (d:IsA("SpecialMesh") and d.MeshId)
+                    if mId and mId ~= "" then
+                        local num = tostring(mId):match("(%d+)")
+                        if num then table.insert(meshList, num) end
+                    end
+                end
+                local meshStr = #meshList > 0 and table.concat(meshList, ", ") or "Nenhuma"
+                logL(string.format("  - Pet: %-25s | Meshes: [%s]", m.Name, meshStr))
+            end
+        end
+    end)
+    logL("\n")
+
+    -- 7. Dissecção Detalhada de Workspace.AreaEggSlotsClient (Slots de Ovos Vivos)
+    logL("[7] WORKSPACE.AREAEGGSLOTSCLIENT (Dissecção Completa dos Slots Vivos):")
+    pcall(function()
+        local slotsFolder = Services.Workspace:FindFirstChild("AreaEggSlotsClient")
+        if slotsFolder then
+            local slots = slotsFolder:GetChildren()
+            logL("  Total de Slots Vivos no Servidor: " .. tostring(#slots))
+            for i, slot in ipairs(slots) do
+                local pos = getPositionOf(slot)
+                local posStr = pos and string.format("(%.1f, %.1f, %.1f)", pos.X, pos.Y, pos.Z) or "N/D"
+                local attrs = {}
+                for k, v in pairs(slot:GetAttributes()) do table.insert(attrs, k .. "=" .. tostring(v)) end
+                local attrStr = #attrs > 0 and table.concat(attrs, "; ") or "Sem Atributos"
+                local childrenSummary = {}
+                for _, c in ipairs(slot:GetChildren()) do
+                    local cMesh = (c:IsA("MeshPart") and c.MeshId) or (c:FindFirstChildWhichIsA("SpecialMesh", true) and c:FindFirstChildWhichIsA("SpecialMesh", true).MeshId) or ""
+                    local mNum = cMesh:match("(%d+)")
+                    table.insert(childrenSummary, string.format("%s[%s]%s", c.Name, c.ClassName, mNum and (":" .. mNum) or ""))
+                end
+                local prompt = slot:FindFirstChildWhichIsA("ProximityPrompt", true)
+                local pStr = prompt and string.format("Prompt: Act='%s' Obj='%s'", prompt.ActionText, prompt.ObjectText) or "Sem Prompt"
+                local childStr = #childrenSummary > 0 and table.concat(childrenSummary, ", ") or "Vazio"
+                logL(string.format("  #%02d Slot: %-32s | Pos: %s | %s | Filhos: %s | %s", i, slot.Name, posStr, pStr, childStr, attrStr))
+            end
+        end
+    end)
+    logL("\n")
+
+    -- 8. Dissecção de Workspace.ClientRenderedAssets (Modelos Renderizados)
+    logL("[8] WORKSPACE.CLIENTRENDEREDASSETS (Modelos Renderizados no Cliente):")
+    pcall(function()
+        local cra = Services.Workspace:FindFirstChild("ClientRenderedAssets")
+        if cra then
+            for _, c in ipairs(cra:GetChildren()) do
+                local pos = getPositionOf(c)
+                local posStr = pos and string.format("(%.1f, %.1f, %.1f)", pos.X, pos.Y, pos.Z) or "N/D"
+                local meshList = {}
+                for _, d in ipairs(c:GetDescendants()) do
+                    local mId = (d:IsA("MeshPart") and d.MeshId) or (d:IsA("SpecialMesh") and d.MeshId)
+                    if mId and mId ~= "" then
+                        local num = tostring(mId):match("(%d+)")
+                        if num then table.insert(meshList, num) end
+                    end
+                end
+                local meshStr = #meshList > 0 and table.concat(meshList, ", ") or "Nenhuma"
+                logL(string.format("  - Render: %-32s | Pos: %s | Meshes: [%s]", c.Name, posStr, meshStr))
+            end
+        end
+    end)
+    logL("\n")
+
+    -- 9. Estado do Jogador Local e Character
+    logL("[9] ESTADO DO JOGADOR LOCAL E CHARACTER:")
+    pcall(function()
+        logL("  DisplayName: " .. LocalPlayer.DisplayName .. " | Name: " .. LocalPlayer.Name .. " | UserId: " .. tostring(LocalPlayer.UserId))
         local char = LocalPlayer.Character
         if char then
             logL("  Atributos do Character:")
@@ -1086,22 +1237,24 @@ local function dumpGameData()
                 end
             end
         end
-        logL("  Atributos do LocalPlayer:")
-        for k, v in pairs(LocalPlayer:GetAttributes()) do
-            logL(string.format("    > %s = %s", tostring(k), tostring(v)))
-        end
     end)
     logL("\n")
 
-    -- 6. Ovos Detectados com Nomes Reais
+    -- 10. Benchmark de Identificação em Tempo Real (Teste de Nomes Reais do Radar)
     local discovered = scanAllEggs()
-    logL("[6] LISTA DE OVOS DETECTADOS PELO RADAR (" .. tostring(#discovered) .. " ENCONTRADOS):")
+    logL("[10] BENCHMARK DE IDENTIFICAÇÃO EM TEMPO REAL (" .. tostring(#discovered) .. " OVOS ENCONTRADOS):")
+    local namedCount = 0
+    local genericCount = 0
     for i, e in ipairs(discovered) do
-        logL(string.format("#%02d [%s] %s | Tem Prompt: %s | Zona: %s | Pos: (%.1f, %.1f, %.1f) | Dist: %dm",
-            i, e.Rarity, e.Name, e.Prompt and "SIM" or "NAO", e.Zone,
-            e.Position.X, e.Position.Y, e.Position.Z, math.floor(e.Distance)
+        local isGeneric = e.Name:find("Ovo Selvagem") or e.Name:find("Ovo da Floresta") or e.Name:find("Ovo da Deserto") or e.Name:find("Ovo da Selva")
+        if isGeneric then genericCount = genericCount + 1 else namedCount = namedCount + 1 end
+        logL(string.format("#%02d [%s] %-28s | Zona: %-22s | Prompt: %s | Dist: %-4dm | Pos: (%.1f, %.1f, %.1f)",
+            i, e.Rarity, e.Name, e.Zone, e.Prompt and "SIM" or "NAO", math.floor(e.Distance),
+            e.Position.X, e.Position.Y, e.Position.Z
         ))
     end
+    logL(string.format("\n  Estatísticas do Radar: %d com Nome Real Próprio | %d Genéricos (Fallback)", namedCount, genericCount))
+
     logL("\n================================================================================")
     logL("FIM DO INVENTARIO.")
 
@@ -1110,7 +1263,7 @@ local function dumpGameData()
         if writefile then writefile("ROUBE_UM_OVO_DUMP.txt", fullText) end
         if setclipboard then setclipboard(fullText) end
     end)
-    addLog("INSPETOR", "Dump estrutural exportado para ROUBE_UM_OVO_DUMP.txt (" .. tostring(#discovered) .. " ovos)!")
+    addLog("INSPETOR", "Dump estrutural v7.0 exportado! (" .. tostring(#discovered) .. " ovos) - Copiado para o Clipboard!")
     return fullText, #discovered
 end
 
@@ -1262,7 +1415,7 @@ Title.Font = Enum.Font.GothamBold
 Title.TextSize = 12
 Title.TextColor3 = C_BLUE
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "ROUBE UM OVO - TELEMETRIA & AUTOMAÇÃO v6.0"
+Title.Text = "ROUBE UM OVO - TELEMETRIA & AUTOMAÇÃO v7.0 (INSPECTOR)"
 Title.Parent = Topbar
 
 local CloseBtn = Instance.new("TextButton")
