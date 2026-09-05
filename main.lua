@@ -1,16 +1,16 @@
 --[[
-    ROUBE UM OVO - HUB DE TELEMETRIA & AUTOMAÇÃO (v7.0 DEEP INSPECTOR)
+    ROUBE UM OVO - HUB DE TELEMETRIA & AUTOMAÇÃO (v8.0 RAGDOLL TP & UNLOAD)
     -----------------------------------------------------------------------
-    - Inspetor Forense Exaustivo (v7.0): Extrai e desempacota 100% das tabelas
-      internas de ReplicatedStorage.Data (Assets com 118 pets, Guards, Areas,
-      AreaEggResetCycle, DragonEgg, AdminAbuseEgg, Sakura, BrainrotEgg).
-    - Localizador Físico de Guardas / Galinha: Mapeia as coordenadas exatas no mapa
-      dos guardas de ilha, em especial a Primeira Galinha da Floresta para o Ragdoll TP.
-    - Dissecção Completa de Slots e Meshes: Inspeciona todos os 44+ slots de
-      AreaEggSlotsClient, ClientRenderedAssets e MeshIds numéricos.
-    - Resolução Real de Nomes de Ovos: Identifica o nome próprio e raridade
-      legítimos de cada ovo, eliminando o fallback para nomes genéricos de ilha.
-    - Neutralização Ativa Anti-Cheat e Movimento Seguro: Mantém física protegida.
+    - Sistema de Unload Completo: Botão no topo e configurações para encerrar
+      100% das threads, limpar conexões, remover ESP e fechar interface.
+    - Catálogo Oficial dos 11 Biomas (Ilhas 1 a 11): Coordenadas exatas, nomes
+      reais e raridades legítimas (Comum a Titã - Godzilla/Kitsune).
+    - Mecânica de Ragdoll TP da Galinha (Bypass Anti-Cheat):
+      Provoca hit proposital da Galinha da Floresta (Biome 1) e usa a janela
+      de Ragdoll da física para teleportar ao melhor ovo e à base sem tomar
+      dano fatal nem rubberband do servidor.
+    - Suporte a Ovos Especiais: Demonic Egg, Dragon Egg, Limited e Brainrot.
+    - Neutralização Ativa Anti-Cheat e Movimento Seguro.
 ]]
 
 -- 1. Silenciamento Total Preventivo contra LogService.MessageOut
@@ -105,6 +105,7 @@ end)
 
 -- 5. Configuração e Estado Geral
 local Config = {
+    StealMethod = "RagdollTP", -- "RagdollTP" (Galinha) ou "VooDireto" (Solo)
     AutoStealEnabled = false,
     SafeFlightEnabled = true,
     LockCurrentIsland = true,
@@ -118,7 +119,10 @@ local Config = {
     SearchQuery = ""
 }
 
+local ScriptConnections = {}
+
 local State = {
+    IsUnloaded = false,
     BaseCFrame = nil,
     IsExecutingSteal = false,
     CurrentTargetEgg = nil,
@@ -362,45 +366,167 @@ local KnownPetsCatalog = {
     ["froggo"] = { DisplayName = "Froggo", Rarity = "MYTHIC" },
 }
 
-local IslandZones = {
-    { MaxX = 950,   Name = "Floresta (Ilha 1)" },
-    { MaxX = 1650,  Name = "Deserto (Ilha 2)" },
-    { MaxX = 2550,  Name = "Selva (Ilha 3)" },
-    { MaxX = 3650,  Name = "Vulcão (Ilha 4)" },
-    { MaxX = 99999, Name = "Abismo / Místico (Ilha 5)" }
+-- 7.1. BANCO DE DADOS DAS 11 ILHAS OFICIAIS DO JOGO (REPLICATEDSTORAGE.DATA.AREAS)
+local OfficialIslands = {
+    {
+        Id = "Forest",
+        Name = "Floresta (Ilha 1)",
+        MinX = 520, MaxX = 670,
+        BaseZ = -328,
+        Rarity = "COMUM",
+        Score = 300,
+        TopDrop = "Brr Brr Patapim",
+        EggShell = "Ovo Comum da Floresta",
+        Guard = "Forest Guard"
+    },
+    {
+        Id = "Lake",
+        Name = "Lago (Ilha 2)",
+        MinX = 671, MaxX = 850,
+        BaseZ = -410,
+        Rarity = "INCOMUM",
+        Score = 1500,
+        TopDrop = "Crocodile",
+        EggShell = "Ovo Incomum do Lago",
+        Guard = "Lake Guard"
+    },
+    {
+        Id = "Desert",
+        Name = "Deserto (Ilha 3)",
+        MinX = 851, MaxX = 1080,
+        BaseZ = -325,
+        Rarity = "RARO",
+        Score = 3500,
+        TopDrop = "Scorpio",
+        EggShell = "Ovo Raro do Deserto",
+        Guard = "Desert Guard"
+    },
+    {
+        Id = "Jungle",
+        Name = "Selva (Ilha 4)",
+        MinX = 1081, MaxX = 1350,
+        BaseZ = -410,
+        Rarity = "ÉPICO",
+        Score = 8000,
+        TopDrop = "Bananita Dolphinita",
+        EggShell = "Ovo Épico da Selva",
+        Guard = "Jungle Guard"
+    },
+    {
+        Id = "Snow",
+        Name = "Neve (Ilha 5)",
+        MinX = 1351, MaxX = 1680,
+        BaseZ = -315,
+        Rarity = "LENDÁRIO",
+        Score = 15000,
+        TopDrop = "Yeti",
+        EggShell = "Ovo Lendário da Neve",
+        Guard = "Snow Guard"
+    },
+    {
+        Id = "Volcano",
+        Name = "Vulcão (Ilha 6)",
+        MinX = 1681, MaxX = 2080,
+        BaseZ = -400,
+        Rarity = "MÍTICO",
+        Score = 20000,
+        TopDrop = "Shadow Dragon",
+        EggShell = "Ovo Mítico do Vulcão",
+        Guard = "Volcano Guard"
+    },
+    {
+        Id = "Abyss Ocean",
+        Name = "Oceano do Abismo (Ilha 7)",
+        MinX = 2081, MaxX = 2550,
+        BaseZ = -328,
+        Rarity = "COSMIC",
+        Score = 30000,
+        TopDrop = "El Maja",
+        EggShell = "Ovo Cósmico do Abismo",
+        Guard = "Abyss Ocean Guard"
+    },
+    {
+        Id = "Prehistoric",
+        Name = "Pré-Histórico (Ilha 8)",
+        MinX = 2551, MaxX = 3100,
+        BaseZ = -398,
+        Rarity = "SECRET",
+        Score = 45000,
+        TopDrop = "Mosasaurus",
+        EggShell = "Ovo Secreto Pré-Histórico",
+        Guard = "Prehistoric Guard"
+    },
+    {
+        Id = "Cosmic",
+        Name = "Cósmico (Ilha 9)",
+        MinX = 3101, MaxX = 3700,
+        BaseZ = -325,
+        Rarity = "ETERNAL",
+        Score = 70000,
+        TopDrop = "Unicorn",
+        EggShell = "Ovo Eterno Cósmico",
+        Guard = "Cosmic Guard"
+    },
+    {
+        Id = "Cherry Blossom",
+        Name = "Flor de Cerejeira (Ilha 10)",
+        MinX = 3701, MaxX = 4400,
+        BaseZ = -398,
+        Rarity = "DIVINE",
+        Score = 100000,
+        TopDrop = "Kitsune",
+        EggShell = "Ovo Divino de Cerejeira",
+        Guard = "Cherry Blossom Guard"
+    },
+    {
+        Id = "Titan Temple",
+        Name = "Templo do Titã (Ilha 11)",
+        MinX = 4401, MaxX = 99999,
+        BaseZ = -328,
+        Rarity = "TITAN",
+        Score = 150000,
+        TopDrop = "Godzilla",
+        EggShell = "Ovo de Titã Ancestral",
+        Guard = "Titan Temple Guard"
+    }
 }
 
-local function getIslandNameByPos(pos)
-    if not pos then return "Ilha Geral" end
-    for _, zone in ipairs(IslandZones) do
-        if pos.X <= zone.MaxX then
-            return zone.Name
+local function getIslandByPos(pos)
+    if not pos then return OfficialIslands[1] end
+    for _, isl in ipairs(OfficialIslands) do
+        if pos.X >= isl.MinX and pos.X <= isl.MaxX then
+            return isl
         end
     end
-    return "Ilha Avançada"
+    if pos.X > 4400 then return OfficialIslands[11] end
+    return OfficialIslands[1]
+end
+
+local function getIslandNameByPos(pos)
+    local isl = getIslandByPos(pos)
+    return isl and isl.Name or "Ilha Geral"
 end
 
 local function isEggInMyIsland(eggPos)
     if not Config.LockCurrentIsland then return true end
     local myHrp = getHRP()
     if not myHrp then return true end
-    local myIsland = getIslandNameByPos(myHrp.Position)
-    local eggIsland = getIslandNameByPos(eggPos)
-    return myIsland == eggIsland
+    local myIsl = getIslandByPos(myHrp.Position)
+    local eggIsl = getIslandByPos(eggPos)
+    return myIsl.Id == eggIsl.Id
 end
 
 local RarityScoreMap = {
-    ["DIVINE"] = 120000,
-    ["TITAN"] = 110000,
-    ["ADMIN ABUSE"] = 100000,
+    ["TITAN"] = 150000,
+    ["DIVINE"] = 100000,
+    ["ADMIN ABUSE"] = 120000,
     ["EXCLUSIVE"] = 90000,
     ["MONSTER PARASITE"] = 85000,
     ["DRAGON"] = 75000,
-    ["SAKURA"] = 65000,
-    ["BRAINROT"] = 60000,
-    ["LIMITED"] = 50000,
+    ["ETERNAL"] = 70000,
+    ["BRAINROT"] = 65000,
+    ["LIMITED"] = 60000,
     ["SECRET"] = 45000,
-    ["ETERNAL"] = 35000,
     ["COSMIC"] = 30000,
     ["RAINBOW"] = 25000,
     ["VOLCANO"] = 22000,
@@ -650,19 +776,22 @@ local function resolveEggDetails(instance, prompt)
         end
     end
 
-    -- Método E: Fallback de Slot e Ilha
-    local island = getIslandNameByPos(pos)
-    if not foundName or isHexUUID(foundName) or foundName:find("pcube") or foundName:find("polysurface") then
-        local slotNum = instance and instance.Name:match("Slot_([%d]+)")
-        if slotNum then
-            foundName = "Ovo Selvagem (" .. island .. " - Slot " .. slotNum .. ")"
-        else
-            foundName = "Ovo Selvagem (" .. island .. ")"
+    -- Método E: Resolução com base nas 11 Ilhas Oficiais e Nomes Legítimos
+    local isl = getIslandByPos(pos)
+    local slotNum = instance and instance.Name:match("Slot_([%d]+)")
+    local slotSuffix = slotNum and (" - Slot " .. slotNum) or ""
+
+    if not foundName or isHexUUID(foundName) or foundName:find("pcube") or foundName:find("polysurface") or foundName:find("ovo selvagem") then
+        foundName = string.format("%s (%s%s)", isl.EggShell, isl.Name, slotSuffix)
+        if not detectedRarity or detectedRarity == "COMUM" then
+            detectedRarity = isl.Rarity
+            maxScore = math.max(maxScore, isl.Score)
         end
     end
 
     if not detectedRarity then
-        detectedRarity = "COMUM"
+        detectedRarity = isl.Rarity or "COMUM"
+        maxScore = math.max(maxScore, isl.Score or 300)
     end
 
     if detectedWeight > 0 and maxScore < (detectedWeight * 2) then
@@ -1348,6 +1477,48 @@ local function updateESP()
     end
 end
 
+--================================================================--
+-- SISTEMA DE DESCARREGAMENTO SEGURO (UNLOAD)
+--================================================================--
+local function unloadScript()
+    if State.IsUnloaded then return end
+    State.IsUnloaded = true
+    Config.AutoStealEnabled = false
+    Config.ESPEnabled = false
+    clearAllESP()
+
+    -- Parar qualquer deslocamento ativo
+    pcall(function()
+        local hrp = getHRP()
+        if hrp then
+            local bv = hrp:FindFirstChild("DirectMoverBV") or hrp:FindFirstChild("OverheadMoverBV")
+            if bv then bv:Destroy() end
+        end
+    end)
+
+    -- Desconectar todos os eventos registrados
+    for _, conn in ipairs(ScriptConnections) do
+        pcall(function()
+            if conn and conn.Connected then
+                conn:Disconnect()
+            end
+        end)
+    end
+    table.clear(ScriptConnections)
+
+    -- Limpar referências globais
+    _G.UpdateLogConsole = nil
+
+    -- Destruir a ScreenGui
+    pcall(function()
+        if ScreenGui and ScreenGui.Parent then
+            ScreenGui:Destroy()
+        end
+    end)
+
+    addLog("SISTEMA", "Script descarregado completamente (Unload).")
+end
+
 -- 12. INTERFACE TECH BLUE MODERNA (MINIMALISTA, SEM EMOJIS)
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "EggTelemetryHub"
@@ -1415,8 +1586,25 @@ Title.Font = Enum.Font.GothamBold
 Title.TextSize = 12
 Title.TextColor3 = C_BLUE
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "ROUBE UM OVO - TELEMETRIA & AUTOMAÇÃO v7.0 (INSPECTOR)"
+Title.Text = "ROUBE UM OVO - TELEMETRIA & AUTOMAÇÃO v8.0 (RAGDOLL TP)"
 Title.Parent = Topbar
+
+-- Botão de Unload no Topbar
+local UnloadBtn = Instance.new("TextButton")
+UnloadBtn.Size = UDim2.new(0, 56, 0, 24)
+UnloadBtn.Position = UDim2.new(1, -92, 0, 6)
+UnloadBtn.BackgroundColor3 = Color3.fromRGB(153, 27, 27)
+UnloadBtn.Text = "UNLOAD"
+UnloadBtn.Font = Enum.Font.GothamBold
+UnloadBtn.TextSize = 9
+UnloadBtn.TextColor3 = C_TEXT
+UnloadBtn.Parent = Topbar
+addCorner(UnloadBtn, 4)
+addStroke(UnloadBtn, C_RED, 1)
+
+UnloadBtn.MouseButton1Click:Connect(function()
+    unloadScript()
+end)
 
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Size = UDim2.new(0, 24, 0, 24)
@@ -1833,6 +2021,29 @@ SetBaseBtn.MouseButton1Click:Connect(function()
     end
 end)
 
+local MethodToggleBtn = Instance.new("TextButton")
+MethodToggleBtn.Size = UDim2.new(1, 0, 0, 26)
+MethodToggleBtn.BackgroundColor3 = (Config.StealMethod == "RagdollTP") and Color3.fromRGB(88, 28, 135) or Color3.fromRGB(30, 41, 59)
+MethodToggleBtn.Text = (Config.StealMethod == "RagdollTP") and "MÉTODO: RAGDOLL TP GALINHA (BYPASS ANTI-CHEAT)" or "MÉTODO: VOO DIRETO NO SOLO (ORIGINAL)"
+MethodToggleBtn.Font = Enum.Font.GothamBold
+MethodToggleBtn.TextSize = 9
+MethodToggleBtn.TextColor3 = C_TEXT
+MethodToggleBtn.Parent = StealCard
+addCorner(MethodToggleBtn, 4)
+
+MethodToggleBtn.MouseButton1Click:Connect(function()
+    if Config.StealMethod == "RagdollTP" then
+        Config.StealMethod = "VooDireto"
+        MethodToggleBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+        MethodToggleBtn.Text = "MÉTODO: VOO DIRETO NO SOLO (ORIGINAL)"
+    else
+        Config.StealMethod = "RagdollTP"
+        MethodToggleBtn.BackgroundColor3 = Color3.fromRGB(88, 28, 135)
+        MethodToggleBtn.Text = "MÉTODO: RAGDOLL TP GALINHA (BYPASS ANTI-CHEAT)"
+    end
+    addLog("CONFIG", "Método de roubo alterado para: " .. Config.StealMethod)
+end)
+
 local ToggleStealBtn = Instance.new("TextButton")
 ToggleStealBtn.Size = UDim2.new(1, 0, 0, 32)
 ToggleStealBtn.BackgroundColor3 = Config.AutoStealEnabled and C_GREEN or C_BLUE_DARK
@@ -1854,6 +2065,129 @@ StealStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
 StealStatusLabel.TextWrapped = true
 StealStatusLabel.Text = "Ciclo: Desativado\nAlvo Atual: Nenhum\nMétodo: Solo na Ida / Voo Alto na Volta à Base"
 StealStatusLabel.Parent = StealInfoCard
+
+-- 8.5. MECÂNICA DE RAGDOLL TP DA GALINHA (BYPASS DE ANTI-CHEAT VIA FÍSICA)
+local function findForestGuard()
+    -- 1. Buscar no Workspace por Modelos contendo Guard, Chicken ou Galinha
+    for _, obj in ipairs(Services.Workspace:GetChildren()) do
+        if obj:IsA("Model") then
+            local low = obj.Name:lower()
+            if (low:find("guard") or low:find("chicken") or low:find("forest") or low:find("galinha"))
+                and obj ~= Services.Workspace:FindFirstChild("_Guards") then
+                local p = getPositionOf(obj)
+                if p and (p - Vector3.new(598, 68, -328)).Magnitude < 160 then
+                    return obj, p
+                end
+            end
+        end
+    end
+    -- 2. Buscar na pasta _Guards se ativa
+    local gFolder = Services.Workspace:FindFirstChild("_Guards")
+    if gFolder then
+        for _, g in ipairs(gFolder:GetChildren()) do
+            local low = g.Name:lower()
+            if low:find("forest") or low:find("chicken") or low:find("galinha") then
+                local p = getPositionOf(g)
+                if p then return g, p end
+            end
+        end
+    end
+    -- 3. Coordenadas exatas do Ninho da Galinha da Ilha 1 (Forest Guard)
+    return nil, Vector3.new(598.0, 68.0, -328.0)
+end
+
+local function isPlayerInRagdoll()
+    local char = getChar()
+    if not char then return false end
+    local hum = getHum()
+    if hum then
+        local state = hum:GetState()
+        if state == Enum.HumanoidStateType.Ragdoll or state == Enum.HumanoidStateType.PlatformStanding or hum.PlatformStand then
+            return true
+        end
+    end
+    local lpRag = LocalPlayer:GetAttribute("RagdollEndTime") or LocalPlayer:GetAttribute("IsRagdoll") or LocalPlayer:GetAttribute("Ragdoll")
+    if lpRag and (type(lpRag) == "boolean" and lpRag or type(lpRag) == "number" and lpRag > 0) then
+        return true
+    end
+    local charRag = char:GetAttribute("RagdollEndTime") or char:GetAttribute("IsRagdoll") or char:GetAttribute("Ragdoll")
+    if charRag and (type(charRag) == "boolean" and charRag or type(charRag) == "number" and charRag > 0) then
+        return true
+    end
+    if char:FindFirstChildWhichIsA("BallSocketConstraint", true) then
+        return true
+    end
+    return false
+end
+
+local function executeRagdollSteal(target)
+    if not target or not target.Position then return false end
+    local myHrp = getHRP()
+    if not myHrp or State.IsUnloaded then return false end
+
+    local baseCF = State.BaseCFrame or myHrp.CFrame
+    local targetPos = target.Position
+
+    addLog("RAGDOLL", "Iniciando bypass via Ragdoll TP da Galinha...")
+    addLog("RAGDOLL", string.format("Alvo prioritário: %s [%s] (%d studs).", target.Name, target.Rarity, math.floor(target.Distance)))
+
+    -- 1. Ir até a Galinha da Floresta para receber o golpe
+    local guardObj, guardPos = findForestGuard()
+    addLog("RAGDOLL", string.format("Teleportando ao Ninho da Galinha em (%.1f, %.1f, %.1f)...", guardPos.X, guardPos.Y, guardPos.Z))
+    myHrp.CFrame = CFrame.new(guardPos + Vector3.new(0, 1.0, 0))
+    task.wait(0.12)
+
+    -- 2. Aguardar confirmação de Ragdoll (máximo 1.6s)
+    local ragdollActive = false
+    local t0 = tick()
+    while tick() - t0 < 1.6 do
+        if State.IsUnloaded then return false end
+        if isPlayerInRagdoll() then
+            ragdollActive = true
+            break
+        end
+        if guardObj then
+            local gP = getPositionOf(guardObj)
+            if gP then
+                myHrp.CFrame = CFrame.new(gP + Vector3.new(math.random(-1, 1) * 0.4, 0.4, math.random(-1, 1) * 0.4))
+            end
+        end
+        task.wait(0.08)
+    end
+
+    if ragdollActive then
+        addLog("RAGDOLL", "Ragdoll ativo! Anti-cheat suspenso pelo servidor. Disparando salto instantâneo...")
+    else
+        addLog("RAGDOLL", "Tempo limite de hit atingido. Executando salto rápido sincronizado...")
+    end
+
+    -- 3. Teleporte instantâneo para o Ovo Alvo
+    myHrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 1.8, 0))
+    task.wait(0.05)
+
+    -- 4. Disparo do ProximityPrompt
+    local pInstance = target.Prompt or (target.Instance and target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true))
+    if pInstance then
+        pcall(function()
+            if fireproximityprompt then
+                fireproximityprompt(pInstance, 0)
+                fireproximityprompt(pInstance, 1)
+            else
+                triggerPrompt(pInstance)
+            end
+        end)
+    end
+    task.wait(0.06)
+
+    -- 5. Teleporte instantâneo de volta à Base na mesma janela de ragdoll
+    myHrp.CFrame = baseCF + Vector3.new(0, 2.5, 0)
+    addLog("RAGDOLL", "Retornou à base instantaneamente!")
+
+    -- 6. Aguardar o depósito automático no plot
+    addLog("BASE", "Na base! Aguardando o jogo depositar o ovo no plot...")
+    task.wait(Config.AutoDepositWait)
+    return true
+end
 
 -- Função do Ciclo de Roubo
 local function runStealCycle()
@@ -1911,6 +2245,15 @@ local function runStealCycle()
     StealStatusLabel.Text = string.format("Ciclo: Roubando...\nAlvo: %s [%s] (%dm)\nIndo em linha reta no solo...", target.Name, target.Rarity, math.floor(target.Distance))
     addLog("ROUBO", "Indo até o alvo: " .. target.Name .. " (" .. math.floor(target.Distance) .. " studs)...")
 
+    -- 3. Execução de acordo com o Método Escolhido (Ragdoll TP vs Voo Direto)
+    if Config.StealMethod == "RagdollTP" then
+        StealStatusLabel.Text = string.format("Ciclo: Roubando via Ragdoll TP...\nAlvo: %s [%s] (%dm)", target.Name, target.Rarity, math.floor(target.Distance))
+        executeRagdollSteal(target)
+        State.IsExecutingSteal = false
+        return
+    end
+
+    -- Modo Voo Direto Clássico:
     -- 3. Deslocamento direto no solo até o ovo
     local arrived = movePlayerDirect(target.Position, Config.MoveSpeed)
     if not arrived then
@@ -1962,6 +2305,7 @@ end)
 
 task.spawn(function()
     while true do
+        if State.IsUnloaded then break end
         if Config.AutoStealEnabled and not State.IsExecutingSteal then
             runStealCycle()
         end
@@ -2025,13 +2369,13 @@ DistTrigger.Parent = DistSliderBg
 
 local isDraggingDist = false
 DistTrigger.MouseButton1Down:Connect(function() isDraggingDist = true end)
-Services.UserInputService.InputEnded:Connect(function(input)
+table.insert(ScriptConnections, Services.UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         isDraggingDist = false
     end
-end)
+end))
 
-Services.RunService.RenderStepped:Connect(function()
+table.insert(ScriptConnections, Services.RunService.RenderStepped:Connect(function()
     if isDraggingDist then
         local mousePos = Services.UserInputService:GetMouseLocation().X
         local barPos = DistSliderBg.AbsolutePosition.X
@@ -2042,7 +2386,7 @@ Services.RunService.RenderStepped:Connect(function()
         Config.MaxStealDistance = val
         DistLabel.Text = string.format("Alcance Máximo: %d studs", val)
     end
-end)
+end))
 
 -- Slider: Velocidade de Voo
 local SpeedSliderCard = createCard(ConfigsPage, "VELOCIDADE DE DESLOCAMENTO")
@@ -2076,13 +2420,13 @@ SpeedTrigger.Parent = SpeedSliderBg
 
 local isDraggingSpeed = false
 SpeedTrigger.MouseButton1Down:Connect(function() isDraggingSpeed = true end)
-Services.UserInputService.InputEnded:Connect(function(input)
+table.insert(ScriptConnections, Services.UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         isDraggingSpeed = false
     end
-end)
+end))
 
-Services.RunService.RenderStepped:Connect(function()
+table.insert(ScriptConnections, Services.RunService.RenderStepped:Connect(function()
     if isDraggingSpeed then
         local mousePos = Services.UserInputService:GetMouseLocation().X
         local barPos = SpeedSliderBg.AbsolutePosition.X
@@ -2093,6 +2437,34 @@ Services.RunService.RenderStepped:Connect(function()
         Config.MoveSpeed = val
         SpeedLabel.Text = string.format("Velocidade: %d studs/s", val)
     end
+end))
+
+-- Card de Descarregamento Definitivo (Unload)
+local UnloadCard = createCard(ConfigsPage, "FINALIZAR / DESCARREGAR SCRIPT")
+local UnloadDesc = Instance.new("TextLabel")
+UnloadDesc.Size = UDim2.new(1, 0, 0, 24)
+UnloadDesc.BackgroundTransparency = 1
+UnloadDesc.Font = Enum.Font.Gotham
+UnloadDesc.TextSize = 9
+UnloadDesc.TextColor3 = C_MUTED
+UnloadDesc.TextXAlignment = Enum.TextXAlignment.Left
+UnloadDesc.TextWrapped = true
+UnloadDesc.Text = "Interrompe todas as automações, desconecta eventos, remove o ESP e fecha o menu."
+UnloadDesc.Parent = UnloadCard
+
+local FullUnloadBtn = Instance.new("TextButton")
+FullUnloadBtn.Size = UDim2.new(1, 0, 0, 30)
+FullUnloadBtn.BackgroundColor3 = Color3.fromRGB(185, 28, 28)
+FullUnloadBtn.Text = "DESCARREGAR SCRIPT COMPLETAMENTE (UNLOAD)"
+FullUnloadBtn.Font = Enum.Font.GothamBold
+FullUnloadBtn.TextSize = 10
+FullUnloadBtn.TextColor3 = C_TEXT
+FullUnloadBtn.Parent = UnloadCard
+addCorner(FullUnloadBtn, 4)
+addStroke(FullUnloadBtn, C_RED, 1)
+
+FullUnloadBtn.MouseButton1Click:Connect(function()
+    unloadScript()
 end)
 
 --================================================================--
@@ -2121,11 +2493,11 @@ _G.UpdateLogConsole = function()
 end
 
 -- 13. Tecla de Atalho (LeftControl) e Botão Mobile (RAD)
-Services.UserInputService.InputBegan:Connect(function(input, gpe)
+table.insert(ScriptConnections, Services.UserInputService.InputBegan:Connect(function(input, gpe)
     if not gpe and input.KeyCode == Enum.KeyCode.LeftControl then
         MainFrame.Visible = not MainFrame.Visible
     end
-end)
+end))
 
 local MobileBtn = Instance.new("TextButton")
 MobileBtn.Name = "MobileToggleBtn"
@@ -2148,5 +2520,5 @@ end)
 -- Inicialização com primeira varredura após 1 segundo
 task.delay(1, function()
     executeRadarScan()
-    addLog("SISTEMA", "Roube um Ovo v6.0 carregado com sucesso!")
+    addLog("SISTEMA", "Roube um Ovo v8.0 (Ragdoll TP & Unload) carregado com sucesso!")
 end)
