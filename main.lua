@@ -61,6 +61,55 @@ while not LocalPlayer do
     LocalPlayer = Services.Players.LocalPlayer
 end
 
+-- Gerenciador Mestre de Conexões e Limpeza de Execuções Anteriores
+
+local function registerConnection(conn)
+    if conn then
+        table.insert(ScriptConnections, conn)
+    end
+    return conn
+end
+
+local function purgeAllGuis()
+    local names = {
+        ["RoubeUmOvoMasterHub"] = true,
+        ["RoubeUmOvoHub"] = true,
+        ["EggTelemetryHub"] = true,
+        ["MobileToggleBtn"] = true
+    }
+    local containers = {
+        (gethui and gethui()),
+        Services.CoreGui,
+        LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    }
+    for _, container in ipairs(containers) do
+        if container then
+            pcall(function()
+                for _, child in ipairs(container:GetChildren()) do
+                    if names[child.Name] then
+                        pcall(function()
+                            if child:IsA("ScreenGui") then child.Enabled = false end
+                            child:Destroy()
+                            child.Parent = nil
+                        end)
+                    end
+                end
+            end)
+        end
+    end
+end
+
+-- Se uma versão anterior estava rodando, encerra completamente antes de recarregar
+pcall(function()
+    if _G.RoubeUmOvoUnload then
+        _G.RoubeUmOvoUnload()
+    end
+    if getgenv and getgenv().RoubeUmOvoUnload then
+        getgenv().RoubeUmOvoUnload()
+    end
+end)
+purgeAllGuis()
+
 -- 4. NEUTRALIZAÇÃO ATIVA DE ANTI-CHEAT LOCAL DO CHARACTER (SEM DESATIVAR RAGDOLL)
 local function disableCharacterAntiCheats(char)
     if not char then return end
@@ -88,10 +137,11 @@ if LocalPlayer.Character then
     disableCharacterAntiCheats(LocalPlayer.Character)
 end
 
-LocalPlayer.CharacterAdded:Connect(function(newChar)
+registerConnection(LocalPlayer.CharacterAdded:Connect(function(newChar)
+    if State.IsUnloaded then return end
     task.wait(0.1)
     disableCharacterAntiCheats(newChar)
-    newChar.ChildAdded:Connect(function(child)
+    registerConnection(newChar.ChildAdded:Connect(function(child)
         if child:IsA("LocalScript") then
             local low = child.Name:lower()
             if low:find("anticollision") or low:find("highseed") or low:find("highspeed")
@@ -101,8 +151,8 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
                 pcall(function() child:Destroy() end)
             end
         end
-    end)
-end)
+    end))
+end))
 
 -- 5. Configuração e Estado Geral
 local Config = {
@@ -122,21 +172,8 @@ local Config = {
     InfJumpEnabled = false,
     NoclipEnabled = false,
     WalkSpeed = 16
-    StealMethod = "RagdollTP", -- "RagdollTP" (Galinha) ou "VooDireto" (Solo)
-    AutoStealEnabled = false,
-    SafeFlightEnabled = true,
-    LockCurrentIsland = true,
-    MaxStealDistance = 350,
-    MoveSpeed = 350,
-    TargetRarity = "Qualquer",
-    MinRarityScore = 0,
-    ESPEnabled = false,
-    ShowOnlyUnowned = true,
-    AutoDepositWait = 1.2,
-    SearchQuery = ""
 }
 
-local ScriptConnections = {}
 
 local State = {
     IsUnloaded = false,
@@ -150,11 +187,15 @@ local State = {
 }
 
 -- Declarações antecipadas de componentes da UI para acesso global interno
+local ScreenGui = nil
+local MobileBtn = nil
+local MainFrame = nil
 local StatusBadge = nil
 local TargetInfoLabel = nil
 local BaseLabel = nil
 local EsteiraStatusLabel = nil
 local MainToggleBtn = nil
+local unloadScript = nil
 
 local function addLog(category, msg)
     local timestamp = os.date("%H:%M:%S")
@@ -1126,7 +1167,7 @@ local function movePlayerDirect(targetPos, speed, onStep)
     local startTime = os.clock()
 
     while (os.clock() - startTime) < (totalTime + 0.3) do
-        if not char or not char.Parent or not humanoid or humanoid.Health <= 0 then
+        if State.IsUnloaded or not char or not char.Parent or not humanoid or humanoid.Health <= 0 then
             cleanup()
             return false
         end
@@ -1219,7 +1260,7 @@ local function movePlayerOverhead(targetPos, speed, onStep)
         local sTime = sDist / math.max(segmentSpeed, 100)
         local sStart = os.clock()
         while (os.clock() - sStart) < (sTime + 0.1) do
-            if not char or not char.Parent or not humanoid or humanoid.Health <= 0 then return end
+            if State.IsUnloaded or not char or not char.Parent or not humanoid or humanoid.Health <= 0 then return end
             local alpha = math.clamp((os.clock() - sStart) / math.max(sTime, 0.001), 0, 1)
             local cur = pA:Lerp(pB, alpha)
             hrp.CFrame = CFrame.new(cur)
@@ -1231,9 +1272,10 @@ local function movePlayerOverhead(targetPos, speed, onStep)
         hrp.CFrame = CFrame.new(pB)
     end
 
-    -- Executar as 3 etapas do voo seguro
+    -- Executar as 3 etapas do voo seguro com checagem de interrupção
+    if State.IsUnloaded then cleanup() return false end
     lerpBetween(startPos, wayUp, speed * 0.9)
-    lerpBetween(wayUp, wayCruised, speed)
+    if State.IsUnloaded then cleanup() return false end
     lerpBetween(wayCruised, wayDown, speed * 0.8)
 
     cleanup()
@@ -1890,53 +1932,13 @@ local function updateESP()
     end
 end
 
---================================================================--
--- SISTEMA DE DESCARREGAMENTO SEGURO (UNLOAD)
---================================================================--
-local function unloadScript()
-    if State.IsUnloaded then return end
-    State.IsUnloaded = true
-    Config.AutoStealEnabled = false
-    Config.ESPEnabled = false
-    clearAllESP()
 
-    -- Parar qualquer deslocamento ativo
-    pcall(function()
-        local hrp = getHRP()
-        if hrp then
-            local bv = hrp:FindFirstChild("DirectMoverBV") or hrp:FindFirstChild("OverheadMoverBV")
-            if bv then bv:Destroy() end
-        end
-    end)
-
-    -- Desconectar todos os eventos registrados
-    for _, conn in ipairs(ScriptConnections) do
-        pcall(function()
-            if conn and conn.Connected then
-                conn:Disconnect()
-            end
-        end)
-    end
-    table.clear(ScriptConnections)
-
-    -- Limpar referências globais
-    _G.UpdateLogConsole = nil
-
-    -- Destruir a ScreenGui
-    pcall(function()
-        if ScreenGui and ScreenGui.Parent then
-            ScreenGui:Destroy()
-        end
-    end)
-
-    addLog("SISTEMA", "Script descarregado completamente (Unload).")
-end
 
 --================================================================--
 -- 12. INTERFACE MASTER HUB v10.0 (5 ABAS COMPLETAS & ULTRA CLEAN)
 --================================================================--
 
-local ScreenGui = Instance.new("ScreenGui")
+ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "RoubeUmOvoMasterHub"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -1988,7 +1990,7 @@ local function createCleanCard(parent, height)
 end
 
 -- Janela Principal Expandida (520x400)
-local MainFrame = Instance.new("Frame")
+MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.Size = UDim2.new(0, 520, 0, 400)
 MainFrame.Position = UDim2.new(0.5, -260, 0.5, -200)
@@ -2925,33 +2927,134 @@ UnloadBtnFull.Parent = UnloadFullCard
 addCorner(UnloadBtnFull, 5)
 addStroke(UnloadBtnFull, C_RED, 1)
 
-local function unloadScript()
+--================================================================--
+-- SISTEMA MASTER DE DESCARREGAMENTO DEFINITIVO (UNLOAD)
+--================================================================--
+unloadScript = function()
     if State.IsUnloaded then return end
     State.IsUnloaded = true
+
+    -- 1. Desativar todas as automações e flags
     Config.AutoStealEnabled = false
     Config.AutoEsteiraEnabled = false
     Config.ESPEnabled = false
-    clearAllESP()
+    Config.NoclipEnabled = false
+    Config.InfJumpEnabled = false
+    State.IsExecutingSteal = false
+    State.IsOnTreadmill = false
 
+    -- 2. Desconectar o runner da esteira
+    if esteiraHeartbeatConn then
+        pcall(function() esteiraHeartbeatConn:Disconnect() end)
+        esteiraHeartbeatConn = nil
+    end
+
+    -- 3. Desconectar TODOS os eventos registrados (RunService, Inputs, GUI)
     for _, conn in ipairs(ScriptConnections) do
-        pcall(function() if conn and conn.Connected then conn:Disconnect() end end)
+        pcall(function()
+            if conn and conn.Connected then
+                conn:Disconnect()
+            end
+        end)
     end
     table.clear(ScriptConnections)
 
+    -- 4. Limpar e restaurar o estado físico do Personagem
     pcall(function()
-        local hum = getHum()
-        if hum then hum:Move(Vector3.zero, false) end
+        local char = getChar()
+        if char then
+            -- Restaurar colisões (Noclip OFF)
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = true
+                end
+            end
+
+            -- Restaurar HumanoidRootPart e remover body movers
+            local hrp = getHRP()
+            if hrp then
+                hrp.Anchored = false
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                hrp.AssemblyAngularVelocity = Vector3.zero
+                for _, child in ipairs(hrp:GetChildren()) do
+                    if child:IsA("BodyVelocity") or child:IsA("BodyPosition") or child:IsA("BodyGyro")
+                        or child:IsA("AlignPosition") or child:IsA("AlignOrientation")
+                        or child.Name:find("Mover") or child.Name:find("BV") then
+                        child:Destroy()
+                    end
+                end
+            end
+
+            -- Restaurar propriedades padrão do Humanoid
+            local hum = getHum()
+            if hum then
+                hum:Move(Vector3.zero, false)
+                hum.WalkSpeed = 16
+                hum.JumpPower = 50
+                hum.PlatformStand = false
+            end
+        end
     end)
 
+    -- 5. Limpar 100% dos ESPs (tanto na tabela quanto no Workspace)
+    clearAllESP()
     pcall(function()
-        if ScreenGui and ScreenGui.Parent then ScreenGui:Destroy() end
+        for _, desc in ipairs(Services.Workspace:GetDescendants()) do
+            if desc:IsA("BillboardGui") and (desc.Name == "ESP_EggLabel" or desc.Name:find("ESP_")) then
+                desc:Destroy()
+            end
+        end
     end)
 
-    addLog("SISTEMA", "Script descarregado com sucesso.")
+    -- 6. Destruir COMPLETAMENTE toda a interface gráfica e o botão mobile
+    purgeAllGuis()
+    pcall(function()
+        if ScreenGui then
+            ScreenGui.Enabled = false
+            ScreenGui.Parent = nil
+            ScreenGui:Destroy()
+        end
+    end)
+    pcall(function()
+        if MobileBtn then
+            MobileBtn.Visible = false
+            MobileBtn.Parent = nil
+            MobileBtn:Destroy()
+        end
+    end)
+
+    -- 7. Limpar variáveis globais
+    _G.RoubeUmOvoUnload = nil
+    _G.UpdateLogConsole = nil
+    _G.DiscoveredEggs = nil
+    _G.UpdateRadarCards = nil
+    _G.EggRadarText = nil
+    _G.MegaDumpText = nil
+    if getgenv then
+        pcall(function()
+            local g = getgenv()
+            g.RoubeUmOvoUnload = nil
+            g.DiscoveredEggs = nil
+            g.UpdateRadarCards = nil
+            g.UpdateLogConsole = nil
+            g.EggRadarText = nil
+            g.MegaDumpText = nil
+        end)
+    end
 end
 
-UnloadBtn.MouseButton1Click:Connect(unloadScript)
-UnloadBtnFull.MouseButton1Click:Connect(unloadScript)
+-- Exportar Unload globalmente para permitir fechamento via console / executor
+_G.RoubeUmOvoUnload = unloadScript
+if getgenv then
+    pcall(function() getgenv().RoubeUmOvoUnload = unloadScript end)
+end
+
+UnloadBtn.MouseButton1Click:Connect(function()
+    if unloadScript then unloadScript() end
+end)
+UnloadBtnFull.MouseButton1Click:Connect(function()
+    if unloadScript then unloadScript() end
+end)
 
 -- Atalho LeftControl e Botão Mobile Minimalista
 table.insert(ScriptConnections, Services.UserInputService.InputBegan:Connect(function(input, gpe)
@@ -2960,7 +3063,7 @@ table.insert(ScriptConnections, Services.UserInputService.InputBegan:Connect(fun
     end
 end))
 
-local MobileBtn = Instance.new("TextButton")
+MobileBtn = Instance.new("TextButton")
 MobileBtn.Name = "MobileToggleBtn"
 MobileBtn.Size = UDim2.new(0, 36, 0, 36)
 MobileBtn.Position = UDim2.new(0.02, 0, 0.45, 0)
