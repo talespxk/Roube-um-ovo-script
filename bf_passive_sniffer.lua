@@ -1,29 +1,26 @@
 --[[
     ================================================================================
-    ROUBE UM OVO - MEGA SNIFFER & DUMPER FORENSE DEFINITIVO (v4.2 SUPER-FORENSIC)
+    ROUBE UM OVO - MEGA SNIFFER & DUMPER FORENSE DEFINITIVO (v4.3 COMPLETE FIX)
     PlaceId: 107778070777162 | Jogo: Roube um Ovo (Steal an Egg)
     ================================================================================
-    MELHORIAS & RECURSOS v4.2:
-    1. AUTO-ATIVACAO SEGURA DO DEEP REMOTE SPY:
-       - Inicia o sniffer em Modo Seguro e, apos 2.5 segundos (quando o ScriptVerse ja
-         terminou de carregar), ativa o Deep Remote Spy com newcclosure e tail call estrita.
-       - Captura TODOS os remotes enviados (FireServer e InvokeServer) sem o usuario precisar
-         lembrar de clicar no botao!
-    2. COLETOR E EXTRATOR DE ARMAS SECRETAS (GEARGIVERS):
-       - Identifica os 4 pedestais secretos sob o mapa:
-         * GearGiver_Slap (Luva de Tapa / Slap)
-         * GearGiver (Taser Gun / Arma de Choque)
-         * GearGiver_SentryTurret (Torreta Sentinela)
-         * GearGiver_BeeLauncher (Lancador de Abelhas)
-       - Botao dedicado na interface: [PEGAR ARMAS SECRETAS] para tentar reivindicar os itens!
-    3. FILTRO ANTI-FLOOD INTELIGENTE:
-       - Agrupa RE/PenRoster/CoinsGathered, AwayEarnings e Pings sem inundar o buffer.
-    4. MONITOR NATIVO DE ESTEIRA & TREADMILL:
-       - Registra RE/Treadmill/RenderStateShifted e toques fisicos (.Touched) na esteira.
-    5. EXTRATOR FORENSE DE ESP & RENDA DOS OVOS:
-       - Captura os textos de BillboardGuis do concorrente nos ovos ($/s e nomes reais).
-    6. EXPORTACAO MODULAR EM 5 ARQUIVOS:
-       - Salva via writefile e fornece botoes de copia seletiva para o Discord.
+    CORRECOES & RECURSOS v4.3:
+    1. CORRECAO DEFINITIVA DO SCROLL / ROLAGEM DE TEXTO:
+       - O sniffer NAO reseta mais o scroll para baixo quando voce rola para cima!
+       - Deteccao automatica: se voce subir a barra de rolagem, o auto-scroll pausa
+         automaticamente para voce ler qualquer linha com calma sem bugar.
+       - Botao dedicado [AUTO-SCROLL: LIGADO / PAUSADO] para alternar manualmente
+         ou descer instantaneamente para o fim dos logs.
+    2. SISTEMA 3D DE TELEPORTE & COLETA DAS ARMAS SECRETAS (GEARGIVERS):
+       - Teleporta o personagem fisicamente em cima de cada pedestal (Slap, Taser, etc.)
+         por 0.3s, garantindo que os pes toquem a placa de pressao com colisao real no servidor.
+       - Simula touches com RightFoot, LeftFoot e HumanoidRootPart.
+       - Dispara ProximityPrompts e ClickDetectors caso existam.
+       - Retorna o jogador em seguranca para a posicao original.
+       - Inspeciona e lista todas as propriedades, scripts e valores dos 4 pedestais.
+    3. AUTO-ATIVACAO DO DEEP SPY APOS 2.5s:
+       - Liga automaticamente o monitoramento de FireServer e InvokeServer com newcclosure.
+    4. FILTRO ANTI-FLOOD & MONITORES NATIVOS:
+       - Agrupa CoinsGathered e monitora esteiras e ESP sem crashar.
     ================================================================================
 ]]
 
@@ -57,7 +54,7 @@ local treadmillEvents = {}     -- Eventos de esteira / treadmill / toques
 local competitorEspLogs = {}   -- Textos de ESP, BillboardGuis e renda do concorrente
 local competitorGuiDump = {}   -- Elementos da interface do concorrente
 local flightWaypoints = {}     -- Trajetoria de voo / coordenadas CFrame
-local secretGearsDump = {}     -- Relatorio de Armas e Itens Secretos (GearGivers)
+local secretGearsDump = {}     -- Relatorio detalhado de Armas Secretas (GearGivers)
 local structuralDumpLines = {} -- Dump estrutural completo do jogo
 local liveLogs = {}            -- Log de status ao vivo
 
@@ -113,13 +110,13 @@ local function logLive(cat, msg, details)
     end
 end
 
-logLive("SISTEMA", "Mega Sniffer & Dumper v4.2 SUPER-FORENSIC Iniciado!")
+logLive("SISTEMA", "Mega Sniffer & Dumper v4.3 (Rolagem Inteligente & Coletor 3D)!")
 
 --================================================================--
--- 1. DEEP REMOTE SPY BLINDADO COM AUTO-ATIVACAO SEGURA
+-- 1. DEEP REMOTE SPY BLINDADO COM AUTO-ATIVACAO
 --================================================================--
 local deepSpyActive = false
-local deepSpyHookMethod = "Aguardando Inicializacao Segura..."
+local deepSpyHookMethod = "Aguardando 2.5s..."
 local DeepSpyBtn = nil
 
 local function recordOutgoingRemote(method, targetInstance, args, callerScript)
@@ -252,14 +249,14 @@ local function enableDeepRemoteSpy()
     end
 end
 
--- Auto-ativacao segura apos 2.5s de delay
+-- Auto-ativacao apos 2.5s
 task.delay(2.5, function()
     if not deepSpyActive then
         local success = enableDeepRemoteSpy()
         if success and DeepSpyBtn then
             DeepSpyBtn.BackgroundColor3 = Color3.fromRGB(147, 51, 234)
             DeepSpyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-            DeepSpyBtn.Text = "DEEP REMOTE SPY ATIVADO AUTOMATICAMENTE (newcclosure SEGURO)"
+            DeepSpyBtn.Text = "DEEP SPY: ATIVO (AUTO)"
         end
     end
 end)
@@ -285,13 +282,13 @@ Services.LogService.MessageOut:Connect(function(msg, msgType)
     local low = msg:lower()
     if low:find("egg") or low:find("steal") or low:find("tp") or low:find("farm") or
        low:find("esteira") or low:find("auto") or low:find("radar") or low:find("remote") or
-       low:find("scriptverse") or low:find("sv") or msgType == Enum.MessageType.MessageWarning or msgType == Enum.MessageType.MessageError then
+       low:find("scriptverse") or low:find("gear") or msgType == Enum.MessageType.MessageWarning or msgType == Enum.MessageType.MessageError then
         logLive("CONSOLE", string.format("[%s] %s", typeName, msg))
     end
 end)
 
 --================================================================--
--- 2. INVESTIGADOR E COLETOR DE ARMAS SECRETAS (GEARGIVERS)
+-- 2. INVESTIGADOR E COLETOR 3D DE ARMAS SECRETAS (GEARGIVERS)
 --================================================================--
 local SECRET_GEARS = {
     { Name = "GearGiver_Slap", Display = "Slap (Luva de Tapa)" },
@@ -306,7 +303,6 @@ local function scanAndReportSecretGears()
     table.insert(secretGearsDump, "ROUBE UM OVO - ARMAS E ITENS SECRETOS NO MAPA (GEARGIVERS)")
     table.insert(secretGearsDump, "================================================================================\n")
 
-    -- 2.1 Verifica pastas de armas no ReplicatedStorage
     local gearFolder = Services.ReplicatedStorage:FindFirstChild("GearTools")
     if gearFolder then
         table.insert(secretGearsDump, "Armas cadastradas em ReplicatedStorage.GearTools:")
@@ -316,7 +312,6 @@ local function scanAndReportSecretGears()
         table.insert(secretGearsDump, "")
     end
 
-    -- 2.2 Localiza os pedestais no Workspace
     for _, gearInfo in ipairs(SECRET_GEARS) do
         local model = Services.Workspace:FindFirstChild(gearInfo.Name, true)
         if model then
@@ -324,10 +319,16 @@ local function scanAndReportSecretGears()
             table.insert(secretGearsDump, string.format("[ENCONTRADO] %s (%s)", gearInfo.Display, gearInfo.Name))
             table.insert(secretGearsDump, string.format("  Localizacao: (%.1f, %.1f, %.1f) | Caminho: %s", pos.X, pos.Y, pos.Z, getHierarchyPath(model)))
             local childrenInfo = {}
-            for _, c in ipairs(model:GetChildren()) do
-                table.insert(childrenInfo, string.format("%s[%s]", c.Name, c.ClassName))
+            for _, c in ipairs(model:GetDescendants()) do
+                local extra = ""
+                if c:IsA("BasePart") then
+                    extra = string.format(" Size=(%.1f,%.1f,%.1f) CanTouch=%s", c.Size.X, c.Size.Y, c.Size.Z, tostring(c.CanTouch))
+                elseif c:IsA("ValueBase") then
+                    extra = string.format(" Value=%s", tostring(c.Value))
+                end
+                table.insert(childrenInfo, string.format("    * %s [%s]%s", c.Name, c.ClassName, extra))
             end
-            table.insert(secretGearsDump, "  Filhos: " .. table.concat(childrenInfo, ", "))
+            table.insert(secretGearsDump, "  Descendentes:\n" .. table.concat(childrenInfo, "\n"))
             table.insert(secretGearsDump, "")
         else
             table.insert(secretGearsDump, string.format("[NAO ENCONTRADO] %s (%s)", gearInfo.Display, gearInfo.Name))
@@ -337,40 +338,87 @@ end
 
 task.spawn(scanAndReportSecretGears)
 
-local function attemptCollectAllSecretGears()
+-- Coleta Fisiologica em 3D: Teleporta em cima do pedestal por 0.3s com colisao real
+local isCollectingGears = false
+local function attemptCollectAllSecretGears3D()
+    if isCollectingGears then return false, "Coleta ja em andamento" end
+    isCollectingGears = true
+
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return false, "Personagem ou HumanoidRootPart nao encontrado" end
+    local hum = char and char:FindFirstChild("Humanoid")
+    if not hrp or not hum then
+        isCollectingGears = false
+        return false, "Personagem nao encontrado"
+    end
 
-    local collectedCount = 0
-    for _, gearInfo in ipairs(SECRET_GEARS) do
-        local model = Services.Workspace:FindFirstChild(gearInfo.Name, true)
-        if model then
-            for _, part in ipairs(model:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    -- Simula o toque fisico na placa de pressao
-                    pcall(function()
-                        if firetouchinterest then
-                            firetouchinterest(hrp, part, 0)
-                            task.wait(0.02)
-                            firetouchinterest(hrp, part, 1)
+    local origCFrame = hrp.CFrame
+    local collected = 0
+
+    task.spawn(function()
+        for _, gearInfo in ipairs(SECRET_GEARS) do
+            local model = Services.Workspace:FindFirstChild(gearInfo.Name, true)
+            if model then
+                -- Localiza a parte mais alta ou a placa de pressao
+                local targetPart = nil
+                for _, p in ipairs(model:GetDescendants()) do
+                    if p:IsA("BasePart") then
+                        local low = p.Name:lower()
+                        if low:find("pad") or low:find("button") or low:find("plate") or low:find("head") or low:find("stand") then
+                            targetPart = p
+                            break
                         end
-                    end)
-                    if part:FindFirstChildWhichIsA("ProximityPrompt") then
-                        pcall(function()
-                            local prompt = part:FindFirstChildWhichIsA("ProximityPrompt")
-                            if fireproximityprompt then
-                                fireproximityprompt(prompt)
-                            end
-                        end)
+                        if not targetPart or p.Position.Y > targetPart.Position.Y then
+                            targetPart = p
+                        end
                     end
                 end
+
+                if targetPart then
+                    logLive("SECRET_GEAR", "Teleportando em cima do pedestal: " .. gearInfo.Display)
+                    -- Teleporta 2.5 studs acima da placa
+                    hrp.CFrame = targetPart.CFrame + Vector3.new(0, 2.5, 0)
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                    task.wait(0.3)
+
+                    -- Forca disparos de touch com os pes e corpo
+                    pcall(function()
+                        local rFoot = char:FindFirstChild("RightFoot") or char:FindFirstChild("Right Leg") or hrp
+                        local lFoot = char:FindFirstChild("LeftFoot") or char:FindFirstChild("Left Leg") or hrp
+                        if firetouchinterest then
+                            firetouchinterest(rFoot, targetPart, 0)
+                            firetouchinterest(lFoot, targetPart, 0)
+                            firetouchinterest(hrp, targetPart, 0)
+                            task.wait(0.05)
+                            firetouchinterest(rFoot, targetPart, 1)
+                            firetouchinterest(lFoot, targetPart, 1)
+                            firetouchinterest(hrp, targetPart, 1)
+                        end
+                    end)
+
+                    -- Dispara Prompts ou ClickDetectors se houver
+                    for _, d in ipairs(model:GetDescendants()) do
+                        if d:IsA("ProximityPrompt") and fireproximityprompt then
+                            pcall(function() fireproximityprompt(d) end)
+                        elseif d:IsA("ClickDetector") and fireclickdetector then
+                            pcall(function() fireclickdetector(d) end)
+                        end
+                    end
+
+                    task.wait(0.2)
+                    collected = collected + 1
+                end
             end
-            collectedCount = collectedCount + 1
-            logLive("SECRET_GEAR", "Tentativa de toque enviada para " .. gearInfo.Display)
         end
-    end
-    return true, string.format("Toques enviados para %d pedestais!", collectedCount)
+
+        -- Retorna para onde o jogador estava
+        hrp.CFrame = origCFrame
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        logLive("SECRET_GEAR", string.format("Coleta 3D finalizada em %d pedestais! Verifique sua mochila.", collected))
+        isCollectingGears = false
+    end)
+
+    return true, "Teleportando e pisando nos pedestais..."
 end
 
 --================================================================--
@@ -656,15 +704,15 @@ local function runFullStructuralDump()
     end
 
     addLine("================================================================================")
-    addLine("ROUBE UM OVO - DUMP ESTRUTURAL COMPLETO (v4.2 FORENSE)")
+    addLine("ROUBE UM OVO - DUMP ESTRUTURAL COMPLETO (v4.3 FORENSE)")
     addLine("Data/Hora: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | Sessao: " .. string.format("%.2fs", os.clock() - startTime))
     addLine("PlaceId: " .. tostring(game.PlaceId) .. " | JobId: " .. tostring(game.JobId))
     addLine("Jogador: " .. (LocalPlayer and LocalPlayer.Name or "N/D") .. " (" .. (LocalPlayer and tostring(LocalPlayer.UserId) or "N/D") .. ")")
     addLine("================================================================================\n")
 
-    -- 6.1 CATALOGO DE REMOTES
+    -- Remotes
     addLine("--------------------------------------------------------------------------------")
-    addLine("[SECAO 1] TODOS OS REMOTES DO JOGO (COMUNICACAO CLIENTE <-> SERVIDOR)")
+    addLine("[SECAO 1] TODOS OS REMOTES DO JOGO")
     addLine("--------------------------------------------------------------------------------")
     local remotes = {}
     for _, inst in ipairs(game:GetDescendants()) do
@@ -676,7 +724,7 @@ local function runFullStructuralDump()
     for _, r in ipairs(remotes) do addLine(r) end
     addLine("\n")
 
-    -- 6.2 ASSETS, PETS E ILHAS (REPLICATEDSTORAGE)
+    -- Assets e Pets
     addLine("--------------------------------------------------------------------------------")
     addLine("[SECAO 2] REPLICATEDSTORAGE: ASSETS, PETS, ILHAS E GUARDAS")
     addLine("--------------------------------------------------------------------------------")
@@ -688,7 +736,7 @@ local function runFullStructuralDump()
         if ok and type(dirData) == "table" then
             local count = 0
             for k, _ in pairs(dirData) do count = count + 1 end
-            addLine(string.format(">>> Modulo Data.Assets.Directory! Total de Pets cadastrados: %d\n", count))
+            addLine(string.format(">>> Modulo Data.Assets.Directory! Total de Pets: %d\n", count))
             for petKey, petInfo in pairs(dirData) do
                 if type(petInfo) == "table" then
                     local dName = petInfo.DisplayName or petInfo.Name or petKey
@@ -703,7 +751,7 @@ local function runFullStructuralDump()
         end
     end
 
-    -- 6.3 SLOTS VIVOS
+    -- Slots Vivos
     addLine("--------------------------------------------------------------------------------")
     addLine("[SECAO 3] SLOTS VIVOS DE OVOS (WORKSPACE.AREAEGGSLOTSCLIENT)")
     addLine("--------------------------------------------------------------------------------")
@@ -732,14 +780,14 @@ local function runFullStructuralDump()
     end
     addLine("\n")
 
-    -- 6.4 PLOTS E BASES
+    -- Plots
     addLine("--------------------------------------------------------------------------------")
     addLine("[SECAO 4] BASES DE JOGADORES (WORKSPACE.PLOTS)")
     addLine("--------------------------------------------------------------------------------")
     local plotsFolder = Services.Workspace:FindFirstChild("Plots")
     if plotsFolder then
         local plots = plotsFolder:GetChildren()
-        addLine(string.format("Total de Plots no servidor: %d", #plots))
+        addLine(string.format("Total de Plots: %d", #plots))
         for _, plot in ipairs(plots) do
             local owner = "N/D"
             pcall(function()
@@ -770,7 +818,7 @@ task.spawn(runFullStructuralDump)
 local function generateRemotesReport()
     local lines = {}
     table.insert(lines, "================================================================================")
-    table.insert(lines, "ROUBE UM OVO - RELATORIO DE REMOTES INTERCEPTADOS (v4.2 FORENSE)")
+    table.insert(lines, "ROUBE UM OVO - RELATORIO DE REMOTES INTERCEPTADOS (v4.3 FORENSE)")
     table.insert(lines, "Data/Hora: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | Sessao: " .. string.format("%.2fs", os.clock() - startTime))
     table.insert(lines, "Deep Spy Ativo: " .. tostring(deepSpyActive) .. " (" .. deepSpyHookMethod .. ")")
     table.insert(lines, "================================================================================\n")
@@ -781,7 +829,7 @@ local function generateRemotesReport()
     if #outgoingRemotes > 0 then
         for _, r in ipairs(outgoingRemotes) do table.insert(lines, r) end
     else
-        table.insert(lines, "Nenhum remote de saida registrado ainda. O Deep Spy foi iniciado com seguranca!")
+        table.insert(lines, "Nenhum remote de saida registrado ainda. O Deep Spy ativara em instantes!")
     end
     table.insert(lines, "\n")
 
@@ -811,7 +859,7 @@ end
 local function generateTreadmillReport()
     local lines = {}
     table.insert(lines, "================================================================================")
-    table.insert(lines, "ROUBE UM OVO - RELATORIO FORENSE DE ESTEIRA & TREADMILL (v4.2)")
+    table.insert(lines, "ROUBE UM OVO - RELATORIO FORENSE DE ESTEIRA & TREADMILL (v4.3)")
     table.insert(lines, "Data/Hora: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | Sessao: " .. string.format("%.2fs", os.clock() - startTime))
     table.insert(lines, "================================================================================\n")
 
@@ -829,7 +877,7 @@ end
 local function generateEspAndGuiReport()
     local lines = {}
     table.insert(lines, "================================================================================")
-    table.insert(lines, "ROUBE UM OVO - RELATORIO FORENSE DE ESP, RENDA & CONCORRENTE (v4.2)")
+    table.insert(lines, "ROUBE UM OVO - RELATORIO FORENSE DE ESP, RENDA & CONCORRENTE (v4.3)")
     table.insert(lines, "Data/Hora: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | Sessao: " .. string.format("%.2fs", os.clock() - startTime))
     table.insert(lines, "================================================================================\n")
 
@@ -858,7 +906,7 @@ end
 local function generateFlightReport()
     local lines = {}
     table.insert(lines, "================================================================================")
-    table.insert(lines, "ROUBE UM OVO - TELEMETRIA & WAYPOINTS DE VOO FORENSE (v4.2)")
+    table.insert(lines, "ROUBE UM OVO - TELEMETRIA & WAYPOINTS DE VOO FORENSE (v4.3)")
     table.insert(lines, "Data/Hora: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | Total de Pontos: " .. #flightWaypoints)
     table.insert(lines, "================================================================================\n")
 
@@ -870,7 +918,7 @@ local function generateMasterReport()
     scanAndReportSecretGears()
     local master = {
         "================================================================================",
-        "ROUBE UM OVO - RELATORIO FORENSE MESTRE DEFINITIVO (v4.2 SUPER-FORENSIC)",
+        "ROUBE UM OVO - RELATORIO FORENSE MESTRE DEFINITIVO (v4.3 SUPER-FORENSIC)",
         "Data/Hora: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | Tempo: " .. string.format("%.2fs", os.clock() - startTime),
         "PlaceId: " .. tostring(game.PlaceId) .. " | JobId: " .. tostring(game.JobId),
         "Jogador: " .. (LocalPlayer and LocalPlayer.Name or "N/D") .. " (" .. (LocalPlayer and tostring(LocalPlayer.UserId) or "N/D") .. ")",
@@ -891,14 +939,14 @@ local function generateMasterReport()
         "================================================================================",
         table.concat(structuralDumpLines, "\n"),
         "\n================================================================================",
-        "FIM DO RELATORIO FORENSE MESTRE v4.2",
+        "FIM DO RELATORIO FORENSE MESTRE v4.3",
         "================================================================================"
     }
     return table.concat(master, "\n")
 end
 
 --================================================================--
--- 8. INTERFACE GRAFICA COM ABAS & CONTROLE SEGURO
+-- 8. INTERFACE GRAFICA COM CONTROLE INTELIGENTE DE SCROLL
 --================================================================--
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "BF_Mega_Sniffer_GUI_v4"
@@ -912,7 +960,7 @@ end)
 if not ScreenGui.Parent then ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 560, 0, 430)
+MainFrame.Size = UDim2.new(0, 560, 0, 435)
 MainFrame.Position = UDim2.new(0.02, 0, 0.05, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(13, 17, 23)
 MainFrame.BorderSizePixel = 0
@@ -948,7 +996,7 @@ Title.Font = Enum.Font.GothamBold
 Title.TextSize = 11
 Title.TextColor3 = Color3.fromRGB(56, 189, 248)
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "MEGA SNIFFER FORENSE v4.2"
+Title.Text = "MEGA SNIFFER FORENSE v4.3"
 Title.Parent = TopBar
 
 local MinBtn = Instance.new("TextButton")
@@ -1040,11 +1088,11 @@ updateTabStyles()
 
 -- Caixa de Log Central
 local LogBox = Instance.new("ScrollingFrame")
-LogBox.Size = UDim2.new(1, -20, 0, 190)
+LogBox.Size = UDim2.new(1, -20, 0, 195)
 LogBox.Position = UDim2.new(0, 10, 0, 68)
 LogBox.BackgroundColor3 = Color3.fromRGB(1, 4, 9)
 LogBox.BorderSizePixel = 0
-LogBox.ScrollBarThickness = 5
+LogBox.ScrollBarThickness = 6
 LogBox.Parent = MainFrame
 
 local LogBoxCorner = Instance.new("UICorner")
@@ -1065,22 +1113,25 @@ LogText.TextWrapped = true
 LogText.Text = "Aguardando eventos..."
 LogText.Parent = LogBox
 
--- Barra Intermediária: Status e Ativador do Deep Spy
-local DeepSpyBar = Instance.new("Frame")
-DeepSpyBar.Size = UDim2.new(1, -20, 0, 26)
-DeepSpyBar.Position = UDim2.new(0, 10, 0, 262)
-DeepSpyBar.BackgroundTransparency = 1
-DeepSpyBar.Parent = MainFrame
+-- Sistema Inteligente de Auto-Scroll (Resolve o bug de voltar tudo pra baixo)
+local autoScrollEnabled = true
+
+-- Barra Intermediária: Status, Armas Secretas e Controle de Scroll
+local MidBar = Instance.new("Frame")
+MidBar.Size = UDim2.new(1, -20, 0, 26)
+MidBar.Position = UDim2.new(0, 10, 0, 268)
+MidBar.BackgroundTransparency = 1
+MidBar.Parent = MainFrame
 
 DeepSpyBtn = Instance.new("TextButton")
-DeepSpyBtn.Size = UDim2.new(0.60, -4, 1, 0)
+DeepSpyBtn.Size = UDim2.new(0.40, -4, 1, 0)
 DeepSpyBtn.Position = UDim2.new(0, 0, 0, 0)
 DeepSpyBtn.BackgroundColor3 = deepSpyActive and Color3.fromRGB(147, 51, 234) or Color3.fromRGB(33, 38, 45)
 DeepSpyBtn.Font = Enum.Font.GothamBold
 DeepSpyBtn.TextSize = 9
 DeepSpyBtn.TextColor3 = deepSpyActive and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(148, 163, 184)
-DeepSpyBtn.Text = deepSpyActive and "DEEP REMOTE SPY ATIVADO (newcclosure)" or "[ATIVAR AGORA] DEEP REMOTE SPY"
-DeepSpyBtn.Parent = DeepSpyBar
+DeepSpyBtn.Text = deepSpyActive and "DEEP SPY: ATIVO" or "DEEP SPY: AUTO (2.5s)"
+DeepSpyBtn.Parent = MidBar
 
 local DeepSpyCorner = Instance.new("UICorner")
 DeepSpyCorner.CornerRadius = UDim.new(0, 4)
@@ -1092,39 +1143,88 @@ DeepSpyBtn.MouseButton1Click:Connect(function()
         if success then
             DeepSpyBtn.BackgroundColor3 = Color3.fromRGB(147, 51, 234)
             DeepSpyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-            DeepSpyBtn.Text = "DEEP REMOTE SPY ATIVADO (newcclosure SEGURO)"
+            DeepSpyBtn.Text = "DEEP SPY: ATIVO"
         end
     end
 end)
 
--- Botao Coletar Armas Secretas
+-- Botao Coletar Armas Secretas 3D
 local CollectGearsBtn = Instance.new("TextButton")
-CollectGearsBtn.Size = UDim2.new(0.40, 0, 1, 0)
-CollectGearsBtn.Position = UDim2.new(0.60, 4, 0, 0)
+CollectGearsBtn.Size = UDim2.new(0.32, -4, 1, 0)
+CollectGearsBtn.Position = UDim2.new(0.40, 2, 0, 0)
 CollectGearsBtn.BackgroundColor3 = Color3.fromRGB(217, 119, 6)
 CollectGearsBtn.Font = Enum.Font.GothamBold
 CollectGearsBtn.TextSize = 9
 CollectGearsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-CollectGearsBtn.Text = "PEGAR ARMAS SECRETAS"
-CollectGearsBtn.Parent = DeepSpyBar
+CollectGearsBtn.Text = "PEGAR ARMAS (3D)"
+CollectGearsBtn.Parent = MidBar
 
 local CollectGearsCorner = Instance.new("UICorner")
 CollectGearsCorner.CornerRadius = UDim.new(0, 4)
 CollectGearsCorner.Parent = CollectGearsBtn
 
 CollectGearsBtn.MouseButton1Click:Connect(function()
-    CollectGearsBtn.Text = "COLETANDO..."
-    local ok, res = attemptCollectAllSecretGears()
-    CollectGearsBtn.Text = ok and "TOQUES ENVIADOS!" or "FALHA"
-    task.delay(2.0, function()
-        CollectGearsBtn.Text = "PEGAR ARMAS SECRETAS"
+    CollectGearsBtn.Text = "TELEPORTANDO..."
+    local ok, msg = attemptCollectAllSecretGears3D()
+    CollectGearsBtn.Text = ok and "PISANDO..." or "FALHA"
+    task.delay(2.5, function()
+        CollectGearsBtn.Text = "PEGAR ARMAS (3D)"
     end)
+end)
+
+-- Botao de Controle de Auto-Scroll
+local AutoScrollBtn = Instance.new("TextButton")
+AutoScrollBtn.Size = UDim2.new(0.28, 0, 1, 0)
+AutoScrollBtn.Position = UDim2.new(0.72, 2, 0, 0)
+AutoScrollBtn.BackgroundColor3 = Color3.fromRGB(16, 185, 129)
+AutoScrollBtn.Font = Enum.Font.GothamBold
+AutoScrollBtn.TextSize = 9
+AutoScrollBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+AutoScrollBtn.Text = "SCROLL: LIGADO"
+AutoScrollBtn.Parent = MidBar
+
+local AutoScrollCorner = Instance.new("UICorner")
+AutoScrollCorner.CornerRadius = UDim.new(0, 4)
+AutoScrollCorner.Parent = AutoScrollBtn
+
+local function updateScrollBtnState()
+    if autoScrollEnabled then
+        AutoScrollBtn.BackgroundColor3 = Color3.fromRGB(16, 185, 129)
+        AutoScrollBtn.Text = "SCROLL: LIGADO"
+    else
+        AutoScrollBtn.BackgroundColor3 = Color3.fromRGB(245, 158, 11)
+        AutoScrollBtn.Text = "SCROLL: PAUSADO"
+    end
+end
+
+AutoScrollBtn.MouseButton1Click:Connect(function()
+    autoScrollEnabled = not autoScrollEnabled
+    updateScrollBtnState()
+    if autoScrollEnabled then
+        LogBox.CanvasPosition = Vector2.new(0, 99999)
+    end
+end)
+
+-- Detecta quando o usuario rola para cima no LogBox
+LogBox:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+    local maxY = math.max(0, LogBox.AbsoluteCanvasSize.Y - LogBox.AbsoluteWindowSize.Y)
+    if maxY > 40 and (maxY - LogBox.CanvasPosition.Y) > 50 then
+        if autoScrollEnabled then
+            autoScrollEnabled = false
+            updateScrollBtnState()
+        end
+    elseif maxY > 0 and (maxY - LogBox.CanvasPosition.Y) <= 15 then
+        if not autoScrollEnabled then
+            autoScrollEnabled = true
+            updateScrollBtnState()
+        end
+    end
 end)
 
 -- Barra de Acoes Rapidas (Copias Seletivas para Discord)
 local QuickCopyBar = Instance.new("Frame")
 QuickCopyBar.Size = UDim2.new(1, -20, 0, 28)
-QuickCopyBar.Position = UDim2.new(0, 10, 0, 292)
+QuickCopyBar.Position = UDim2.new(0, 10, 0, 298)
 QuickCopyBar.BackgroundTransparency = 1
 QuickCopyBar.Parent = MainFrame
 
@@ -1157,13 +1257,13 @@ ButtonBar.BackgroundTransparency = 1
 ButtonBar.Parent = MainFrame
 
 local SaveFilesBtn = Instance.new("TextButton")
-SaveFilesBtn.Size = UDim2.new(0.50, -4, 1, 0)
+SaveFilesBtn.Size = UDim2.new(0.48, -4, 1, 0)
 SaveFilesBtn.Position = UDim2.new(0, 0, 0, 0)
 SaveFilesBtn.BackgroundColor3 = Color3.fromRGB(16, 185, 129)
 SaveFilesBtn.Font = Enum.Font.GothamBold
 SaveFilesBtn.TextSize = 10
 SaveFilesBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-SaveFilesBtn.Text = "SALVAR 5 ARQUIVOS TXT (NO DISCO)"
+SaveFilesBtn.Text = "SALVAR 5 ARQUIVOS TXT"
 SaveFilesBtn.Parent = ButtonBar
 
 local SaveFilesCorner = Instance.new("UICorner")
@@ -1171,13 +1271,13 @@ SaveFilesCorner.CornerRadius = UDim.new(0, 6)
 SaveFilesCorner.Parent = SaveFilesBtn
 
 local CopyMasterBtn = Instance.new("TextButton")
-CopyMasterBtn.Size = UDim2.new(0.35, -4, 1, 0)
-CopyMasterBtn.Position = UDim2.new(0.50, 4, 0, 0)
+CopyMasterBtn.Size = UDim2.new(0.36, -4, 1, 0)
+CopyMasterBtn.Position = UDim2.new(0.48, 4, 0, 0)
 CopyMasterBtn.BackgroundColor3 = Color3.fromRGB(14, 165, 233)
 CopyMasterBtn.Font = Enum.Font.GothamBold
 CopyMasterBtn.TextSize = 10
 CopyMasterBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-CopyMasterBtn.Text = "COPIAR MESTRE (TUDO)"
+CopyMasterBtn.Text = "COPIAR MESTRE"
 CopyMasterBtn.Parent = ButtonBar
 
 local CopyMasterCorner = Instance.new("UICorner")
@@ -1185,8 +1285,8 @@ CopyMasterCorner.CornerRadius = UDim.new(0, 6)
 CopyMasterCorner.Parent = CopyMasterBtn
 
 local ClearBtn = Instance.new("TextButton")
-ClearBtn.Size = UDim2.new(0.15, 0, 1, 0)
-ClearBtn.Position = UDim2.new(0.85, 4, 0, 0)
+ClearBtn.Size = UDim2.new(0.16, 0, 1, 0)
+ClearBtn.Position = UDim2.new(0.84, 4, 0, 0)
 ClearBtn.BackgroundColor3 = Color3.fromRGB(239, 68, 68)
 ClearBtn.Font = Enum.Font.GothamBold
 ClearBtn.TextSize = 10
@@ -1245,10 +1345,10 @@ SaveFilesBtn.MouseButton1Click:Connect(function()
 
     if ok and count > 0 then
         SaveFilesBtn.BackgroundColor3 = Color3.fromRGB(5, 150, 105)
-        notifyBtn(SaveFilesBtn, "5 ARQUIVOS GRAVADOS NO DISCO!", "SALVAR 5 ARQUIVOS TXT (NO DISCO)", Color3.fromRGB(16, 185, 129))
+        notifyBtn(SaveFilesBtn, "5 ARQUIVOS GRAVADOS NO DISCO!", "SALVAR 5 ARQUIVOS TXT", Color3.fromRGB(16, 185, 129))
     else
         SaveFilesBtn.BackgroundColor3 = Color3.fromRGB(239, 68, 68)
-        notifyBtn(SaveFilesBtn, "writefile NAO SUPORTADO!", "SALVAR 5 ARQUIVOS TXT (NO DISCO)", Color3.fromRGB(16, 185, 129))
+        notifyBtn(SaveFilesBtn, "writefile NAO SUPORTADO!", "SALVAR 5 ARQUIVOS TXT", Color3.fromRGB(16, 185, 129))
     end
 end)
 
@@ -1258,7 +1358,7 @@ CopyMasterBtn.MouseButton1Click:Connect(function()
         if setclipboard then setclipboard(master) end
         if writefile then writefile("MEGA_SNIFFER_RELATORIO_MESTRE.txt", master) end
     end)
-    notifyBtn(CopyMasterBtn, "COPIADO COMPLETO!", "COPIAR MESTRE (TUDO)", Color3.fromRGB(14, 165, 233))
+    notifyBtn(CopyMasterBtn, "COPIADO COMPLETO!", "COPIAR MESTRE", Color3.fromRGB(14, 165, 233))
 end)
 
 ClearBtn.MouseButton1Click:Connect(function()
@@ -1280,15 +1380,15 @@ MinBtn.MouseButton1Click:Connect(function()
         MainFrame.Size = UDim2.new(0, 560, 0, 34)
         LogBox.Visible = false
         TabBar.Visible = false
-        DeepSpyBar.Visible = false
+        MidBar.Visible = false
         QuickCopyBar.Visible = false
         ButtonBar.Visible = false
         MinBtn.Text = "+"
     else
-        MainFrame.Size = UDim2.new(0, 560, 0, 430)
+        MainFrame.Size = UDim2.new(0, 560, 0, 435)
         LogBox.Visible = true
         TabBar.Visible = true
-        DeepSpyBar.Visible = true
+        MidBar.Visible = true
         QuickCopyBar.Visible = true
         ButtonBar.Visible = true
         MinBtn.Text = "-"
@@ -1299,7 +1399,7 @@ CloseBtn.MouseButton1Click:Connect(function()
     ScreenGui:Destroy()
 end)
 
--- Loop de Atualizacao da Interface
+-- Loop de Atualizacao da Interface (Respeita a rolagem do usuario)
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -1333,12 +1433,16 @@ task.spawn(function()
             end
 
             LogText.Text = #lines > 0 and table.concat(lines, "\n") or "Sem eventos no momento."
-            LogBox.CanvasPosition = Vector2.new(0, 99999)
 
-            Title.Text = string.format("MEGA SNIFFER v4.2 | Remotes:%d | Esteira:%d | ESP:%d",
+            -- So desce a barra de rolagem se o auto-scroll estiver ativo
+            if autoScrollEnabled then
+                LogBox.CanvasPosition = Vector2.new(0, 99999)
+            end
+
+            Title.Text = string.format("MEGA SNIFFER v4.3 | Remotes:%d | Esteira:%d | ESP:%d",
                 #outgoingRemotes, #treadmillEvents, #competitorEspLogs)
         end
     end
 end)
 
-logLive("SISTEMA", "Sniffer pronto! O Deep Spy ativara automaticamente em 2.5s.")
+logLive("SISTEMA", "Sniffer v4.3 pronto com Rolagem Inteligente e Coletor 3D!")
