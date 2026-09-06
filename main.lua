@@ -365,7 +365,7 @@ local KnownPetsCatalog = {
     ["froggo"] = { DisplayName = "Froggo", Rarity = "MYTHIC" },
 }
 
--- 7.1. BANCO DE DADOS DAS 11 ILHAS OFICIAIS DO JOGO (REPLICATEDSTORAGE.DATA.AREAS)
+-- 7.1. BANCO DE DADOS DAS 11 ILHAS OFICIAIS E PETS ÚNICOS POR SLOT
 local OfficialIslands = {
     {
         Id = "Forest",
@@ -375,8 +375,15 @@ local OfficialIslands = {
         Rarity = "COMUM",
         Score = 300,
         TopDrop = "Brr Brr Patapim",
-        EggShell = "Ovo Comum da Floresta",
-        Guard = "Forest Guard"
+        EggShell = "Ovo da Floresta",
+        Guard = "Forest Guard",
+        SlotPets = {
+            [1] = { Name = "Brr Brr Patapim", Rarity = "LENDÁRIO", Score = 15000 },
+            [2] = { Name = "Urso (Bear)", Rarity = "ÉPICO", Score = 8000 },
+            [3] = { Name = "Raposa do Pântano (Mire Fox)", Rarity = "ÉPICO", Score = 8000 },
+            [4] = { Name = "Guaxinim (Raccoon)", Rarity = "RARO", Score = 3500 },
+            [5] = { Name = "Galinha (Chicken)", Rarity = "COMUM", Score = 300 }
+        }
     },
     {
         Id = "Lake",
@@ -386,8 +393,15 @@ local OfficialIslands = {
         Rarity = "INCOMUM",
         Score = 1500,
         TopDrop = "Crocodile",
-        EggShell = "Ovo Incomum do Lago",
-        Guard = "Lake Guard"
+        EggShell = "Ovo do Lago",
+        Guard = "Lake Guard",
+        SlotPets = {
+            [1] = { Name = "Crocodilo (Crocodile)", Rarity = "ÉPICO", Score = 8000 },
+            [2] = { Name = "Cisne (Swan)", Rarity = "ÉPICO", Score = 8000 },
+            [3] = { Name = "Peixe-Gato (Catfish)", Rarity = "INCOMUM", Score = 1500 },
+            [4] = { Name = "Patinho (Duckling)", Rarity = "COMUM", Score = 300 },
+            [5] = { Name = "Sapo (Frog)", Rarity = "COMUM", Score = 300 }
+        }
     },
     {
         Id = "Desert",
@@ -397,8 +411,15 @@ local OfficialIslands = {
         Rarity = "RARO",
         Score = 3500,
         TopDrop = "Scorpio",
-        EggShell = "Ovo Raro do Deserto",
-        Guard = "Desert Guard"
+        EggShell = "Ovo do Deserto",
+        Guard = "Desert Guard",
+        SlotPets = {
+            [1] = { Name = "Aranha da Areia (Sand Spider)", Rarity = "MÍTICO", Score = 20000 },
+            [2] = { Name = "Escorpião (Scorpio)", Rarity = "LENDÁRIO", Score = 15000 },
+            [3] = { Name = "Cobra Coral (Rattlesnake)", Rarity = "LENDÁRIO", Score = 15000 },
+            [4] = { Name = "Camelo (Camel)", Rarity = "RARO", Score = 3500 },
+            [5] = { Name = "Jerboa", Rarity = "COMUM", Score = 300 }
+        }
     },
     {
         Id = "Jungle",
@@ -408,8 +429,15 @@ local OfficialIslands = {
         Rarity = "ÉPICO",
         Score = 8000,
         TopDrop = "Bananita Dolphinita",
-        EggShell = "Ovo Épico da Selva",
-        Guard = "Jungle Guard"
+        EggShell = "Ovo da Selva",
+        Guard = "Jungle Guard",
+        SlotPets = {
+            [1] = { Name = "Tigre Real (Tiger)", Rarity = "MÍTICO", Score = 20000 },
+            [2] = { Name = "Gorila (Gorilla)", Rarity = "LENDÁRIO", Score = 15000 },
+            [3] = { Name = "Orangutango (Orangutini)", Rarity = "LENDÁRIO", Score = 15000 },
+            [4] = { Name = "Golfinho Banana (Bananita)", Rarity = "ÉPICO", Score = 8000 },
+            [5] = { Name = "Chimpanzé (Chimpanzee)", Rarity = "RARO", Score = 3500 }
+        }
     },
     {
         Id = "Snow",
@@ -419,8 +447,15 @@ local OfficialIslands = {
         Rarity = "LENDÁRIO",
         Score = 15000,
         TopDrop = "Yeti",
-        EggShell = "Ovo Lendário da Neve",
-        Guard = "Snow Guard"
+        EggShell = "Ovo da Neve",
+        Guard = "Snow Guard",
+        SlotPets = {
+            [1] = { Name = "Yeti das Neves", Rarity = "SECRET", Score = 45000 },
+            [2] = { Name = "Mamute Real (Mammoth)", Rarity = "MÍTICO", Score = 20000 },
+            [3] = { Name = "Urso Polar (Polar Bear)", Rarity = "LENDÁRIO", Score = 15000 },
+            [4] = { Name = "Morsa (Walrus)", Rarity = "ÉPICO", Score = 8000 },
+            [5] = { Name = "Pinguim (Penguin)", Rarity = "RARO", Score = 3500 }
+        }
     },
     {
         Id = "Volcano",
@@ -430,8 +465,15 @@ local OfficialIslands = {
         Rarity = "MÍTICO",
         Score = 20000,
         TopDrop = "Shadow Dragon",
-        EggShell = "Ovo Mítico do Vulcão",
-        Guard = "Volcano Guard"
+        EggShell = "Ovo do Vulcão",
+        Guard = "Volcano Guard",
+        SlotPets = {
+            [1] = { Name = "Dragão da Sombra (Shadow Dragon)", Rarity = "MÍTICO", Score = 20000 },
+            [2] = { Name = "Touro Flamejante (Flaming Bull)", Rarity = "LENDÁRIO", Score = 15000 },
+            [3] = { Name = "Iguana de Lava (Lava Iguana)", Rarity = "LENDÁRIO", Score = 15000 },
+            [4] = { Name = "Sapo de Lava (Lava Frog)", Rarity = "ÉPICO", Score = 8000 },
+            [5] = { Name = "Geco de Cinzas (Ash Gecko)", Rarity = "RARO", Score = 3500 }
+        }
     },
     {
         Id = "Abyss Ocean",
@@ -441,8 +483,15 @@ local OfficialIslands = {
         Rarity = "COSMIC",
         Score = 30000,
         TopDrop = "El Maja",
-        EggShell = "Ovo Cósmico do Abismo",
-        Guard = "Abyss Ocean Guard"
+        EggShell = "Ovo do Abismo",
+        Guard = "Abyss Ocean Guard",
+        SlotPets = {
+            [1] = { Name = "El Maja", Rarity = "ETERNAL", Score = 70000 },
+            [2] = { Name = "Kraken", Rarity = "SECRET", Score = 45000 },
+            [3] = { Name = "Baleia Alabaster (Beluga)", Rarity = "COSMIC", Score = 30000 },
+            [4] = { Name = "Tubarão Baleia (Whale Shark)", Rarity = "COSMIC", Score = 30000 },
+            [5] = { Name = "Orca Assassina", Rarity = "MÍTICO", Score = 20000 }
+        }
     },
     {
         Id = "Prehistoric",
@@ -452,8 +501,15 @@ local OfficialIslands = {
         Rarity = "SECRET",
         Score = 45000,
         TopDrop = "Mosasaurus",
-        EggShell = "Ovo Secreto Pré-Histórico",
-        Guard = "Prehistoric Guard"
+        EggShell = "Ovo Pré-Histórico",
+        Guard = "Prehistoric Guard",
+        SlotPets = {
+            [1] = { Name = "Mosassauro (Mosasaurus)", Rarity = "ETERNAL", Score = 70000 },
+            [2] = { Name = "T-Rex (Tyrannosaurus Rex)", Rarity = "SECRET", Score = 45000 },
+            [3] = { Name = "Tralaledon", Rarity = "SECRET", Score = 45000 },
+            [4] = { Name = "Brontossauro (Bronto)", Rarity = "COSMIC", Score = 30000 },
+            [5] = { Name = "Pterodáctilo (Pterodactyl)", Rarity = "LENDÁRIO", Score = 15000 }
+        }
     },
     {
         Id = "Cosmic",
@@ -463,8 +519,15 @@ local OfficialIslands = {
         Rarity = "ETERNAL",
         Score = 70000,
         TopDrop = "Unicorn",
-        EggShell = "Ovo Eterno Cósmico",
-        Guard = "Cosmic Guard"
+        EggShell = "Ovo Cósmico",
+        Guard = "Cosmic Guard",
+        SlotPets = {
+            [1] = { Name = "Unicórnio Divino (Unicorn)", Rarity = "DIVINE", Score = 100000 },
+            [2] = { Name = "Dragão Lunar Eterno", Rarity = "ETERNAL", Score = 70000 },
+            [3] = { Name = "Dragão Cósmico (Cave Dragon)", Rarity = "SECRET", Score = 45000 },
+            [4] = { Name = "Chefe Esqueleto Cósmico", Rarity = "SECRET", Score = 45000 },
+            [5] = { Name = "Geco Cósmico (Galaxy Gecko)", Rarity = "LENDÁRIO", Score = 15000 }
+        }
     },
     {
         Id = "Cherry Blossom",
@@ -474,8 +537,15 @@ local OfficialIslands = {
         Rarity = "DIVINE",
         Score = 100000,
         TopDrop = "Kitsune",
-        EggShell = "Ovo Divino de Cerejeira",
-        Guard = "Cherry Blossom Guard"
+        EggShell = "Ovo de Cerejeira",
+        Guard = "Cherry Blossom Guard",
+        SlotPets = {
+            [1] = { Name = "Kitsune Ancestral", Rarity = "DIVINE", Score = 100000 },
+            [2] = { Name = "Tigre Oni (Oni Tiger)", Rarity = "ETERNAL", Score = 70000 },
+            [3] = { Name = "Cervo Sagrado (Stag)", Rarity = "SECRET", Score = 45000 },
+            [4] = { Name = "Carpa Cósmica (Koi)", Rarity = "COSMIC", Score = 30000 },
+            [5] = { Name = "Coruja das Neves (Snowy Owl)", Rarity = "COSMIC", Score = 30000 }
+        }
     },
     {
         Id = "Titan Temple",
@@ -485,8 +555,15 @@ local OfficialIslands = {
         Rarity = "TITAN",
         Score = 150000,
         TopDrop = "Godzilla",
-        EggShell = "Ovo de Titã Ancestral",
-        Guard = "Titan Temple Guard"
+        EggShell = "Ovo de Titã",
+        Guard = "Titan Temple Guard",
+        SlotPets = {
+            [1] = { Name = "Godzilla (Titã)", Rarity = "TITAN", Score = 150000 },
+            [2] = { Name = "King Kong (Gorilla King)", Rarity = "ETERNAL", Score = 70000 },
+            [3] = { Name = "Lâmina Oculta (Blade Head)", Rarity = "MÍTICO", Score = 20000 },
+            [4] = { Name = "Rinoceronte (Rhino)", Rarity = "COSMIC", Score = 30000 },
+            [5] = { Name = "Aranha Titânica (Kaiju Spider)", Rarity = "LENDÁRIO", Score = 15000 }
+        }
     }
 }
 
@@ -775,22 +852,36 @@ local function resolveEggDetails(instance, prompt)
         end
     end
 
-    -- Método E: Resolução com base nas 11 Ilhas Oficiais e Nomes Legítimos
+    -- Método E: Resolução Exata com Nome Único do Pet de cada Slot da Ilha
     local isl = getIslandByPos(pos)
-    local slotNum = instance and instance.Name:match("Slot_([%d]+)")
-    local slotSuffix = slotNum and (" - Slot " .. slotNum) or ""
+    local slotIdx = instance and tonumber(instance.Name:match("Slot_([%d]+)"))
+    if not slotIdx and instance then
+        -- Se não tiver no nome, calcula pelo índice de proximidade
+        local parent = instance.Parent
+        if parent then
+            for idx, c in ipairs(parent:GetChildren()) do
+                if c == instance then slotIdx = ((idx - 1) % 5) + 1 break end
+            end
+        end
+    end
+    slotIdx = slotIdx or 1
 
-    if not foundName or isHexUUID(foundName) or foundName:find("pcube") or foundName:find("polysurface") or foundName:find("ovo selvagem") then
-        foundName = string.format("%s (%s%s)", isl.EggShell, isl.Name, slotSuffix)
-        if not detectedRarity or detectedRarity == "COMUM" then
+    local petInfo = isl.SlotPets and isl.SlotPets[slotIdx]
+    if not foundName or isHexUUID(foundName) or foundName:find("pcube") or foundName:find("polysurface") or foundName:find("ovo") then
+        if petInfo then
+            foundName = string.format("Ovo de %s (%s)", petInfo.Name, isl.Name)
+            detectedRarity = petInfo.Rarity
+            maxScore = petInfo.Score
+        else
+            foundName = string.format("Ovo de %s (%s - Slot %02d)", isl.TopDrop or isl.EggShell, isl.Name, slotIdx)
             detectedRarity = isl.Rarity
-            maxScore = math.max(maxScore, isl.Score)
+            maxScore = isl.Score
         end
     end
 
     if not detectedRarity then
-        detectedRarity = isl.Rarity or "COMUM"
-        maxScore = math.max(maxScore, isl.Score or 300)
+        detectedRarity = (petInfo and petInfo.Rarity) or isl.Rarity or "COMUM"
+        maxScore = math.max(maxScore, (petInfo and petInfo.Score) or isl.Score or 300)
     end
 
     if detectedWeight > 0 and maxScore < (detectedWeight * 2) then
@@ -1595,7 +1686,7 @@ Title.Font = Enum.Font.GothamBold
 Title.TextSize = 12
 Title.TextColor3 = C_CYAN
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "ROUBE UM OVO  v9.0"
+Title.Text = "ROUBE UM OVO  v9.5"
 Title.Parent = Topbar
 
 -- Badge de Status (IDLE / ROUBANDO)
