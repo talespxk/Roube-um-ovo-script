@@ -3,7 +3,7 @@ if not game:IsLoaded() then
 end
 
 --[[
-    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v12.1 SAFE WALK)
+    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v13.0 OBSERVATORY)
     -----------------------------------------------------------------------
     - Radar honesto: somente mostra pet/raridade/renda quando o cliente replica
       evidência real. Slots opacos aparecem como N/D.
@@ -46,6 +46,7 @@ local Services = {
     HttpService = safeService("HttpService"),
     RunService = safeService("RunService"),
     UserInputService = safeService("UserInputService"),
+    ProximityPromptService = safeService("ProximityPromptService"),
     TweenService = safeService("TweenService"),
     PathfindingService = safeService("PathfindingService"),
     ReplicatedStorage = safeService("ReplicatedStorage"),
@@ -88,19 +89,15 @@ local Config = {
     StealMethod = "CaminhadaSegura",
     AutoStealEnabled = false,
     AutoEsteiraEnabled = false,
-    SafeFlightEnabled = true,
     LockCurrentIsland = false, -- Padrão: busca em todo o mapa
     MaxStealDistance = 450,
-    MoveSpeed = 24,
+    MoveSpeed = 60,
     TargetRarity = "Qualquer",
     MinRarityScore = 0,
     ESPEnabled = false,
     ShowOnlyUnowned = true,
     AutoDepositWait = 1.0,
-    SearchQuery = "",
-    InfJumpEnabled = false,
-    NoclipEnabled = false,
-    WalkSpeed = 16
+    SearchQuery = ""
 }
 
 local State = {
@@ -112,10 +109,119 @@ local State = {
     CarryConfirmed = false,
     CarryEvidence = nil,
     LastCarryChange = 0,
+    ExpectCarryUntil = 0,
+    LastHoldingResult = false,
+    LastHoldingEvidence = nil,
+    PendingLearnFingerprint = nil,
+    PendingLearnAt = 0,
     CurrentTargetEgg = nil,
     LastPromptTriggered = nil,
     Logs = {}
 }
+
+local LearnedEggData = {}
+local LearnedVisualData = {}
+local learnEggMetadataFromArgs = function() end
+local getEggVisualFingerprint
+
+-- Telemetria de sessão. O arquivo JSONL é estruturado para permitir que uma
+-- sessão longa seja analisada sem depender apenas do pequeno console da UI.
+local Telemetry = {
+    Enabled = true,
+    StartedAt = os.clock(),
+    SessionId = os.date("%Y%m%d_%H%M%S"),
+    FileName = "ROUBE_UM_OVO_TRACE.jsonl",
+    Pending = {},
+    Recent = {},
+    Counts = {},
+    MaxRecent = 1200,
+}
+
+local function instancePath(instance)
+    if typeof(instance) ~= "Instance" then return tostring(instance) end
+    local ok, result = pcall(function() return instance:GetFullName() end)
+    return ok and result or (instance.ClassName .. ":" .. instance.Name)
+end
+
+local function serializeTelemetry(value, depth, seen)
+    depth = depth or 0
+    seen = seen or {}
+    local valueType = typeof(value)
+    if valueType == "Instance" then
+        local attrs = {}
+        pcall(function()
+            for key, attrValue in pairs(value:GetAttributes()) do
+                attrs[tostring(key)] = tostring(attrValue)
+            end
+        end)
+        return { type = value.ClassName, path = instancePath(value), attributes = attrs }
+    elseif valueType == "Vector3" then
+        return { x = value.X, y = value.Y, z = value.Z }
+    elseif valueType == "CFrame" then
+        local p = value.Position
+        return { x = p.X, y = p.Y, z = p.Z }
+    elseif valueType == "EnumItem" then
+        return tostring(value)
+    end
+
+    local luaType = type(value)
+    if luaType == "string" then
+        return #value > 2000 and (value:sub(1, 2000) .. "<truncated>") or value
+    end
+    if luaType == "nil" or luaType == "boolean" or luaType == "number" then
+        return value
+    end
+    if luaType ~= "table" then return tostring(value) end
+    if seen[value] then return "<circular>" end
+    if depth >= 4 then return "<max-depth>" end
+
+    seen[value] = true
+    local result = {}
+    local count = 0
+    for key, child in pairs(value) do
+        count = count + 1
+        if count > 80 then
+            result["<truncated>"] = true
+            break
+        end
+        result[tostring(key)] = serializeTelemetry(child, depth + 1, seen)
+    end
+    seen[value] = nil
+    return result
+end
+
+local function traceEvent(category, eventName, data)
+    if not Telemetry.Enabled then return end
+    local entry = {
+        session = Telemetry.SessionId,
+        elapsed = math.floor((os.clock() - Telemetry.StartedAt) * 1000) / 1000,
+        wallTime = os.date("%Y-%m-%d %H:%M:%S"),
+        category = tostring(category),
+        event = tostring(eventName),
+        data = serializeTelemetry(data),
+    }
+    local ok, encoded = pcall(function() return Services.HttpService:JSONEncode(entry) end)
+    if not ok then return end
+    table.insert(Telemetry.Pending, encoded)
+    table.insert(Telemetry.Recent, encoded)
+    if #Telemetry.Recent > Telemetry.MaxRecent then table.remove(Telemetry.Recent, 1) end
+    Telemetry.Counts[entry.category] = (Telemetry.Counts[entry.category] or 0) + 1
+end
+
+local function flushTelemetry()
+    if #Telemetry.Pending == 0 then return end
+    local batch = table.concat(Telemetry.Pending, "\n") .. "\n"
+    table.clear(Telemetry.Pending)
+    pcall(function()
+        if appendfile then
+            appendfile(Telemetry.FileName, batch)
+        elseif writefile and readfile then
+            local existing = ""
+            pcall(function() existing = readfile(Telemetry.FileName) end)
+            writefile(Telemetry.FileName, existing .. batch)
+        end
+    end)
+end
 
 -- Declarações antecipadas de componentes da UI e Funções
 local ScreenGui = nil
@@ -200,6 +306,26 @@ pcall(function()
 end)
 purgeAllGuis()
 
+pcall(function()
+    if writefile then
+        writefile(Telemetry.FileName, Services.HttpService:JSONEncode({
+            type = "session_start",
+            session = Telemetry.SessionId,
+            placeId = game.PlaceId,
+            jobId = game.JobId,
+            player = LocalPlayer.Name,
+            userId = LocalPlayer.UserId,
+            version = "13.0",
+        }) .. "\n")
+    end
+end)
+task.spawn(function()
+    while not State.IsUnloaded do
+        task.wait(2)
+        flushTelemetry()
+    end
+end)
+
 -- 6. NEUTRALIZAÇÃO ATIVA DE ANTI-CHEAT LOCAL DO CHARACTER (SEM DESATIVAR RAGDOLL)
 local function disableCharacterAntiCheats(char)
     if not char then return end
@@ -252,6 +378,7 @@ local function addLog(category, msg)
     local entry = string.format("[%s] [%s] %s", timestamp, category, msg)
     table.insert(State.Logs, 1, entry)
     if #State.Logs > 100 then table.remove(State.Logs) end
+    traceEvent("UI_LOG", category, { message = msg })
     if _G.UpdateLogConsole then _G.UpdateLogConsole() end
 end
 
@@ -338,17 +465,24 @@ local standardLimbNames = {
 }
 
 -- 6. Detecção de Posse de Ovo Ultra-Confiável (Multi-Camada)
-local carryStateRemote = Services.ReplicatedStorage:FindFirstChild("AreaEggCarryStateChanged", true)
-if carryStateRemote and carryStateRemote:IsA("RemoteEvent") then
+local getPositionOf
+local boundCarryRemotes = {}
+local function bindCarryStateRemote(carryStateRemote)
+    if not carryStateRemote or not carryStateRemote:IsA("RemoteEvent") or boundCarryRemotes[carryStateRemote] then return end
+    boundCarryRemotes[carryStateRemote] = true
     registerConnection(carryStateRemote.OnClientEvent:Connect(function(...)
         local args = table.pack(...)
         local belongsToLocalPlayer = true
+        local explicitlyScoped = false
         local carrying = nil
         local evidence = nil
+
+        traceEvent("CARRY_REMOTE", instancePath(carryStateRemote), { args = args })
 
         for index = 1, args.n do
             local value = args[index]
             if typeof(value) == "Instance" and value:IsA("Player") then
+                explicitlyScoped = true
                 belongsToLocalPlayer = value == LocalPlayer
             elseif typeof(value) == "Instance" then
                 evidence = value.Name
@@ -356,13 +490,17 @@ if carryStateRemote and carryStateRemote:IsA("RemoteEvent") then
                 carrying = value
             elseif type(value) == "number" then
                 local eventPlayer = Services.Players:GetPlayerByUserId(value)
-                if eventPlayer then belongsToLocalPlayer = eventPlayer == LocalPlayer end
+                if eventPlayer then
+                    explicitlyScoped = true
+                    belongsToLocalPlayer = eventPlayer == LocalPlayer
+                end
             elseif type(value) == "string" and #value >= 8
                 and value ~= LocalPlayer.Name and value ~= LocalPlayer.DisplayName then
                 evidence = value
             elseif type(value) == "table" then
                 local owner = value.Player or value.Owner or value.UserId or value.PlayerId
                 if owner ~= nil then
+                    explicitlyScoped = true
                     belongsToLocalPlayer = owner == LocalPlayer
                         or tostring(owner) == tostring(LocalPlayer.UserId)
                         or tostring(owner) == LocalPlayer.Name
@@ -383,15 +521,32 @@ if carryStateRemote and carryStateRemote:IsA("RemoteEvent") then
             end
         end
 
-        if belongsToLocalPlayer and carrying ~= nil then
+        -- Alguns servidores transmitem o evento sem Player. Só aceitar um evento
+        -- positivo sem dono enquanto acabamos de acionar um ovo; isso impede que
+        -- a coleta de outro jogador vire um falso carry local.
+        local isExpectedWindow = os.clock() <= (State.ExpectCarryUntil or 0)
+        local canApply = belongsToLocalPlayer and (explicitlyScoped or isExpectedWindow)
+        if canApply and carrying ~= nil then
             State.CarryConfirmed = carrying
             State.CarryEvidence = carrying and tostring(evidence or "AreaEggCarryStateChanged") or nil
             State.LastCarryChange = os.clock()
+            traceEvent("CARRY_STATE", carrying and "ACQUIRED" or "RELEASED", {
+                evidence = State.CarryEvidence,
+                explicitlyScoped = explicitlyScoped,
+                expectedWindow = isExpectedWindow,
+            })
         end
     end))
 end
 
-local function isHoldingEgg()
+for _, desc in ipairs(Services.ReplicatedStorage:GetDescendants()) do
+    if desc.Name == "AreaEggCarryStateChanged" then bindCarryStateRemote(desc) end
+end
+registerConnection(Services.ReplicatedStorage.DescendantAdded:Connect(function(desc)
+    if desc.Name == "AreaEggCarryStateChanged" then bindCarryStateRemote(desc) end
+end))
+
+local function isHoldingEggRaw()
     local char = LocalPlayer.Character
     if not char then return false, nil end
 
@@ -430,7 +585,7 @@ local function isHoldingEgg()
         if item:IsA("Tool") then
             local toolName = item.Name:lower()
             if toolName:find("egg", 1, true) or toolName:find("ovo", 1, true)
-                or item:GetAttribute("IsEgg") == true then
+                or item:GetAttribute("IsEgg") == true or item:GetAttribute("EggType") ~= nil then
                 return true, item.Name
             end
         end
@@ -442,7 +597,7 @@ local function isHoldingEgg()
         while current and current ~= char do
             local low = current.Name:lower()
             if low:find("egg", 1, true) or low:find("ovo", 1, true)
-                or current:GetAttribute("IsEgg") == true then
+                or current:GetAttribute("IsEgg") == true or current:GetAttribute("EggType") ~= nil then
                 return true, current.Name
             end
             current = current.Parent
@@ -474,11 +629,181 @@ local function isHoldingEgg()
     return false, nil
 end
 
+local function isHoldingEgg()
+    local holding, evidence = isHoldingEggRaw()
+    if holding ~= State.LastHoldingResult or tostring(evidence) ~= tostring(State.LastHoldingEvidence) then
+        State.LastHoldingResult = holding
+        State.LastHoldingEvidence = evidence
+        traceEvent("CARRY_CHECK", holding and "TRUE" or "FALSE", { evidence = evidence })
+    end
+    return holding, evidence
+end
+
+-- Instrumentação passiva: remotes, inventário, personagem, prompts e slots.
+-- Nenhum desses listeners altera o estado do jogo.
+local observedRemoteEvents = {}
+local function observeRemoteEvent(remote)
+    if not remote:IsA("RemoteEvent") or observedRemoteEvents[remote] then return end
+    observedRemoteEvents[remote] = true
+    registerConnection(remote.OnClientEvent:Connect(function(...)
+        local args = table.pack(...)
+        task.defer(function()
+            learnEggMetadataFromArgs(instancePath(remote), args)
+            traceEvent("REMOTE_IN", instancePath(remote), { args = args })
+        end)
+    end))
+end
+
+for _, desc in ipairs(Services.ReplicatedStorage:GetDescendants()) do
+    if desc:IsA("RemoteEvent") then observeRemoteEvent(desc) end
+end
+registerConnection(Services.ReplicatedStorage.DescendantAdded:Connect(function(desc)
+    if desc:IsA("RemoteEvent") then
+        traceEvent("REMOTE_DISCOVERED", instancePath(desc), { class = desc.ClassName })
+        observeRemoteEvent(desc)
+    end
+end))
+
+pcall(function()
+    if not getgenv or not hookmetamethod or not getnamecallmethod or not newcclosure then return end
+    local globalEnv = getgenv()
+    local hookState = globalEnv.RoubeUmOvoTraceHookState
+    if type(hookState) ~= "table" then
+        hookState = { Installed = false, Enabled = false }
+        globalEnv.RoubeUmOvoTraceHookState = hookState
+    end
+    hookState.Enabled = true
+    hookState.Emit = function(remote, method, args)
+        learnEggMetadataFromArgs(instancePath(remote), args)
+        traceEvent("REMOTE_OUT", instancePath(remote), { method = method, args = args })
+    end
+    if not hookState.Installed then
+        hookState.Installed = true
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            if hookState.Enabled and (method == "FireServer" or method == "InvokeServer")
+                and typeof(self) == "Instance"
+                and (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) then
+                local packedArgs = table.pack(...)
+                task.defer(function()
+                    local emit = hookState.Emit
+                    if emit then pcall(emit, self, method, packedArgs) end
+                end)
+            end
+            return oldNamecall(self, ...)
+        end))
+    end
+end)
+
+local function observeContainer(container, category)
+    if not container then return end
+    registerConnection(container.ChildAdded:Connect(function(child)
+        traceEvent(category, "CHILD_ADDED", { child = child })
+    end))
+    registerConnection(container.ChildRemoved:Connect(function(child)
+        traceEvent(category, "CHILD_REMOVED", { child = child })
+    end))
+end
+
+local function observeCharacter(char)
+    if not char then return end
+    observeContainer(char, "CHARACTER")
+    registerConnection(char.AttributeChanged:Connect(function(attribute)
+        traceEvent("ATTRIBUTE", instancePath(char), {
+            attribute = attribute,
+            value = char:GetAttribute(attribute),
+        })
+    end))
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        registerConnection(hum.StateChanged:Connect(function(oldState, newState)
+            traceEvent("HUMANOID", "STATE_CHANGED", { from = oldState, to = newState, health = hum.Health })
+        end))
+    end
+end
+
+observeCharacter(LocalPlayer.Character)
+registerConnection(LocalPlayer.CharacterAdded:Connect(function(char)
+    traceEvent("CHARACTER", "RESPAWN", { character = char })
+    task.wait(0.2)
+    observeCharacter(char)
+end))
+observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"), "BACKPACK")
+registerConnection(LocalPlayer.AttributeChanged:Connect(function(attribute)
+    traceEvent("ATTRIBUTE", instancePath(LocalPlayer), {
+        attribute = attribute,
+        value = LocalPlayer:GetAttribute(attribute),
+    })
+end))
+
+for _, folderName in ipairs({"AreaEggSlotsClient", "PlacedEggRenders", "ClientRenderedAssets", "__ClientTreadmillRenders"}) do
+    local folder = Services.Workspace:FindFirstChild(folderName)
+    if folder then observeContainer(folder, "WORLD_" .. folderName:upper()) end
+end
+
+registerConnection(Services.Workspace.DescendantAdded:Connect(function(desc)
+    if desc:IsA("ProximityPrompt") then
+        traceEvent("PROMPT", "ADDED", {
+            prompt = desc,
+            actionText = desc.ActionText,
+            objectText = desc.ObjectText,
+            enabled = desc.Enabled,
+        })
+    end
+end))
+
+for eventName, signal in pairs({
+    SHOWN = Services.ProximityPromptService.PromptShown,
+    HIDDEN = Services.ProximityPromptService.PromptHidden,
+    TRIGGERED = Services.ProximityPromptService.PromptTriggered,
+    TRIGGER_ENDED = Services.ProximityPromptService.PromptTriggerEnded,
+}) do
+    registerConnection(signal:Connect(function(prompt)
+        traceEvent("PROMPT_LIFECYCLE", eventName, {
+            prompt = prompt,
+            actionText = prompt and prompt.ActionText,
+            objectText = prompt and prompt.ObjectText,
+            position = prompt and getPositionOf(prompt),
+        })
+    end))
+end
+
+task.spawn(function()
+    while not State.IsUnloaded do
+        task.wait(5)
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local tools = {}
+        if char then
+            for _, child in ipairs(char:GetChildren()) do
+                if child:IsA("Tool") then table.insert(tools, "equipped:" .. child.Name) end
+            end
+        end
+        local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+        if backpack then
+            for _, child in ipairs(backpack:GetChildren()) do
+                if child:IsA("Tool") then table.insert(tools, "backpack:" .. child.Name) end
+            end
+        end
+        traceEvent("SNAPSHOT", "PLAYER", {
+            position = hrp and hrp.Position,
+            velocity = hrp and hrp.AssemblyLinearVelocity,
+            health = hum and hum.Health,
+            humanoidState = hum and hum:GetState(),
+            tools = tools,
+            carrying = State.CarryConfirmed,
+            carryEvidence = State.CarryEvidence,
+        })
+    end
+end)
+
 local function plainText(v)
     return tostring(v or ""):gsub("<[^>]->", ""):lower()
 end
 
-local function getPositionOf(obj)
+getPositionOf = function(obj)
     if not obj then return nil end
     if obj:IsA("ProximityPrompt") then
         local p = obj.Parent
@@ -921,6 +1246,144 @@ local RarityScoreMap = {
     ["COMMON"] = 300
 }
 
+learnEggMetadataFromArgs = function(source, args)
+    local sourceLow = tostring(source):lower()
+    if not (sourceLow:find("egg", 1, true) or sourceLow:find("ovo", 1, true)
+        or sourceLow:find("carry", 1, true) or sourceLow:find("hatch", 1, true)
+        or sourceLow:find("place", 1, true)) then
+        return
+    end
+
+    local strings = {}
+    local seen = {}
+    local function collect(value, depth)
+        if depth > 4 then return end
+        if type(value) == "string" then
+            table.insert(strings, value)
+        elseif typeof(value) == "Instance" then
+            table.insert(strings, value.Name)
+            for _, attr in pairs(value:GetAttributes()) do collect(attr, depth + 1) end
+        elseif type(value) == "table" and not seen[value] then
+            seen[value] = true
+            for key, child in pairs(value) do
+                collect(key, depth + 1)
+                collect(child, depth + 1)
+            end
+        end
+    end
+    collect(args, 0)
+
+    local foundPet = nil
+    local foundUid = nil
+    local petMatches = {}
+    local uidMatches = {}
+    for _, text in ipairs(strings) do
+        local normalized = text:lower():gsub("[_%-]+", " "):gsub("%s+", " ")
+        for petKey, petData in pairs(KnownPetsCatalog) do
+            if normalized == petKey or normalized == petData.DisplayName:lower()
+                or normalized:find(petKey, 1, true) then
+                petMatches[petData.DisplayName] = petData
+                break
+            end
+        end
+        if text:match("^[%x]+%-[%x%-]+$") and #text >= 16 then
+            uidMatches[text:lower()] = true
+        elseif text:match("^[%w_%-]+$") and #text >= 20 and text:match("%d") then
+            uidMatches[text:lower()] = true
+        end
+    end
+
+    local petMatchCount = 0
+    for _, petData in pairs(petMatches) do
+        petMatchCount = petMatchCount + 1
+        foundPet = petData
+    end
+    if petMatchCount ~= 1 then
+        if petMatchCount > 1 then
+            traceEvent("EGG_LEARNING", "AMBIGUOUS_PAYLOAD", { source = source, matches = petMatches })
+        end
+        foundPet = nil
+    end
+    local uidMatchCount = 0
+    for uid in pairs(uidMatches) do
+        uidMatchCount = uidMatchCount + 1
+        foundUid = uid
+    end
+    if uidMatchCount ~= 1 then foundUid = nil end
+
+    if foundPet and foundUid then
+        LearnedEggData[foundUid] = {
+            DisplayName = foundPet.DisplayName,
+            Rarity = foundPet.Rarity,
+            Source = source,
+            LearnedAt = os.clock(),
+        }
+        traceEvent("EGG_LEARNING", "UID_MAPPED", {
+            uid = foundUid,
+            pet = foundPet.DisplayName,
+            rarity = foundPet.Rarity,
+            source = source,
+        })
+    end
+    if foundPet and State.PendingLearnFingerprint
+        and os.clock() - (State.PendingLearnAt or 0) <= 30 then
+        local fingerprint = State.PendingLearnFingerprint
+        local existing = LearnedVisualData[fingerprint]
+        if not existing then
+            existing = {
+                DisplayName = foundPet.DisplayName,
+                Rarity = foundPet.Rarity,
+                Source = source,
+                LearnedAt = os.clock(),
+                Hits = 1,
+                Conflicted = false,
+            }
+            LearnedVisualData[fingerprint] = existing
+        elseif existing.DisplayName == foundPet.DisplayName then
+            existing.Hits = (existing.Hits or 1) + 1
+            existing.Source = source
+        else
+            existing.Conflicted = true
+            existing.ConflictWith = foundPet.DisplayName
+        end
+        traceEvent("EGG_LEARNING", existing.Conflicted and "VISUAL_CONFLICT" or "VISUAL_OBSERVED", {
+            pet = foundPet.DisplayName,
+            rarity = foundPet.Rarity,
+            source = source,
+            fingerprint = fingerprint,
+            hits = existing.Hits,
+            conflicted = existing.Conflicted,
+        })
+    end
+end
+
+getEggVisualFingerprint = function(instance)
+    if not instance then return nil end
+    local tokens = {}
+    local function addToken(token)
+        if token and token ~= "" then table.insert(tokens, tostring(token):lower()) end
+    end
+    local objects = { instance }
+    for _, desc in ipairs(instance:GetDescendants()) do table.insert(objects, desc) end
+    for _, obj in ipairs(objects) do
+        if obj:IsA("MeshPart") then
+            addToken("mesh:" .. (tostring(obj.MeshId):match("%d+") or ""))
+            addToken("tex:" .. (tostring(obj.TextureID):match("%d+") or ""))
+            addToken(string.format("color:%d,%d,%d", math.floor(obj.Color.R * 255), math.floor(obj.Color.G * 255), math.floor(obj.Color.B * 255)))
+        elseif obj:IsA("SpecialMesh") then
+            addToken("mesh:" .. (tostring(obj.MeshId):match("%d+") or ""))
+            addToken("tex:" .. (tostring(obj.TextureId):match("%d+") or ""))
+        elseif obj:IsA("BasePart") then
+            addToken(string.format("part:%s:%d,%d,%d:%.1f,%.1f,%.1f", obj.ClassName,
+                math.floor(obj.Color.R * 255), math.floor(obj.Color.G * 255), math.floor(obj.Color.B * 255),
+                obj.Size.X, obj.Size.Y, obj.Size.Z))
+        end
+    end
+    table.sort(tokens)
+    if #tokens == 0 then return nil end
+    return table.concat(tokens, "|")
+end
+
 -- 8. MAPEAMENTO NUMÉRICO DE MESHID — LISTA SEM SOBRESCRITA
 -- Cada MeshId numérico mapeia para uma LISTA de nomes possíveis.
 -- Isso evita que pets com malhas genéricas compartilhadas sobrescrevam uns aos outros.
@@ -1077,6 +1540,37 @@ local function resolveEggDetails(instance, prompt)
                 slotNum = index
                 break
             end
+        end
+    end
+
+    -- Associação aprendida exclusivamente de payloads reais de remotes. Isso
+    -- permite que o radar deixe de ser genérico durante a própria sessão.
+    if instance then
+        local uidCandidates = {
+            instance.Name,
+            instance:GetAttribute("EggUid"),
+            instance:GetAttribute("EggUID"),
+            instance:GetAttribute("UID"),
+        }
+        for _, uid in ipairs(uidCandidates) do
+            local learned = uid and LearnedEggData[tostring(uid):lower()]
+            if learned then
+                foundName = learned.DisplayName
+                detectedRarity = learned.Rarity
+                maxScore = RarityScoreMap[learned.Rarity] or 300
+                resolvedPet = true
+                break
+            end
+        end
+    end
+    if instance and not foundName then
+        local fingerprint = getEggVisualFingerprint(instance)
+        local learnedVisual = fingerprint and LearnedVisualData[fingerprint]
+        if learnedVisual and (learnedVisual.Hits or 0) >= 2 and not learnedVisual.Conflicted then
+            foundName = learnedVisual.DisplayName
+            detectedRarity = learnedVisual.Rarity
+            maxScore = RarityScoreMap[learnedVisual.Rarity] or 300
+            resolvedPet = true
         end
     end
 
@@ -1354,6 +1848,7 @@ local function identifyZone(instance)
 end
 
 -- Varredura Global de Ovos
+local lastRadarTraceAt = 0
 local function scanAllEggs()
     local rawList = {}
     local myHrp = getHRP()
@@ -1459,6 +1954,26 @@ local function scanAllEggs()
         return a.Distance < b.Distance
     end)
 
+    if os.clock() - lastRadarTraceAt >= 3 then
+        lastRadarTraceAt = os.clock()
+        local summary = {}
+        for index, egg in ipairs(deduplicated) do
+            if index > 80 then break end
+            table.insert(summary, {
+                name = egg.Name,
+                rarity = egg.Rarity,
+                income = egg.Income,
+                zone = egg.Zone,
+                source = egg.Source,
+                distance = math.floor(egg.Distance),
+                position = egg.Position,
+                instance = egg.Instance,
+                prompt = egg.Prompt,
+            })
+        end
+        traceEvent("RADAR", "SCAN", { count = #deduplicated, eggs = summary })
+    end
+
     return deduplicated
 end
 
@@ -1474,8 +1989,14 @@ local function movePlayerSafe(targetPos, speed, onStep)
 
     isMoving = true
     local oldWalkSpeed = humanoid.WalkSpeed
-    humanoid.WalkSpeed = math.clamp(tonumber(speed) or 24, 16, 32)
+    local requestedSpeed = math.clamp(tonumber(speed) or Config.MoveSpeed or 60, 20, 100)
+    humanoid.WalkSpeed = requestedSpeed
     humanoid.PlatformStand = false
+    traceEvent("MOVEMENT", "START", {
+        from = hrp.Position,
+        target = targetPos,
+        speed = requestedSpeed,
+    })
 
     local function cleanup()
         if humanoid and humanoid.Parent and humanoid.Health > 0 then
@@ -1494,6 +2015,12 @@ local function movePlayerSafe(targetPos, speed, onStep)
         while os.clock() - started < timeout do
             if State.IsUnloaded or not char.Parent or humanoid.Health <= 0 then return false end
             local distance = (hrp.Position - point).Magnitude
+            local horizontal = Vector3.new(point.X - hrp.Position.X, 0, point.Z - hrp.Position.Z)
+            if horizontal.Magnitude > 0.05 then
+                -- Move mantém a animação de caminhada; o WalkSpeed alto produz o
+                -- efeito de deslize pedido sem escrever CFrame nem aplicar impulso.
+                humanoid:Move(horizontal.Unit, false)
+            end
             if onStep then onStep((hrp.Position - targetPos).Magnitude) end
             if distance <= 4 then return true end
             if distance < lastDistance - 0.75 then
@@ -1508,7 +2035,7 @@ local function movePlayerSafe(targetPos, speed, onStep)
     end
 
     local reached = false
-    for _ = 1, 4 do
+    for attempt = 1, 4 do
         if (hrp.Position - targetPos).Magnitude <= 5 then
             reached = true
             break
@@ -1524,6 +2051,12 @@ local function movePlayerSafe(targetPos, speed, onStep)
         local computed = pcall(function()
             path:ComputeAsync(hrp.Position, targetPos)
         end)
+        traceEvent("MOVEMENT", "PATH", {
+            attempt = attempt,
+            computed = computed,
+            status = tostring(path.Status),
+            distance = (hrp.Position - targetPos).Magnitude,
+        })
 
         if computed and path.Status == Enum.PathStatus.Success then
             local waypoints = path:GetWaypoints()
@@ -1553,6 +2086,11 @@ local function movePlayerSafe(targetPos, speed, onStep)
     end
 
     cleanup()
+    traceEvent("MOVEMENT", reached and "ARRIVED" or "FAILED", {
+        target = targetPos,
+        finalPosition = hrp and hrp.Parent and hrp.Position or nil,
+        speed = requestedSpeed,
+    })
     return reached
 end
 
@@ -1567,6 +2105,13 @@ end
 -- Acionamento Rápido de ProximityPrompt
 local function triggerPrompt(prompt)
     if not prompt or not prompt.Parent then return false end
+    traceEvent("PROMPT", "TRIGGER", {
+        prompt = prompt,
+        actionText = prompt.ActionText,
+        objectText = prompt.ObjectText,
+        enabled = prompt.Enabled,
+        position = getPositionOf(prompt),
+    })
     pcall(function()
         prompt.HoldDuration = 0
         prompt.RequiresLineOfSight = false
@@ -1747,12 +2292,12 @@ executeDirectSteal = function(target)
 
     local arrived = movePlayerDirect(targetPos, Config.MoveSpeed)
     if arrived then
-        local oldAnchored = myHrp.Anchored
-        myHrp.Anchored = true
         local pInst = target.Prompt or (target.Instance and target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true))
-        if pInst then triggerPrompt(pInst) end
-        task.wait(0.08)
-        myHrp.Anchored = oldAnchored
+        if pInst then
+            State.ExpectCarryUntil = os.clock() + 4
+            triggerPrompt(pInst)
+        end
+        task.wait(0.12)
 
         movePlayerOverhead(baseCF.Position, Config.MoveSpeed)
         task.wait(Config.AutoDepositWait or 1.0)
@@ -1775,13 +2320,14 @@ local StealSM = {
     Blacklist = {},            -- { [posKey] = expireTime } — alvos temporariamente ignorados
     VerifyPolls = 0,           -- Contagem de polls em VERIFYING_CARRY
     DepositRetries = 0,        -- Tentativas de re-depósito em CONFIRMING
+    PickupSnapshot = nil,
 }
 
 -- Timeouts por estado (em segundos)
 local SM_TIMEOUTS = {
     SELECTING = 2.0,
     INTERACTING = 1.5,
-    VERIFYING_CARRY = 0.8,
+    VERIFYING_CARRY = 2.5,
     CONFIRMING = 1.5,
     GLOBAL_CYCLE = 120.0,
 }
@@ -1789,6 +2335,86 @@ local SM_TIMEOUTS = {
 -- Gera chave de posição para o blacklist (arredonda para evitar flutuações)
 local function posKey(pos)
     return string.format("%.0f_%.0f_%.0f", pos.X, pos.Y, pos.Z)
+end
+
+local function capturePickupSnapshot(target)
+    local char = getChar()
+    local rightHand = char and (char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm"))
+    local descendants = {}
+    local connected = {}
+    if char then
+        for _, desc in ipairs(char:GetDescendants()) do descendants[desc] = true end
+    end
+    if rightHand then
+        pcall(function()
+            for _, part in ipairs(rightHand:GetConnectedParts(true)) do connected[part] = true end
+        end)
+    end
+    StealSM.PickupSnapshot = {
+        Instance = target and target.Instance,
+        Parent = target and target.Instance and target.Instance.Parent,
+        Position = target and target.Instance and getPositionOf(target.Instance),
+        CharacterDescendants = descendants,
+        ConnectedParts = connected,
+    }
+    State.PendingLearnFingerprint = target and target.Instance and getEggVisualFingerprint(target.Instance) or nil
+    State.PendingLearnAt = os.clock()
+    traceEvent("PICKUP", "SNAPSHOT", {
+        target = target and target.Name,
+        instance = target and target.Instance,
+        position = target and target.Position,
+        visualFingerprint = State.PendingLearnFingerprint,
+    })
+end
+
+local function detectPickupEvidence()
+    local holding, heldName = isHoldingEgg()
+    if holding then return true, "carry:" .. tostring(heldName) end
+
+    local snapshot = StealSM.PickupSnapshot
+    if not snapshot then return false, nil end
+    local targetInstance = snapshot.Instance
+    if targetInstance then
+        if not targetInstance.Parent then return true, "target_destroyed" end
+        local slots = Services.Workspace:FindFirstChild("AreaEggSlotsClient")
+        if snapshot.Parent and targetInstance.Parent ~= snapshot.Parent
+            and (not slots or not targetInstance:IsDescendantOf(slots)) then
+            return true, "target_reparented:" .. instancePath(targetInstance.Parent)
+        end
+        local currentPosition = getPositionOf(targetInstance)
+        if snapshot.Position and currentPosition and (currentPosition - snapshot.Position).Magnitude >= 6 then
+            return true, string.format("target_moved_%.1f", (currentPosition - snapshot.Position).Magnitude)
+        end
+    end
+
+    local char = getChar()
+    local rightHand = char and (char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm"))
+    if rightHand then
+        local ok, parts = pcall(function() return rightHand:GetConnectedParts(true) end)
+        if ok then
+            for _, part in ipairs(parts) do
+                if not snapshot.ConnectedParts[part]
+                    and not standardLimbNames[part.Name:lower()]
+                    and not part:FindFirstAncestorOfClass("Accessory")
+                    and not part:FindFirstAncestorOfClass("Tool") then
+                    return true, "new_hand_connection:" .. instancePath(part)
+                end
+            end
+        end
+    end
+
+    if char then
+        for _, desc in ipairs(char:GetDescendants()) do
+            if not snapshot.CharacterDescendants[desc]
+                and (desc:IsA("Model") or desc:IsA("BasePart"))
+                and not standardLimbNames[desc.Name:lower()]
+                and not desc:FindFirstAncestorOfClass("Accessory")
+                and not desc:FindFirstAncestorOfClass("Tool") then
+                return true, "new_character_object:" .. instancePath(desc)
+            end
+        end
+    end
+    return false, nil
 end
 
 -- Limpa entradas expiradas do blacklist
@@ -1803,6 +2429,7 @@ end
 
 -- Transição de estado com log e atualização de UI
 local function setStealState(newState)
+    local oldState = StealSM.Current
     StealSM.Current = newState
     StealSM.StateStart = os.clock()
 
@@ -1811,6 +2438,7 @@ local function setStealState(newState)
         StealSM.CycleStart = 0
         StealSM.VerifyPolls = 0
         StealSM.DepositRetries = 0
+        StealSM.PickupSnapshot = nil
         State.IsExecutingSteal = false
     elseif newState == "SELECTING" then
         if StealSM.CycleStart == 0 then
@@ -1818,6 +2446,13 @@ local function setStealState(newState)
         end
         State.IsExecutingSteal = true
     end
+
+    traceEvent("STATE_MACHINE", oldState .. "->" .. newState, {
+        target = StealSM.Target and StealSM.Target.Name,
+        targetPosition = StealSM.Target and StealSM.Target.Position,
+        carryConfirmed = State.CarryConfirmed,
+        carryEvidence = State.CarryEvidence,
+    })
 
     -- Atualizar badges da UI
     local uiMap = {
@@ -1983,25 +2618,21 @@ local function runStateMachineTick()
             return
         end
 
-        -- Ancorar brevemente para interação estável
-        local oldAnchored = myHrp.Anchored
-        myHrp.Anchored = true
-
         -- Disparar o ProximityPrompt do ovo
         local pInst = target.Prompt or (target.Instance and target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true))
         if pInst then
+            capturePickupSnapshot(target)
+            State.ExpectCarryUntil = os.clock() + 4
             triggerPrompt(pInst)
             addLog("INTERAÇÃO", "Prompt disparado para " .. target.Name)
         else
             addLog("INTERAÇÃO", "Sem ProximityPrompt — pulando alvo")
-            myHrp.Anchored = oldAnchored
             StealSM.Blacklist[posKey(target.Position)] = os.clock() + 10.0
             setStealState("SELECTING")
             return
         end
 
-        task.wait(0.08)
-        myHrp.Anchored = oldAnchored
+        task.wait(0.12)
 
         StealSM.VerifyPolls = 0
         setStealState("VERIFYING_CARRY")
@@ -2011,19 +2642,28 @@ local function runStateMachineTick()
     elseif current == "VERIFYING_CARRY" then
         StealSM.VerifyPolls = StealSM.VerifyPolls + 1
 
-        local holding, heldName = isHoldingEgg()
+        local holding, heldName = detectPickupEvidence()
         local targetPrompt = StealSM.Target and (StealSM.Target.Prompt or (StealSM.Target.Instance and StealSM.Target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true)))
         local promptGone = not targetPrompt or not targetPrompt.Parent or not targetPrompt.Enabled
 
         -- Prompt desaparecer sozinho também ocorre por streaming, disputa ou
         -- rejeição do servidor. Somente carry positivo confirma a coleta.
         if holding then
+            State.CarryConfirmed = true
+            State.CarryEvidence = heldName
+            State.LastCarryChange = os.clock()
+            traceEvent("PICKUP", "CONFIRMED", { evidence = heldName, polls = StealSM.VerifyPolls })
             addLog("VERIFICAR", "Carry confirmado (" .. tostring(heldName) .. ") — retornando à base")
             setStealState("RETURNING")
             return
         end
 
         if elapsed > SM_TIMEOUTS.VERIFYING_CARRY then
+            traceEvent("PICKUP", "NOT_CONFIRMED", {
+                promptGone = promptGone,
+                polls = StealSM.VerifyPolls,
+                target = StealSM.Target and StealSM.Target.Instance,
+            })
             addLog("VERIFICAR", promptGone
                 and "Prompt sumiu sem carry confirmado — ignorando falso positivo"
                 or "Coleta não confirmada — selecionando outro alvo")
@@ -2071,6 +2711,7 @@ local function runStateMachineTick()
     --=== DEPOSITING ===--
     elseif current == "DEPOSITING" then
         task.wait(0.5)
+        State.ExpectCarryUntil = os.clock() + 3
         local depositPart = getMyDepositTarget()
         if depositPart and depositPart.Parent then
             myHum:MoveTo(depositPart.Position)
@@ -2116,13 +2757,13 @@ local function runStateMachineTick()
 end
 
 
--- 10. EXPORTADOR DE TELEMETRIA E DADOS INTERNOS (INSPETOR v7.0 COMPLETO)
+-- 10. EXPORTADOR DE TELEMETRIA E DADOS INTERNOS (OBSERVATORY v13.0)
 local function dumpGameData()
     local lines = {}
     local function logL(s) table.insert(lines, s or "") end
 
     logL("================================================================================")
-    logL("ROUBE UM OVO - INVENTARIO ESTRUTURAL COMPLETO (EXAUSTIVO v7.0)")
+    logL("ROUBE UM OVO - DUMP E TELEMETRIA OBSERVATORY v13.0")
     logL("Data: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | PlaceId: " .. tostring(game.PlaceId))
     logL("================================================================================\n")
 
@@ -2177,7 +2818,7 @@ local function dumpGameData()
                 local res = require(gMod)
                 if type(res) == "table" and res.Directory then
                     for gKey, gVal in pairs(res.Directory) do
-                        logL(string.format("  - Guarda: %-20s | Dados: %s", tostring(gKey), Services.HttpService:JSONEncode(gVal)))
+                        logL(string.format("  - Guarda: %-20s | Dados: %s", tostring(gKey), Services.HttpService:JSONEncode(serializeTelemetry(gVal))))
                     end
                 end
             end
@@ -2185,8 +2826,8 @@ local function dumpGameData()
     end)
     logL("\n")
 
-    -- 3. Guardas Físicos no Workspace (Localização Exata da Primeira Galinha no Mapa para Ragdoll TP)
-    logL("[3] WORKSPACE._GUARDS & SPAWNS DE GUARDAS NO MAPA (Para Ragdoll TP):")
+    -- 3. Guardas físicos no Workspace
+    logL("[3] WORKSPACE._GUARDS & SPAWNS DE GUARDAS NO MAPA:")
     pcall(function()
         local function scanGuardObj(parent, folderName)
             if not parent then return end
@@ -2221,7 +2862,7 @@ local function dumpGameData()
                 local res = require(aMod)
                 if type(res) == "table" and res.Directory then
                     for aKey, aVal in pairs(res.Directory) do
-                        logL(string.format("  - Área: %-15s | Dados: %s", tostring(aKey), Services.HttpService:JSONEncode(aVal)))
+                        logL(string.format("  - Área: %-15s | Dados: %s", tostring(aKey), Services.HttpService:JSONEncode(serializeTelemetry(aVal))))
                     end
                 end
             end
@@ -2332,6 +2973,10 @@ local function dumpGameData()
     logL("[9] ESTADO DO JOGADOR LOCAL E CHARACTER:")
     pcall(function()
         logL("  DisplayName: " .. LocalPlayer.DisplayName .. " | Name: " .. LocalPlayer.Name .. " | UserId: " .. tostring(LocalPlayer.UserId))
+        logL("  Atributos do Player:")
+        for k, v in pairs(LocalPlayer:GetAttributes()) do
+            logL(string.format("    > %s = %s", tostring(k), tostring(v)))
+        end
         local char = LocalPlayer.Character
         if char then
             logL("  Atributos do Character:")
@@ -2340,8 +2985,31 @@ local function dumpGameData()
             end
             logL("  Scripts no Character:")
             for _, c in ipairs(char:GetChildren()) do
-                if c:IsA("LocalScript") or c:IsA("Script") then
-                    logL(string.format("    > %s [%s] Enabled=%s", c.Name, c.ClassName, tostring(c.Enabled)))
+                local attrs = Services.HttpService:JSONEncode(serializeTelemetry(c).attributes or {})
+                logL(string.format("    > %s [%s] Attrs=%s", c.Name, c.ClassName, attrs))
+            end
+        end
+        local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+        logL("  Backpack:")
+        if backpack then
+            for _, child in ipairs(backpack:GetChildren()) do
+                logL(string.format("    > %s [%s] %s", child.Name, child.ClassName,
+                    Services.HttpService:JSONEncode(serializeTelemetry(child).attributes or {})))
+            end
+        end
+        local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        logL("  PlayerGui (elementos ligados a ovo/pet/venda/fusão):")
+        if playerGui then
+            for _, guiObject in ipairs(playerGui:GetDescendants()) do
+                local low = guiObject.Name:lower()
+                if low:find("egg", 1, true) or low:find("ovo", 1, true)
+                    or low:find("pet", 1, true) or low:find("sell", 1, true)
+                    or low:find("fuse", 1, true) or low:find("fusion", 1, true) then
+                    local text = ""
+                    if guiObject:IsA("TextLabel") or guiObject:IsA("TextButton") or guiObject:IsA("TextBox") then
+                        text = guiObject.Text
+                    end
+                    logL(string.format("    > %s [%s] Text='%s'", instancePath(guiObject), guiObject.ClassName, text))
                 end
             end
         end
@@ -2354,7 +3022,8 @@ local function dumpGameData()
     local namedCount = 0
     local genericCount = 0
     for i, e in ipairs(discovered) do
-        local isGeneric = e.Name:find("Ovo Selvagem") or e.Name:find("Ovo da Floresta") or e.Name:find("Ovo da Deserto") or e.Name:find("Ovo da Selva")
+        local lowName = e.Name:lower()
+        local isGeneric = lowName:find("ovo selvagem", 1, true) or lowName:find("não identificado", 1, true)
         if isGeneric then genericCount = genericCount + 1 else namedCount = namedCount + 1 end
         logL(string.format("#%02d [%s] %-28s | Zona: %-22s | Prompt: %s | Dist: %-4dm | Pos: (%.1f, %.1f, %.1f)",
             i, e.Rarity, e.Name, e.Zone, e.Prompt and "SIM" or "NAO", math.floor(e.Distance),
@@ -2362,6 +3031,67 @@ local function dumpGameData()
         ))
     end
     logL(string.format("\n  Estatísticas do Radar: %d com Nome Real Próprio | %d Genéricos (Fallback)", namedCount, genericCount))
+
+    logL("\n[11] CATÁLOGO APRENDIDO DURANTE A SESSÃO:")
+    local learnedCount = 0
+    for uid, learned in pairs(LearnedEggData) do
+        learnedCount = learnedCount + 1
+        logL(string.format("  - UID: %s | Pet: %s | Raridade: %s | Fonte: %s",
+            uid, learned.DisplayName, learned.Rarity, learned.Source))
+    end
+    if learnedCount == 0 then
+        logL("  Nenhuma associação UID -> pet foi exposta pelos remotes até agora.")
+    end
+    local visualCount = 0
+    for fingerprint, learned in pairs(LearnedVisualData) do
+        visualCount = visualCount + 1
+        logL(string.format("  - VISUAL #%d: %s | Pet: %s | Raridade: %s | Hits: %d | Conflito: %s (%s) | Fonte: %s",
+            visualCount, fingerprint:sub(1, 240), learned.DisplayName, learned.Rarity, learned.Hits or 0,
+            tostring(learned.Conflicted), tostring(learned.ConflictWith or "nenhum"), learned.Source))
+    end
+    if visualCount == 0 then logL("  Nenhuma aparência de ovo foi associada a pet ainda.") end
+
+    logL("\n[12] REMOTES DISPONÍVEIS NO REPLICATEDSTORAGE:")
+    pcall(function()
+        for _, remote in ipairs(Services.ReplicatedStorage:GetDescendants()) do
+            if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") then
+                logL(string.format("  - [%s] %s", remote.ClassName, instancePath(remote)))
+            end
+        end
+    end)
+
+    logL("\n[13] PROXIMITYPROMPTS ATIVOS E CONTEXTO:")
+    pcall(function()
+        local promptCount = 0
+        for _, prompt in ipairs(Services.Workspace:GetDescendants()) do
+            if prompt:IsA("ProximityPrompt") then
+                promptCount = promptCount + 1
+                local p = getPositionOf(prompt)
+                logL(string.format("  - #%03d %s | Action='%s' Object='%s' Enabled=%s Hold=%.2f Max=%.1f Pos=%s",
+                    promptCount, instancePath(prompt), prompt.ActionText, prompt.ObjectText,
+                    tostring(prompt.Enabled), prompt.HoldDuration, prompt.MaxActivationDistance,
+                    p and string.format("(%.1f, %.1f, %.1f)", p.X, p.Y, p.Z) or "N/D"))
+            end
+        end
+    end)
+
+    logL("\n[14] ESTADO DO HUB E TELEMETRIA DA SESSÃO:")
+    logL(string.format("  Sessão: %s | Trace: %s | Duração: %.1fs", Telemetry.SessionId,
+        Telemetry.FileName, os.clock() - Telemetry.StartedAt))
+    logL(string.format("  Máquina: %s | Carry=%s | Evidência=%s | AutoRoubo=%s | AutoEsteira=%s | NaEsteira=%s",
+        StealSM.Current, tostring(State.CarryConfirmed), tostring(State.CarryEvidence),
+        tostring(Config.AutoStealEnabled), tostring(Config.AutoEsteiraEnabled), tostring(State.IsOnTreadmill)))
+    logL(string.format("  Velocidade=%d | Alcance=%d | Alvo=%s", Config.MoveSpeed,
+        Config.MaxStealDistance, StealSM.Target and StealSM.Target.Name or "Nenhum"))
+    logL("  Contagem por categoria:")
+    for category, count in pairs(Telemetry.Counts) do
+        logL(string.format("    > %s = %d", category, count))
+    end
+    logL("  Últimos eventos JSONL (máximo 400):")
+    local firstRecent = math.max(1, #Telemetry.Recent - 399)
+    for index = firstRecent, #Telemetry.Recent do
+        logL("    " .. Telemetry.Recent[index])
+    end
 
     logL("\n================================================================================")
     logL("FIM DO INVENTARIO.")
@@ -2371,7 +3101,7 @@ local function dumpGameData()
         if writefile then writefile("ROUBE_UM_OVO_DUMP.txt", fullText) end
         if setclipboard then setclipboard(fullText) end
     end)
-    addLog("INSPETOR", "Dump estrutural v7.0 exportado! (" .. tostring(#discovered) .. " ovos) - Copiado para o Clipboard!")
+    addLog("INSPETOR", "Dump Observatory v13 exportado! (" .. tostring(#discovered) .. " ovos) - Copiado para o Clipboard!")
     return fullText, #discovered
 end
 
@@ -2473,7 +3203,7 @@ end)
 
 
 --================================================================--
--- 12. INTERFACE MASTER HUB v10.0 (5 ABAS COMPLETAS & ULTRA CLEAN)
+-- 12. INTERFACE OBSERVATORY v13.0 (4 ÁREAS ESSENCIAIS)
 --================================================================--
 
 ScreenGui = Instance.new("ScreenGui")
@@ -2511,11 +3241,11 @@ local function createCleanCard(parent, height)
     return card
 end
 
--- Janela Principal Expandida & Elegante (540x420)
+-- Janela principal com mais respiro visual e somente controles funcionais.
 MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 540, 0, 420)
-MainFrame.Position = UDim2.new(0.5, -270, 0.5, -210)
+MainFrame.Size = UDim2.new(0, 660, 0, 500)
+MainFrame.Position = UDim2.new(0.5, -330, 0.5, -250)
 MainFrame.BackgroundColor3 = C_BG
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
@@ -2540,19 +3270,19 @@ TopbarSquare.BorderSizePixel = 0
 TopbarSquare.Parent = Topbar
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(0, 200, 1, 0)
+Title.Size = UDim2.new(0, 255, 1, 0)
 Title.Position = UDim2.new(0, 14, 0, 0)
 Title.BackgroundTransparency = 1
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 13
 Title.TextColor3 = C_CYAN
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "ROUBE UM OVO  v12.1"
+Title.Text = "ROUBE UM OVO  •  OBSERVATORY v13"
 Title.Parent = Topbar
 
 StatusBadge = Instance.new("TextLabel")
 StatusBadge.Size = UDim2.new(0, 100, 0, 22)
-StatusBadge.Position = UDim2.new(0, 205, 0.5, -11)
+StatusBadge.Position = UDim2.new(0, 292, 0.5, -11)
 StatusBadge.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
 StatusBadge.Text = "PARADO"
 StatusBadge.Font = Enum.Font.GothamBold
@@ -2588,10 +3318,10 @@ CloseBtn.MouseButton1Click:Connect(function()
     MainFrame.Visible = false
 end)
 
--- Barra de Abas Horizontal (5 Abas com Alto Contraste)
+-- Navegação lateral enxuta: rotas/TP e modificadores instáveis foram removidos.
 local TabBar = Instance.new("Frame")
-TabBar.Size = UDim2.new(1, -24, 0, 34)
-TabBar.Position = UDim2.new(0, 12, 0, 48)
+TabBar.Size = UDim2.new(0, 124, 1, -70)
+TabBar.Position = UDim2.new(0, 12, 0, 58)
 TabBar.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
 TabBar.BorderSizePixel = 0
 TabBar.Parent = MainFrame
@@ -2599,12 +3329,12 @@ addCorner(TabBar, 8)
 
 local TabButtons = {}
 local TabPages = {}
-local tabNames = {"Auto-Roubo", "Auto-Esteira", "Radar de Ovos", "Rotas Seguras", "Configuracoes"}
-local activeTab = "Auto-Roubo"
+local tabNames = {"Automação", "Esteira", "Radar", "Diagnóstico"}
+local activeTab = "Automação"
 
 local ContentArea = Instance.new("Frame")
-ContentArea.Size = UDim2.new(1, -24, 1, -94)
-ContentArea.Position = UDim2.new(0, 12, 0, 88)
+ContentArea.Size = UDim2.new(1, -160, 1, -70)
+ContentArea.Position = UDim2.new(0, 148, 0, 58)
 ContentArea.BackgroundTransparency = 1
 ContentArea.BorderSizePixel = 0
 ContentArea.Parent = MainFrame
@@ -2622,10 +3352,10 @@ local function switchTab(name)
 end
 
 for i, tName in ipairs(tabNames) do
-    local displayName = (tName == "Configuracoes") and "Configuracoes" or tName
+    local displayName = tName
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1 / #tabNames, -4, 1, -4)
-    btn.Position = UDim2.new((i - 1) * (1 / #tabNames), 2, 0, 2)
+    btn.Size = UDim2.new(1, -8, 0, 40)
+    btn.Position = UDim2.new(0, 4, 0, 4 + ((i - 1) * 46))
     btn.BackgroundColor3 = (tName == activeTab) and Color3.fromRGB(30, 44, 74) or Color3.fromRGB(15, 23, 42)
     btn.Text = displayName
     btn.Font = Enum.Font.GothamBold
@@ -2660,10 +3390,21 @@ for i, tName in ipairs(tabNames) do
     TabPages[tName] = page
 end
 
+local TraceSidebarLabel = Instance.new("TextLabel")
+TraceSidebarLabel.Size = UDim2.new(1, -12, 0, 38)
+TraceSidebarLabel.Position = UDim2.new(0, 6, 1, -46)
+TraceSidebarLabel.BackgroundTransparency = 1
+TraceSidebarLabel.Font = Enum.Font.GothamBold
+TraceSidebarLabel.TextSize = 9
+TraceSidebarLabel.TextColor3 = C_GREEN
+TraceSidebarLabel.TextWrapped = true
+TraceSidebarLabel.Text = "● TRACE ATIVO\n" .. Telemetry.SessionId
+TraceSidebarLabel.Parent = TabBar
+
 --================================================================--
 -- ABA 1: AUTO-ROUBO
 --================================================================--
-local AutoStealPage = TabPages["Auto-Roubo"]
+local AutoStealPage = TabPages["Automação"]
 
 MainToggleBtn = Instance.new("TextButton")
 MainToggleBtn.Size = UDim2.new(1, 0, 0, 46)
@@ -2675,19 +3416,6 @@ MainToggleBtn.TextColor3 = C_TEXT
 MainToggleBtn.Parent = AutoStealPage
 addCorner(MainToggleBtn, 8)
 addStroke(MainToggleBtn, Config.AutoStealEnabled and C_GREEN or C_CYAN, 1.2)
-
-local MethodBtn = Instance.new("TextButton")
-MethodBtn.Size = UDim2.new(1, 0, 0, 36)
-MethodBtn.BackgroundColor3 = Color3.fromRGB(26, 36, 60)
-MethodBtn.Text = "[MÉTODO: CAMINHADA SEGURA — TP REMOVIDO]"
-MethodBtn.Font = Enum.Font.GothamBold
-MethodBtn.TextSize = 11
-MethodBtn.TextColor3 = C_GREEN
-MethodBtn.Parent = AutoStealPage
-addCorner(MethodBtn, 6)
-addStroke(MethodBtn, C_BORDER, 1)
-
-MethodBtn.AutoButtonColor = false
 
 -- Card da Base (Completamente Legível)
 local BaseCard = createCleanCard(AutoStealPage, 54)
@@ -2770,7 +3498,7 @@ end)
 --================================================================--
 -- ABA 2: AUTO-ESTEIRA (TREINO CONTINUO SEM TRAVAR)
 --================================================================--
-local AutoEsteiraPage = TabPages["Auto-Esteira"]
+local AutoEsteiraPage = TabPages["Esteira"]
 
 local EsteiraDescCard = createCleanCard(AutoEsteiraPage, 45)
 local EsteiraDesc = Instance.new("TextLabel")
@@ -2891,7 +3619,7 @@ GoToEsteiraBtn.MouseButton1Click:Connect(function()
     if tPos then
         task.spawn(function()
             addLog("ESTEIRA", "Caminhando até a sua esteira...")
-            local arrived = movePlayerSafe(tPos, 24)
+            local arrived = movePlayerSafe(tPos, Config.MoveSpeed)
             addLog("ESTEIRA", arrived and "Chegou à esteira." or "Não foi possível calcular uma rota segura.")
         end)
     else
@@ -2902,6 +3630,7 @@ end)
 -- Conexao de corrida continua no Heartbeat (resolve 100% o estado parado)
 local esteiraHeartbeatConn = nil
 local treadmillNavigating = false
+local lastTreadmillMode = "OFF"
 local function setupEsteiraRunner()
     if esteiraHeartbeatConn then esteiraHeartbeatConn:Disconnect() end
     esteiraHeartbeatConn = Services.RunService.Heartbeat:Connect(function()
@@ -2910,6 +3639,10 @@ local function setupEsteiraRunner()
         local holding = isHoldingEgg()
         if State.IsExecutingSteal or holding then
             State.IsOnTreadmill = false
+            if lastTreadmillMode ~= "BLOCKED" then
+                lastTreadmillMode = "BLOCKED"
+                traceEvent("TREADMILL", "BLOCKED", { stealing = State.IsExecutingSteal, holding = holding })
+            end
             return
         end
 
@@ -2923,6 +3656,10 @@ local function setupEsteiraRunner()
         local tPart, tPos = findMyTreadmill()
         if not tPos then
             State.IsOnTreadmill = false
+            if lastTreadmillMode ~= "NOT_FOUND" then
+                lastTreadmillMode = "NOT_FOUND"
+                traceEvent("TREADMILL", "NOT_FOUND", {})
+            end
             return
         end
 
@@ -2930,16 +3667,25 @@ local function setupEsteiraRunner()
 
         if hDist > 4.0 then
             State.IsOnTreadmill = false
+            if lastTreadmillMode ~= "RETURNING" then
+                lastTreadmillMode = "RETURNING"
+                traceEvent("TREADMILL", "RETURNING", { distance = hDist, target = tPos })
+                addLog("ESTEIRA", "Você saiu da esteira; retornando automaticamente.")
+            end
             if not treadmillNavigating and not isMoving then
                 treadmillNavigating = true
                 task.spawn(function()
-                    movePlayerSafe(tPos, 24)
+                    movePlayerSafe(tPos, Config.MoveSpeed)
                     treadmillNavigating = false
                 end)
             end
             return
         end
         State.IsOnTreadmill = true
+        if lastTreadmillMode ~= "RUNNING" then
+            lastTreadmillMode = "RUNNING"
+            traceEvent("TREADMILL", "RUNNING", { position = hrp.Position })
+        end
         if StatusBadge and StatusBadge.Text ~= "NA ESTEIRA" then
             StatusBadge.Text = "NA ESTEIRA"
             StatusBadge.TextColor3 = C_YELLOW
@@ -2955,6 +3701,7 @@ setupEsteiraRunner()
 
 EsteiraToggleBtn.MouseButton1Click:Connect(function()
     Config.AutoEsteiraEnabled = not Config.AutoEsteiraEnabled
+    traceEvent("TREADMILL", Config.AutoEsteiraEnabled and "ENABLED" or "DISABLED", {})
     if Config.AutoEsteiraEnabled then
         Config.AutoStealEnabled = false
         setStealState("IDLE")
@@ -2966,6 +3713,7 @@ EsteiraToggleBtn.MouseButton1Click:Connect(function()
     EsteiraToggleBtn.Text = Config.AutoEsteiraEnabled and "AUTO-ESTEIRA ATIVADA (TREINANDO)" or "ATIVAR AUTO-ESTEIRA (TREINO)"
     addStroke(EsteiraToggleBtn, Config.AutoEsteiraEnabled and C_GREEN or C_CYAN, 1)
     if not Config.AutoEsteiraEnabled then
+        lastTreadmillMode = "OFF"
         State.IsOnTreadmill = false
         local hum = getHum()
         if hum then hum:Move(Vector3.zero, false) end
@@ -2978,7 +3726,7 @@ end)
 --================================================================--
 -- ABA 3: RADAR DE OVOS & ESP 3D
 --================================================================--
-local RadarPage = TabPages["Radar de Ovos"]
+local RadarPage = TabPages["Radar"]
 
 local RadarControlsCard = createCleanCard(RadarPage, 48)
 local SearchInput = Instance.new("TextBox")
@@ -3101,7 +3849,7 @@ local function executeCleanRadarScan()
                 if eggPos and not isMoving then
                     task.spawn(function()
                         addLog("ROTA", "Calculando caminho seguro para: " .. egg.Name)
-                        local arrived = movePlayerSafe(eggPos, 24)
+                        local arrived = movePlayerSafe(eggPos, Config.MoveSpeed)
                         addLog("ROTA", arrived and "Destino alcançado." or "Não existe rota segura até esse ovo.")
                     end)
                 end
@@ -3129,109 +3877,25 @@ EspToggleBtn.MouseButton1Click:Connect(function()
 end)
 
 --================================================================--
--- ABA 4: ROTAS SEGURAS (BASE, ESTEIRA E TODAS AS 11 ILHAS)
+-- ABA 4: DIAGNÓSTICO, AJUSTES E LOGS
 --================================================================--
-local TeleportsPage = TabPages["Rotas Seguras"]
+local ConfigsPage = TabPages["Diagnóstico"]
 
-local QuickTpCard = createCleanCard(TeleportsPage, 50)
-local TpBaseBtn = Instance.new("TextButton")
-TpBaseBtn.Size = UDim2.new(0.5, -6, 0, 34)
-TpBaseBtn.Position = UDim2.new(0, 4, 0.5, -17)
-TpBaseBtn.BackgroundColor3 = Color3.fromRGB(20, 83, 45)
-TpBaseBtn.Text = "MINHA BASE"
-TpBaseBtn.Font = Enum.Font.GothamBold
-TpBaseBtn.TextSize = 11
-TpBaseBtn.TextColor3 = Color3.fromRGB(74, 222, 128)
-TpBaseBtn.Parent = QuickTpCard
-addCorner(TpBaseBtn, 6)
-addStroke(TpBaseBtn, C_GREEN, 1.2)
+local TelemetryCard = createCleanCard(ConfigsPage, 54)
+local TelemetryLabel = Instance.new("TextLabel")
+TelemetryLabel.Size = UDim2.new(1, -24, 1, -10)
+TelemetryLabel.Position = UDim2.new(0, 12, 0, 5)
+TelemetryLabel.BackgroundTransparency = 1
+TelemetryLabel.Font = Enum.Font.Gotham
+TelemetryLabel.TextSize = 10
+TelemetryLabel.TextColor3 = C_MUTED
+TelemetryLabel.TextWrapped = true
+TelemetryLabel.TextXAlignment = Enum.TextXAlignment.Left
+TelemetryLabel.Text = "● GRAVAÇÃO ATIVA  •  jogue normalmente por ~10 min\nArquivos: ROUBE_UM_OVO_DUMP.txt + ROUBE_UM_OVO_TRACE.jsonl"
+TelemetryLabel.Parent = TelemetryCard
 
-TpBaseBtn.MouseButton1Click:Connect(function()
-    local dep = getMyDepositCFrame() or State.BaseCFrame
-    if dep and not isMoving then
-        task.spawn(function()
-            addLog("ROTA", "Caminhando para a base...")
-            local arrived = movePlayerSafe(dep.Position, 24)
-            addLog("ROTA", arrived and "Base alcançada." or "Rota segura para a base indisponível.")
-        end)
-    end
-end)
-
-local TpEsteiraBtn = Instance.new("TextButton")
-TpEsteiraBtn.Size = UDim2.new(0.5, -6, 0, 34)
-TpEsteiraBtn.Position = UDim2.new(0.5, 2, 0.5, -17)
-TpEsteiraBtn.BackgroundColor3 = Color3.fromRGB(30, 44, 74)
-TpEsteiraBtn.Text = "MINHA ESTEIRA"
-TpEsteiraBtn.Font = Enum.Font.GothamBold
-TpEsteiraBtn.TextSize = 11
-TpEsteiraBtn.TextColor3 = C_YELLOW
-TpEsteiraBtn.Parent = QuickTpCard
-addCorner(TpEsteiraBtn, 6)
-addStroke(TpEsteiraBtn, C_YELLOW, 1.2)
-
-TpEsteiraBtn.MouseButton1Click:Connect(function()
-    local _, tPos = findMyTreadmill()
-    if tPos and not isMoving then
-        task.spawn(function()
-            addLog("ROTA", "Caminhando para a esteira...")
-            local arrived = movePlayerSafe(tPos, 24)
-            addLog("ROTA", arrived and "Esteira alcançada." or "Rota segura para a esteira indisponível.")
-        end)
-    end
-end)
-
-local IslandsTitle = Instance.new("TextLabel")
-IslandsTitle.Size = UDim2.new(1, 0, 0, 20)
-IslandsTitle.BackgroundTransparency = 1
-IslandsTitle.Font = Enum.Font.GothamBold
-IslandsTitle.TextSize = 11
-IslandsTitle.TextColor3 = C_CYAN
-IslandsTitle.TextXAlignment = Enum.TextXAlignment.Left
-IslandsTitle.Text = "ILHAS OFICIAIS DO JOGO (1 A 11):"
-IslandsTitle.Parent = TeleportsPage
-
-local IslandsGrid = Instance.new("Frame")
-IslandsGrid.Size = UDim2.new(1, 0, 0, 0)
-IslandsGrid.AutomaticSize = Enum.AutomaticSize.Y
-IslandsGrid.BackgroundTransparency = 1
-IslandsGrid.Parent = TeleportsPage
-
-local gridLayout = Instance.new("UIGridLayout")
-gridLayout.CellSize = UDim2.new(0.5, -4, 0, 36)
-gridLayout.CellPadding = UDim2.new(0, 8, 0, 6)
-gridLayout.Parent = IslandsGrid
-
-for idx, isl in ipairs(OfficialIslands) do
-    local islBtn = Instance.new("TextButton")
-    islBtn.BackgroundColor3 = C_CARD
-    islBtn.Text = string.format("%d. %s [%s]", idx, isl.Id, isl.TopDrop or isl.Rarity)
-    islBtn.Font = Enum.Font.GothamBold
-    islBtn.TextSize = 10
-    islBtn.TextColor3 = C_TEXT
-    islBtn.Parent = IslandsGrid
-    addCorner(islBtn, 6)
-    addStroke(islBtn, C_BORDER, 1)
-
-    local targetX = (isl.MinX + math.min(isl.MaxX, isl.MinX + 120)) / 2
-    local targetZ = isl.BaseZ or -350
-    islBtn.MouseButton1Click:Connect(function()
-        if not isMoving then
-            task.spawn(function()
-                addLog("ROTA", "Caminhando para: " .. isl.Name)
-                local arrived = movePlayerSafe(Vector3.new(targetX, 68, targetZ), 24)
-                addLog("ROTA", arrived and ("Chegou a " .. isl.Name) or "Não existe rota segura para essa ilha.")
-            end)
-        end
-    end)
-end
-
---================================================================--
--- ABA 5: CONFIGURACOES & LOGS & UNLOAD
---================================================================--
-local ConfigsPage = TabPages["Configuracoes"]
-
--- Card de Toggles de Proteção e Modificadores
-local ModifiersCard = createCleanCard(ConfigsPage, 82)
+-- Somente filtros que influenciam diretamente a automação/radar.
+local ModifiersCard = createCleanCard(ConfigsPage, 46)
 local ModGrid = Instance.new("Frame")
 ModGrid.Size = UDim2.new(1, -20, 1, -12)
 ModGrid.Position = UDim2.new(0, 10, 0, 6)
@@ -3262,38 +3926,6 @@ IslandLockBtn.MouseButton1Click:Connect(function()
     end
 end)
 
-local NoclipBtn = Instance.new("TextButton")
-NoclipBtn.BackgroundColor3 = Color3.fromRGB(26, 36, 60)
-NoclipBtn.Text = Config.NoclipEnabled and "NOCLIP: ON" or "NOCLIP: OFF"
-NoclipBtn.Font = Enum.Font.GothamBold
-NoclipBtn.TextSize = 10
-NoclipBtn.TextColor3 = Config.NoclipEnabled and C_GREEN or C_MUTED
-NoclipBtn.Parent = ModGrid
-addCorner(NoclipBtn, 6)
-addStroke(NoclipBtn, C_BORDER, 1)
-
-NoclipBtn.MouseButton1Click:Connect(function()
-    Config.NoclipEnabled = not Config.NoclipEnabled
-    NoclipBtn.Text = Config.NoclipEnabled and "NOCLIP: ON" or "NOCLIP: OFF"
-    NoclipBtn.TextColor3 = Config.NoclipEnabled and C_GREEN or C_MUTED
-end)
-
-local InfJumpBtn = Instance.new("TextButton")
-InfJumpBtn.BackgroundColor3 = Color3.fromRGB(26, 36, 60)
-InfJumpBtn.Text = Config.InfJumpEnabled and "PULO INFINITO: ON" or "PULO INFINITO: OFF"
-InfJumpBtn.Font = Enum.Font.GothamBold
-InfJumpBtn.TextSize = 10
-InfJumpBtn.TextColor3 = Config.InfJumpEnabled and C_GREEN or C_MUTED
-InfJumpBtn.Parent = ModGrid
-addCorner(InfJumpBtn, 6)
-addStroke(InfJumpBtn, C_BORDER, 1)
-
-InfJumpBtn.MouseButton1Click:Connect(function()
-    Config.InfJumpEnabled = not Config.InfJumpEnabled
-    InfJumpBtn.Text = Config.InfJumpEnabled and "PULO INFINITO: ON" or "PULO INFINITO: OFF"
-    InfJumpBtn.TextColor3 = Config.InfJumpEnabled and C_GREEN or C_MUTED
-end)
-
 local UnownedBtn = Instance.new("TextButton")
 UnownedBtn.BackgroundColor3 = Color3.fromRGB(26, 36, 60)
 UnownedBtn.Text = Config.ShowOnlyUnowned and "IGNORAR MEUS OVOS: ON" or "IGNORAR MEUS OVOS: OFF"
@@ -3310,25 +3942,6 @@ UnownedBtn.MouseButton1Click:Connect(function()
     UnownedBtn.TextColor3 = Config.ShowOnlyUnowned and C_GREEN or C_MUTED
 end)
 
--- Conexão de Noclip e Pulo Infinito
-table.insert(ScriptConnections, Services.RunService.Stepped:Connect(function()
-    if Config.NoclipEnabled then
-        local char = LocalPlayer.Character
-        if char then
-            for _, p in ipairs(char:GetDescendants()) do
-                if p:IsA("BasePart") then p.CanCollide = false end
-            end
-        end
-    end
-end))
-
-table.insert(ScriptConnections, Services.UserInputService.JumpRequest:Connect(function()
-    if Config.InfJumpEnabled then
-        local hum = getHum()
-        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
-    end
-end))
-
 -- Card de Sliders
 local SlidersCard = createCleanCard(ConfigsPage, 88)
 local SpeedLabel = Instance.new("TextLabel")
@@ -3339,7 +3952,7 @@ SpeedLabel.Font = Enum.Font.GothamBold
 SpeedLabel.TextSize = 11
 SpeedLabel.TextColor3 = C_TEXT
 SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
-SpeedLabel.Text = string.format("Velocidade de Caminhada: %d", Config.MoveSpeed)
+SpeedLabel.Text = string.format("Velocidade de deslize: %d studs/s", Config.MoveSpeed)
 SpeedLabel.Parent = SlidersCard
 
 local SpeedSliderBg = Instance.new("Frame")
@@ -3350,7 +3963,7 @@ SpeedSliderBg.Parent = SlidersCard
 addCorner(SpeedSliderBg, 5)
 
 local SpeedSliderFill = Instance.new("Frame")
-SpeedSliderFill.Size = UDim2.new((Config.MoveSpeed - 16) / 16, 0, 1, 0)
+SpeedSliderFill.Size = UDim2.new((Config.MoveSpeed - 20) / 80, 0, 1, 0)
 SpeedSliderFill.BackgroundColor3 = C_CYAN
 SpeedSliderFill.BorderSizePixel = 0
 SpeedSliderFill.Parent = SpeedSliderBg
@@ -3366,6 +3979,10 @@ local isDraggingSpeed = false
 SpeedTrigger.MouseButton1Down:Connect(function() isDraggingSpeed = true end)
 table.insert(ScriptConnections, Services.UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if isDraggingSpeed then
+            traceEvent("CONFIG", "MOVE_SPEED", { value = Config.MoveSpeed })
+            addLog("AJUSTE", "Velocidade alterada para " .. tostring(Config.MoveSpeed) .. " studs/s")
+        end
         isDraggingSpeed = false
     end
 end))
@@ -3377,9 +3994,9 @@ table.insert(ScriptConnections, Services.RunService.RenderStepped:Connect(functi
         local barSize = SpeedSliderBg.AbsoluteSize.X
         local pct = math.clamp((mousePos - barPos) / barSize, 0, 1)
         SpeedSliderFill.Size = UDim2.new(pct, 0, 1, 0)
-        local val = 16 + math.floor(pct * 16)
+        local val = 20 + math.floor(pct * 80)
         Config.MoveSpeed = val
-        SpeedLabel.Text = string.format("Velocidade de Caminhada: %d", val)
+        SpeedLabel.Text = string.format("Velocidade de deslize: %d studs/s", val)
     end
 end))
 
@@ -3418,6 +4035,9 @@ local isDraggingDist = false
 DistTrigger.MouseButton1Down:Connect(function() isDraggingDist = true end)
 table.insert(ScriptConnections, Services.UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if isDraggingDist then
+            traceEvent("CONFIG", "MAX_DISTANCE", { value = Config.MaxStealDistance })
+        end
         isDraggingDist = false
     end
 end))
@@ -3481,7 +4101,7 @@ end
 local DumpBtn = Instance.new("TextButton")
 DumpBtn.Size = UDim2.new(1, 0, 0, 34)
 DumpBtn.BackgroundColor3 = Color3.fromRGB(26, 36, 60)
-DumpBtn.Text = "GERAR DUMP COMPLETO DO JOGO"
+DumpBtn.Text = "FINALIZAR COLETA E GERAR DUMP PARA ANÁLISE"
 DumpBtn.Font = Enum.Font.GothamBold
 DumpBtn.TextSize = 11
 DumpBtn.TextColor3 = C_CYAN
@@ -3494,12 +4114,14 @@ addStroke(DumpBtn, C_BORDER, 1)
 DumpBtn.MouseButton1Click:Connect(function()
     addLog("DUMP", "Iniciando dump de dados do jogo...")
     task.spawn(function()
+        traceEvent("SESSION", "MANUAL_DUMP", { duration = os.clock() - Telemetry.StartedAt })
+        flushTelemetry()
         local txt = dumpGameData()
         pcall(function()
             if setclipboard then setclipboard(txt) end
             if writefile then writefile("ROUBE_UM_OVO_DUMP.txt", txt) end
         end)
-        addLog("DUMP", "Dump copiado para o clipboard e salvo!")
+        addLog("DUMP", "Pronto: envie o DUMP.txt e o TRACE.jsonl para análise.")
     end)
 end)
 
@@ -3528,10 +4150,17 @@ unloadScript = function()
     Config.AutoStealEnabled = false
     Config.AutoEsteiraEnabled = false
     Config.ESPEnabled = false
-    Config.NoclipEnabled = false
-    Config.InfJumpEnabled = false
     State.IsExecutingSteal = false
     State.IsOnTreadmill = false
+    traceEvent("SESSION", "UNLOAD", { duration = os.clock() - Telemetry.StartedAt })
+    flushTelemetry()
+    Telemetry.Enabled = false
+    pcall(function()
+        if getgenv and type(getgenv().RoubeUmOvoTraceHookState) == "table" then
+            getgenv().RoubeUmOvoTraceHookState.Enabled = false
+            getgenv().RoubeUmOvoTraceHookState.Emit = nil
+        end
+    end)
 
     -- 2. Desconectar o runner da esteira
     if esteiraHeartbeatConn then
@@ -3553,7 +4182,7 @@ unloadScript = function()
     pcall(function()
         local char = getChar()
         if char then
-            -- Restaurar colisões (Noclip OFF)
+            -- Restaurar colisões padrão do personagem
             for _, part in ipairs(char:GetDescendants()) do
                 if part:IsA("BasePart") then
                     part.CanCollide = true
@@ -3634,14 +4263,7 @@ unloadScript = function()
 end
 
 -- Exportar Unload globalmente para permitir fechamento via console / executor
-pcall(function()
-        Services.StarterGui:SetCore("SendNotification", {
-            Title = "Roube um Ovo Hub",
-            Text = "Script descarregado com sucesso!",
-            Duration = 3
-        })
-    end)
-    _G.RoubeUmOvoUnload = unloadScript
+_G.RoubeUmOvoUnload = unloadScript
 if getgenv then
     pcall(function() getgenv().RoubeUmOvoUnload = unloadScript end)
 end
@@ -3707,7 +4329,7 @@ task.spawn(function()
         end
 
         -- Atualizar Radar caso este aberto
-        if activeTab == "Radar de Ovos" then
+        if activeTab == "Radar" then
             executeCleanRadarScan()
         end
     end
@@ -3735,7 +4357,8 @@ end)
 task.delay(0.8, function()
     if State.IsUnloaded then return end
     executeCleanRadarScan()
-    addLog("SISTEMA", "Roube um Ovo v12.1 carregado com sucesso!")
+    addLog("SISTEMA", "Roube um Ovo Observatory v13.0 carregado com sucesso!")
+    addLog("TRACE", "Gravação ativa em " .. Telemetry.FileName)
     pcall(function()
         Services.StarterGui:SetCore("SendNotification", {
             Title = "Roube um Ovo Hub",
