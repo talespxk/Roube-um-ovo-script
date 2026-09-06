@@ -59,7 +59,7 @@ while not LocalPlayer do
     LocalPlayer = Services.Players.LocalPlayer
 end
 
--- 4. NEUTRALIZAÇÃO ATIVA DE ANTI-CHEAT LOCAL DO CHARACTER
+-- 4. NEUTRALIZAÇÃO ATIVA DE ANTI-CHEAT LOCAL DO CHARACTER (SEM DESATIVAR RAGDOLL)
 local function disableCharacterAntiCheats(char)
     if not char then return end
     pcall(function()
@@ -73,12 +73,11 @@ local function disableCharacterAntiCheats(char)
                 end
             end
         end
-        LocalPlayer:SetAttribute("RagdollEndTime", 0)
-        char:SetAttribute("RagdollEndTime", 0)
+        -- Manter Ragdoll HABILITADO para permitir o bypass do golpe da Galinha
         local hum = char:FindFirstChildOfClass("Humanoid")
         if hum then
-            hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-            hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+            hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
+            hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, true)
         end
     end)
 end
@@ -1519,7 +1518,7 @@ local function unloadScript()
     addLog("SISTEMA", "Script descarregado completamente (Unload).")
 end
 
--- 12. INTERFACE TECH BLUE MODERNA (MINIMALISTA, SEM EMOJIS)
+-- 12. INTERFACE MODERNA FLUENT & MINIMALISTA (v9.0)
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "EggTelemetryHub"
 ScreenGui.ResetOnSpawn = false
@@ -1531,20 +1530,21 @@ pcall(function()
     else ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 end)
 
-local C_BG = Color3.fromRGB(11, 15, 25)
-local C_PANEL = Color3.fromRGB(17, 24, 39)
-local C_CARD = Color3.fromRGB(24, 33, 53)
-local C_BORDER = Color3.fromRGB(30, 41, 59)
-local C_BLUE = Color3.fromRGB(56, 189, 248)
-local C_BLUE_DARK = Color3.fromRGB(14, 116, 144)
-local C_TEXT = Color3.fromRGB(241, 245, 249)
-local C_MUTED = Color3.fromRGB(148, 163, 184)
-local C_RED = Color3.fromRGB(239, 68, 68)
-local C_GREEN = Color3.fromRGB(34, 197, 94)
+-- Paleta de Cores Clean Dark / Modern Minimalist
+local C_BG = Color3.fromRGB(15, 23, 42)         -- Fundo Slate Escuro #0F172A
+local C_TOPBAR = Color3.fromRGB(30, 41, 59)     -- Topbar Slate Médio #1E293B
+local C_CARD = Color3.fromRGB(24, 33, 53)       -- Cartão Escuro #182135
+local C_BORDER = Color3.fromRGB(51, 65, 85)     -- Borda Sutil #334155
+local C_CYAN = Color3.fromRGB(56, 189, 248)     -- Destaque Cyan #38BDF8
+local C_TEXT = Color3.fromRGB(248, 250, 252)    -- Texto Principal #F8FAFC
+local C_MUTED = Color3.fromRGB(148, 163, 184)   -- Texto Secundário #94A3B8
+local C_GREEN = Color3.fromRGB(34, 197, 94)     -- Verde Sucesso #22C55E
+local C_PURPLE = Color3.fromRGB(168, 85, 247)   -- Roxo Destaque #A855F7
+local C_RED = Color3.fromRGB(239, 68, 68)       -- Vermelho Alerta #EF4444
 
 local function addCorner(instance, rad)
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, rad or 6)
+    corner.CornerRadius = UDim.new(0, rad or 8)
     corner.Parent = instance
     return corner
 end
@@ -1558,247 +1558,343 @@ local function addStroke(instance, color, thick)
     return stroke
 end
 
+-- Janela Principal Compacta (480x360)
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 540, 0, 400)
-MainFrame.Position = UDim2.new(0.5, -270, 0.5, -200)
+MainFrame.Size = UDim2.new(0, 480, 0, 360)
+MainFrame.Position = UDim2.new(0.5, -240, 0.5, -180)
 MainFrame.BackgroundColor3 = C_BG
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
 MainFrame.Draggable = true
 MainFrame.Parent = ScreenGui
-addCorner(MainFrame, 8)
-addStroke(MainFrame, C_BLUE, 1)
+addCorner(MainFrame, 10)
+addStroke(MainFrame, C_BORDER, 1)
 
--- Topbar
+-- Topbar Elegante
 local Topbar = Instance.new("Frame")
-Topbar.Size = UDim2.new(1, 0, 0, 36)
-Topbar.BackgroundColor3 = C_PANEL
+Topbar.Size = UDim2.new(1, 0, 0, 38)
+Topbar.BackgroundColor3 = C_TOPBAR
 Topbar.BorderSizePixel = 0
 Topbar.Parent = MainFrame
-addCorner(Topbar, 8)
+addCorner(Topbar, 10)
+
+-- Ajuste para manter os cantos inferiores retos da Topbar
+local TopbarSquare = Instance.new("Frame")
+TopbarSquare.Size = UDim2.new(1, 0, 0, 10)
+TopbarSquare.Position = UDim2.new(0, 0, 1, -10)
+TopbarSquare.BackgroundColor3 = C_TOPBAR
+TopbarSquare.BorderSizePixel = 0
+TopbarSquare.Parent = Topbar
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -70, 1, 0)
-Title.Position = UDim2.new(0, 12, 0, 0)
+Title.Size = UDim2.new(0, 180, 1, 0)
+Title.Position = UDim2.new(0, 14, 0, 0)
 Title.BackgroundTransparency = 1
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 12
-Title.TextColor3 = C_BLUE
+Title.TextColor3 = C_CYAN
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "ROUBE UM OVO - TELEMETRIA & AUTOMAÇÃO v8.0 (RAGDOLL TP)"
+Title.Text = "ROUBE UM OVO  v9.0"
 Title.Parent = Topbar
 
--- Botão de Unload no Topbar
+-- Badge de Status (IDLE / ROUBANDO)
+local StatusBadge = Instance.new("TextLabel")
+StatusBadge.Size = UDim2.new(0, 90, 0, 20)
+StatusBadge.Position = UDim2.new(0, 185, 0.5, -10)
+StatusBadge.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
+StatusBadge.Text = "PARADO"
+StatusBadge.Font = Enum.Font.GothamBold
+StatusBadge.TextSize = 9
+StatusBadge.TextColor3 = C_MUTED
+StatusBadge.Parent = Topbar
+addCorner(StatusBadge, 10)
+addStroke(StatusBadge, C_BORDER, 1)
+
+-- Botão UNLOAD Vermelho no Topo
 local UnloadBtn = Instance.new("TextButton")
-UnloadBtn.Size = UDim2.new(0, 56, 0, 24)
-UnloadBtn.Position = UDim2.new(1, -92, 0, 6)
+UnloadBtn.Size = UDim2.new(0, 62, 0, 22)
+UnloadBtn.Position = UDim2.new(1, -96, 0.5, -11)
 UnloadBtn.BackgroundColor3 = Color3.fromRGB(153, 27, 27)
 UnloadBtn.Text = "UNLOAD"
 UnloadBtn.Font = Enum.Font.GothamBold
 UnloadBtn.TextSize = 9
 UnloadBtn.TextColor3 = C_TEXT
 UnloadBtn.Parent = Topbar
-addCorner(UnloadBtn, 4)
-addStroke(UnloadBtn, C_RED, 1)
+addCorner(UnloadBtn, 5)
 
 UnloadBtn.MouseButton1Click:Connect(function()
     unloadScript()
 end)
 
+-- Botão Fechar / Minimizar (X)
 local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.new(0, 24, 0, 24)
-CloseBtn.Position = UDim2.new(1, -30, 0, 6)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+CloseBtn.Size = UDim2.new(0, 22, 0, 22)
+CloseBtn.Position = UDim2.new(1, -28, 0.5, -11)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(51, 65, 85)
 CloseBtn.Text = "X"
 CloseBtn.Font = Enum.Font.GothamBold
-CloseBtn.TextSize = 11
+CloseBtn.TextSize = 10
 CloseBtn.TextColor3 = C_TEXT
 CloseBtn.Parent = Topbar
-addCorner(CloseBtn, 4)
-CloseBtn.MouseButton1Click:Connect(function() MainFrame.Visible = false end)
+addCorner(CloseBtn, 5)
 
--- Sidebar de Navegação
-local Sidebar = Instance.new("Frame")
-Sidebar.Size = UDim2.new(0, 120, 1, -36)
-Sidebar.Position = UDim2.new(0, 0, 0, 36)
-Sidebar.BackgroundColor3 = C_PANEL
-Sidebar.BorderSizePixel = 0
-Sidebar.Parent = MainFrame
+CloseBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = false
+end)
 
+-- Barra de Abas Horizontal Superior (3 Abas Limpas)
+local TabBar = Instance.new("Frame")
+TabBar.Size = UDim2.new(1, -24, 0, 30)
+TabBar.Position = UDim2.new(0, 12, 0, 44)
+TabBar.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
+TabBar.BorderSizePixel = 0
+TabBar.Parent = MainFrame
+addCorner(TabBar, 6)
+
+local TabButtons = {}
+local TabPages = {}
+local tabNames = {"Auto-Roubo", "Radar de Ovos", "Configurações"}
+local activeTab = "Auto-Roubo"
+
+-- Área de Conteúdo
 local ContentArea = Instance.new("Frame")
-ContentArea.Size = UDim2.new(1, -120, 1, -36)
-ContentArea.Position = UDim2.new(0, 120, 0, 36)
-ContentArea.BackgroundColor3 = C_BG
+ContentArea.Size = UDim2.new(1, -24, 1, -86)
+ContentArea.Position = UDim2.new(0, 12, 0, 78)
+ContentArea.BackgroundTransparency = 1
 ContentArea.BorderSizePixel = 0
 ContentArea.Parent = MainFrame
 
-local Pages = {}
-local CurrentTab = "Radar"
+local function switchTab(name)
+    activeTab = name
+    for tName, btn in pairs(TabButtons) do
+        local isCur = (tName == name)
+        btn.BackgroundColor3 = isCur and Color3.fromRGB(30, 41, 59) or Color3.fromRGB(15, 23, 42)
+        btn.TextColor3 = isCur and C_CYAN or C_MUTED
+    end
+    for pName, page in pairs(TabPages) do
+        page.Visible = (pName == name)
+    end
+end
 
-local function createPage(name)
+for i, tName in ipairs(tabNames) do
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1 / #tabNames, -4, 1, 0)
+    btn.Position = UDim2.new((i - 1) * (1 / #tabNames), 2, 0, 0)
+    btn.BackgroundColor3 = (tName == activeTab) and Color3.fromRGB(30, 41, 59) or Color3.fromRGB(15, 23, 42)
+    btn.Text = tName
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 10
+    btn.TextColor3 = (tName == activeTab) and C_CYAN or C_MUTED
+    btn.Parent = TabBar
+    addCorner(btn, 5)
+
+    btn.MouseButton1Click:Connect(function()
+        switchTab(tName)
+    end)
+    TabButtons[tName] = btn
+
     local page = Instance.new("ScrollingFrame")
-    page.Name = name .. "Page"
+    page.Name = tName .. "Page"
     page.Size = UDim2.new(1, 0, 1, 0)
     page.BackgroundTransparency = 1
     page.BorderSizePixel = 0
     page.ScrollBarThickness = 3
-    page.ScrollBarImageColor3 = C_BLUE
-    page.CanvasSize = UDim2.new(0, 0, 0, 0)
+    page.ScrollBarImageColor3 = C_CYAN
     page.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    page.Visible = false
+    page.CanvasSize = UDim2.new(0, 0, 0, 0)
+    page.Visible = (tName == activeTab)
     page.Parent = ContentArea
 
     local layout = Instance.new("UIListLayout")
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
     layout.Padding = UDim.new(0, 8)
+    layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
     layout.Parent = page
 
-    local pad = Instance.new("UIPadding")
-    pad.PaddingTop = UDim.new(0, 10)
-    pad.PaddingBottom = UDim.new(0, 10)
-    pad.PaddingLeft = UDim.new(0, 10)
-    pad.PaddingRight = UDim.new(0, 10)
-    pad.Parent = page
-
-    Pages[name] = page
-    return page
+    TabPages[tName] = page
 end
 
-local TabButtons = {}
-local function switchTab(name)
-    CurrentTab = name
-    for tabName, page in pairs(Pages) do
-        page.Visible = (tabName == name)
-    end
-    for tabName, btn in pairs(TabButtons) do
-        if tabName == name then
-            btn.BackgroundColor3 = C_BLUE_DARK
-            btn.TextColor3 = C_TEXT
-        else
-            btn.BackgroundColor3 = Color3.fromRGB(24, 33, 53)
-            btn.TextColor3 = C_MUTED
-        end
-    end
-end
-
-local tabsList = {
-    { Id = "Radar", Label = "RADAR" },
-    { Id = "AutoSteal", Label = "AUTO-ROUBO" },
-    { Id = "Configs", Label = "CONFIGS" },
-    { Id = "Inspector", Label = "INSPETOR" },
-    { Id = "Logs", Label = "REGISTROS" }
-}
-
-for i, t in ipairs(tabsList) do
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -12, 0, 28)
-    btn.Position = UDim2.new(0, 6, 0, 8 + (i - 1) * 34)
-    btn.BackgroundColor3 = (t.Id == CurrentTab) and C_BLUE_DARK or Color3.fromRGB(24, 33, 53)
-    btn.Text = t.Label
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 10
-    btn.TextColor3 = (t.Id == CurrentTab) and C_TEXT or C_MUTED
-    btn.Parent = Sidebar
-    addCorner(btn, 4)
-    TabButtons[t.Id] = btn
-    btn.MouseButton1Click:Connect(function() switchTab(t.Id) end)
-end
-
-local function createCard(parent, titleText)
+-- Função Auxiliar para Criar Cartões Limpos
+local function createCleanCard(parent, height)
     local card = Instance.new("Frame")
-    card.Size = UDim2.new(1, 0, 0, 0)
-    card.AutomaticSize = Enum.AutomaticSize.Y
+    card.Size = UDim2.new(1, 0, 0, height or 60)
     card.BackgroundColor3 = C_CARD
     card.BorderSizePixel = 0
     card.Parent = parent
-    addCorner(card, 6)
+    addCorner(card, 8)
     addStroke(card, C_BORDER, 1)
-
-    local pad = Instance.new("UIPadding")
-    pad.PaddingTop = UDim.new(0, 8)
-    pad.PaddingBottom = UDim.new(0, 8)
-    pad.PaddingLeft = UDim.new(0, 10)
-    pad.PaddingRight = UDim.new(0, 10)
-    pad.Parent = card
-
-    local cardLayout = Instance.new("UIListLayout")
-    cardLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    cardLayout.Padding = UDim.new(0, 6)
-    cardLayout.Parent = card
-
-    if titleText then
-        local cTitle = Instance.new("TextLabel")
-        cTitle.Size = UDim2.new(1, 0, 0, 16)
-        cTitle.BackgroundTransparency = 1
-        cTitle.Font = Enum.Font.GothamBold
-        cTitle.TextSize = 10
-        cTitle.TextColor3 = C_BLUE
-        cTitle.TextXAlignment = Enum.TextXAlignment.Left
-        cTitle.Text = titleText
-        cTitle.Parent = card
-    end
-
     return card
 end
 
 --================================================================--
--- 1. ABA: RADAR DE OVOS
+-- 1. ABA: AUTO-ROUBO (MINIMALISTA E PODEROSA)
 --================================================================--
-local RadarPage = createPage("Radar")
-local RadarHeaderCard = createCard(RadarPage, "CONTROLE DE VARREDURA")
+local AutoStealPage = TabPages["Auto-Roubo"]
 
-local ControlsRow = Instance.new("Frame")
-ControlsRow.Size = UDim2.new(1, 0, 0, 26)
-ControlsRow.BackgroundTransparency = 1
-ControlsRow.Parent = RadarHeaderCard
+-- Botão Gigante de Ativação / Desativação
+local MainToggleBtn = Instance.new("TextButton")
+MainToggleBtn.Size = UDim2.new(1, 0, 0, 42)
+MainToggleBtn.BackgroundColor3 = Config.AutoStealEnabled and C_GREEN or Color3.fromRGB(30, 41, 59)
+MainToggleBtn.Text = Config.AutoStealEnabled and "AUTO-ROUBO ATIVADO (EM EXECUÇÃO)" or "ATIVAR AUTO-ROUBO"
+MainToggleBtn.Font = Enum.Font.GothamBold
+MainToggleBtn.TextSize = 11
+MainToggleBtn.TextColor3 = C_TEXT
+MainToggleBtn.Parent = AutoStealPage
+addCorner(MainToggleBtn, 8)
+addStroke(MainToggleBtn, Config.AutoStealEnabled and C_GREEN or C_CYAN, 1)
 
-local SearchInput = Instance.new("TextBox")
-SearchInput.Size = UDim2.new(1, -170, 1, 0)
-SearchInput.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
-SearchInput.PlaceholderText = "Filtrar por nome ou raridade..."
-SearchInput.PlaceholderColor3 = C_MUTED
-SearchInput.Text = ""
-SearchInput.Font = Enum.Font.Gotham
-SearchInput.TextSize = 10
-SearchInput.TextColor3 = C_TEXT
-SearchInput.ClearTextOnFocus = false
-SearchInput.Parent = ControlsRow
-addCorner(SearchInput, 4)
-addStroke(SearchInput, C_BORDER, 1)
+-- Alternador de Método: Ragdoll da Galinha vs Voo Direto
+local MethodBtn = Instance.new("TextButton")
+MethodBtn.Size = UDim2.new(1, 0, 0, 32)
+MethodBtn.BackgroundColor3 = (Config.StealMethod == "RagdollTP") and C_PURPLE or Color3.fromRGB(30, 41, 59)
+MethodBtn.Text = (Config.StealMethod == "RagdollTP") and "MÉTODO: SALTO POR IMPACTO (GALINHA BYPASS)" or "MÉTODO: VOO DIRETO NO SOLO (ORIGINAL)"
+MethodBtn.Font = Enum.Font.GothamBold
+MethodBtn.TextSize = 10
+MethodBtn.TextColor3 = C_TEXT
+MethodBtn.Parent = AutoStealPage
+addCorner(MethodBtn, 8)
+addStroke(MethodBtn, (Config.StealMethod == "RagdollTP") and C_PURPLE or C_BORDER, 1)
 
-local RefreshBtn = Instance.new("TextButton")
-RefreshBtn.Size = UDim2.new(0, 78, 1, 0)
-RefreshBtn.Position = UDim2.new(1, -162, 0, 0)
-RefreshBtn.BackgroundColor3 = C_BLUE_DARK
-RefreshBtn.Text = "VARREDURA"
-RefreshBtn.Font = Enum.Font.GothamBold
-RefreshBtn.TextSize = 10
-RefreshBtn.TextColor3 = C_TEXT
-RefreshBtn.Parent = ControlsRow
-addCorner(RefreshBtn, 4)
+MethodBtn.MouseButton1Click:Connect(function()
+    if Config.StealMethod == "RagdollTP" then
+        Config.StealMethod = "VooDireto"
+        MethodBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+        MethodBtn.Text = "MÉTODO: VOO DIRETO NO SOLO (ORIGINAL)"
+        addStroke(MethodBtn, C_BORDER, 1)
+    else
+        Config.StealMethod = "RagdollTP"
+        MethodBtn.BackgroundColor3 = C_PURPLE
+        MethodBtn.Text = "MÉTODO: SALTO POR IMPACTO (GALINHA BYPASS)"
+        addStroke(MethodBtn, C_PURPLE, 1)
+    end
+    addLog("CONFIG", "Método alterado: " .. Config.StealMethod)
+end)
 
-local ToggleESPBtn = Instance.new("TextButton")
-ToggleESPBtn.Size = UDim2.new(0, 78, 1, 0)
-ToggleESPBtn.Position = UDim2.new(1, -80, 0, 0)
-ToggleESPBtn.BackgroundColor3 = Config.ESPEnabled and C_GREEN or Color3.fromRGB(30, 41, 59)
-ToggleESPBtn.Text = Config.ESPEnabled and "ESP: ON" or "ESP: OFF"
-ToggleESPBtn.Font = Enum.Font.GothamBold
-ToggleESPBtn.TextSize = 10
-ToggleESPBtn.TextColor3 = C_TEXT
-ToggleESPBtn.Parent = ControlsRow
-addCorner(ToggleESPBtn, 4)
+-- Card da Base Plot
+local BaseCard = createCleanCard(AutoStealPage, 50)
+local BaseLabel = Instance.new("TextLabel")
+BaseLabel.Size = UDim2.new(1, -95, 1, 0)
+BaseLabel.Position = UDim2.new(0, 12, 0, 0)
+BaseLabel.BackgroundTransparency = 1
+BaseLabel.Font = Enum.Font.Gotham
+BaseLabel.TextSize = 10
+BaseLabel.TextColor3 = C_MUTED
+BaseLabel.TextXAlignment = Enum.TextXAlignment.Left
+BaseLabel.Text = "Base: Automática (no spawn do seu plot)"
+BaseLabel.Parent = BaseCard
 
-local StatusLabel = Instance.new("TextLabel")
-StatusLabel.Size = UDim2.new(1, 0, 0, 14)
-StatusLabel.BackgroundTransparency = 1
-StatusLabel.Font = Enum.Font.Gotham
-StatusLabel.TextSize = 9
-StatusLabel.TextColor3 = C_MUTED
-StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-StatusLabel.Text = "Pronto para varredura do mapa."
-StatusLabel.Parent = RadarHeaderCard
+local SetBaseBtn = Instance.new("TextButton")
+SetBaseBtn.Size = UDim2.new(0, 80, 0, 28)
+SetBaseBtn.Position = UDim2.new(1, -88, 0.5, -14)
+SetBaseBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+SetBaseBtn.Text = "FIXAR BASE"
+SetBaseBtn.Font = Enum.Font.GothamBold
+SetBaseBtn.TextSize = 9
+SetBaseBtn.TextColor3 = C_CYAN
+SetBaseBtn.Parent = BaseCard
+addCorner(SetBaseBtn, 6)
+addStroke(SetBaseBtn, C_BORDER, 1)
 
+SetBaseBtn.MouseButton1Click:Connect(function()
+    local hrp = getHRP()
+    if hrp then
+        State.BaseCFrame = hrp.CFrame
+        BaseLabel.Text = string.format("Base Fixada: (%.0f, %.0f, %.0f)", hrp.Position.X, hrp.Position.Y, hrp.Position.Z)
+        BaseLabel.TextColor3 = C_GREEN
+        addLog("BASE", "Base registrada com sucesso.")
+    end
+end)
+
+-- Card de Alvo Prioritário
+local TargetCard = createCleanCard(AutoStealPage, 54)
+local TargetTitle = Instance.new("TextLabel")
+TargetTitle.Size = UDim2.new(1, -20, 0, 16)
+TargetTitle.Position = UDim2.new(0, 12, 0, 6)
+TargetTitle.BackgroundTransparency = 1
+TargetTitle.Font = Enum.Font.GothamBold
+TargetTitle.TextSize = 9
+TargetTitle.TextColor3 = C_MUTED
+TargetTitle.TextXAlignment = Enum.TextXAlignment.Left
+TargetTitle.Text = "ALVO PRIORITÁRIO ATUAL"
+TargetTitle.Parent = TargetCard
+
+local TargetInfoLabel = Instance.new("TextLabel")
+TargetInfoLabel.Size = UDim2.new(1, -20, 0, 24)
+TargetInfoLabel.Position = UDim2.new(0, 12, 0, 22)
+TargetInfoLabel.BackgroundTransparency = 1
+TargetInfoLabel.Font = Enum.Font.GothamBold
+TargetInfoLabel.TextSize = 10
+TargetInfoLabel.TextColor3 = C_TEXT
+TargetInfoLabel.TextXAlignment = Enum.TextXAlignment.Left
+TargetInfoLabel.Text = "Nenhum alvo selecionado. Aguardando ativação..."
+TargetInfoLabel.Parent = TargetCard
+
+-- Ações do Botão Principal
+MainToggleBtn.MouseButton1Click:Connect(function()
+    Config.AutoStealEnabled = not Config.AutoStealEnabled
+    MainToggleBtn.BackgroundColor3 = Config.AutoStealEnabled and C_GREEN or Color3.fromRGB(30, 41, 59)
+    MainToggleBtn.Text = Config.AutoStealEnabled and "AUTO-ROUBO ATIVADO (EM EXECUÇÃO)" or "ATIVAR AUTO-ROUBO"
+    addStroke(MainToggleBtn, Config.AutoStealEnabled and C_GREEN or C_CYAN, 1)
+    StatusBadge.Text = Config.AutoStealEnabled and "ROUBANDO" or "PARADO"
+    StatusBadge.TextColor3 = Config.AutoStealEnabled and C_GREEN or C_MUTED
+    addLog("ROUBO", Config.AutoStealEnabled and "Auto-roubo iniciado." or "Auto-roubo desativado.")
+end)
+
+--================================================================--
+-- 2. ABA: RADAR DE OVOS (COMPACTO E PRECISO)
+--================================================================--
+local RadarPage = TabPages["Radar de Ovos"]
+
+-- Barra Superior do Radar (Busca + ESP + Refresh)
+local RadarBar = Instance.new("Frame")
+RadarBar.Size = UDim2.new(1, 0, 0, 32)
+RadarBar.BackgroundTransparency = 1
+RadarBar.Parent = RadarPage
+
+local SearchBox = Instance.new("TextBox")
+SearchBox.Size = UDim2.new(1, -150, 1, 0)
+SearchBox.BackgroundColor3 = C_CARD
+SearchBox.PlaceholderText = "Filtrar por nome ou ilha..."
+SearchBox.PlaceholderColor3 = C_MUTED
+SearchBox.Text = ""
+SearchBox.Font = Enum.Font.Gotham
+SearchBox.TextSize = 9
+SearchBox.TextColor3 = C_TEXT
+SearchBox.TextXAlignment = Enum.TextXAlignment.Left
+SearchBox.Parent = RadarBar
+addCorner(SearchBox, 6)
+addStroke(SearchBox, C_BORDER, 1)
+
+local BoxPadding = Instance.new("UIPadding")
+BoxPadding.PaddingLeft = UDim.new(0, 10)
+BoxPadding.Parent = SearchBox
+
+local ESPToggleBtn = Instance.new("TextButton")
+ESPToggleBtn.Size = UDim2.new(0, 68, 1, 0)
+ESPToggleBtn.Position = UDim2.new(1, -142, 0, 0)
+ESPToggleBtn.BackgroundColor3 = Config.ESPEnabled and C_GREEN or Color3.fromRGB(30, 41, 59)
+ESPToggleBtn.Text = Config.ESPEnabled and "ESP: ON" or "ESP: OFF"
+ESPToggleBtn.Font = Enum.Font.GothamBold
+ESPToggleBtn.TextSize = 9
+ESPToggleBtn.TextColor3 = C_TEXT
+ESPToggleBtn.Parent = RadarBar
+addCorner(ESPToggleBtn, 6)
+addStroke(ESPToggleBtn, C_BORDER, 1)
+
+local RadarRefreshBtn = Instance.new("TextButton")
+RadarRefreshBtn.Size = UDim2.new(0, 68, 1, 0)
+RadarRefreshBtn.Position = UDim2.new(1, -70, 0, 0)
+RadarRefreshBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+RadarRefreshBtn.Text = "VARREDURA"
+RadarRefreshBtn.Font = Enum.Font.GothamBold
+RadarRefreshBtn.TextSize = 9
+RadarRefreshBtn.TextColor3 = C_CYAN
+RadarRefreshBtn.Parent = RadarBar
+addCorner(RadarRefreshBtn, 6)
+addStroke(RadarRefreshBtn, C_BORDER, 1)
+
+-- Container da Lista de Ovos do Radar
 local RadarListContainer = Instance.new("Frame")
 RadarListContainer.Size = UDim2.new(1, 0, 0, 0)
 RadarListContainer.AutomaticSize = Enum.AutomaticSize.Y
@@ -1806,693 +1902,275 @@ RadarListContainer.BackgroundTransparency = 1
 RadarListContainer.Parent = RadarPage
 
 local RadarListLayout = Instance.new("UIListLayout")
-RadarListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 RadarListLayout.Padding = UDim.new(0, 4)
+RadarListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 RadarListLayout.Parent = RadarListContainer
 
 local currentDiscovered = {}
 
-local function renderRadarList(eggs)
-    currentDiscovered = eggs
+local function renderCleanRadar(eggsList)
+    currentDiscovered = eggsList or {}
     for _, child in ipairs(RadarListContainer:GetChildren()) do
         if child:IsA("Frame") then child:Destroy() end
     end
 
-    local query = Config.SearchQuery:lower()
-    local matched = 0
+    local q = (SearchBox.Text or ""):lower()
+    local shown = 0
 
-    for _, e in ipairs(eggs) do
-        local matchesSearch = (query == "") or e.Name:lower():find(query, 1, true) or e.Rarity:lower():find(query, 1, true)
-        if matchesSearch then
-            matched = matched + 1
+    for i, egg in ipairs(currentDiscovered) do
+        local matches = (q == "") or egg.Name:lower():find(q, 1, true) or egg.Rarity:lower():find(q, 1, true)
+        if matches and shown < 30 then
+            shown = shown + 1
+
             local row = Instance.new("Frame")
-            row.Size = UDim2.new(1, 0, 0, 48)
+            row.Size = UDim2.new(1, 0, 0, 36)
             row.BackgroundColor3 = C_CARD
             row.BorderSizePixel = 0
             row.Parent = RadarListContainer
-            addCorner(row, 4)
+            addCorner(row, 6)
             addStroke(row, C_BORDER, 1)
 
-            local rColor = RarityColors[e.Rarity:upper()] or C_BLUE
-
+            -- Badge de Raridade Colorido
+            local color = RarityColors[egg.Rarity:upper()] or C_CYAN
             local badge = Instance.new("TextLabel")
-            badge.Size = UDim2.new(0, 70, 0, 16)
-            badge.Position = UDim2.new(0, 8, 0, 6)
-            badge.BackgroundColor3 = rColor
-            badge.Text = e.Rarity:upper()
+            badge.Size = UDim2.new(0, 68, 0, 20)
+            badge.Position = UDim2.new(0, 8, 0.5, -10)
+            badge.BackgroundColor3 = color
+            badge.Text = egg.Rarity
             badge.Font = Enum.Font.GothamBold
             badge.TextSize = 8
-            badge.TextColor3 = Color3.fromRGB(11, 15, 25)
+            badge.TextColor3 = Color3.fromRGB(15, 23, 42)
             badge.Parent = row
-            addCorner(badge, 3)
+            addCorner(badge, 4)
 
+            -- Nome e Ilha do Ovo
             local nameLbl = Instance.new("TextLabel")
-            nameLbl.Size = UDim2.new(1, -250, 0, 16)
-            nameLbl.Position = UDim2.new(0, 84, 0, 6)
+            nameLbl.Size = UDim2.new(1, -150, 1, 0)
+            nameLbl.Position = UDim2.new(0, 82, 0, 0)
             nameLbl.BackgroundTransparency = 1
-            nameLbl.Font = Enum.Font.GothamBold
-            nameLbl.TextSize = 10
+            nameLbl.Font = Enum.Font.GothamMedium
+            nameLbl.TextSize = 9
             nameLbl.TextColor3 = C_TEXT
             nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-            nameLbl.Text = e.Name
+            nameLbl.Text = string.format("%s (%dm)", egg.Name, math.floor(egg.Distance))
             nameLbl.Parent = row
 
-            local subLbl = Instance.new("TextLabel")
-            subLbl.Size = UDim2.new(1, -250, 0, 14)
-            subLbl.Position = UDim2.new(0, 8, 0, 26)
-            subLbl.BackgroundTransparency = 1
-            subLbl.Font = Enum.Font.Gotham
-            subLbl.TextSize = 9
-            subLbl.TextColor3 = C_MUTED
-            subLbl.TextXAlignment = Enum.TextXAlignment.Left
-            subLbl.Text = string.format("%dm | %s%s", math.floor(e.Distance), e.Zone, e.Prompt and " | Prompt Ativo" or "")
-            subLbl.Parent = row
+            -- Botão Ir
+            local goBtn = Instance.new("TextButton")
+            goBtn.Size = UDim2.new(0, 52, 0, 22)
+            goBtn.Position = UDim2.new(1, -58, 0.5, -11)
+            goBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+            goBtn.Text = "IR"
+            goBtn.Font = Enum.Font.GothamBold
+            goBtn.TextSize = 9
+            goBtn.TextColor3 = C_CYAN
+            goBtn.Parent = row
+            addCorner(goBtn, 4)
+            addStroke(goBtn, C_BORDER, 1)
 
-            -- Botão 1: Copiar Posição
-            local copyBtn = Instance.new("TextButton")
-            copyBtn.Size = UDim2.new(0, 68, 0, 22)
-            copyBtn.Position = UDim2.new(1, -156, 0, 13)
-            copyBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
-            copyBtn.Text = "COPIAR POS"
-            copyBtn.Font = Enum.Font.GothamBold
-            copyBtn.TextSize = 8
-            copyBtn.TextColor3 = C_TEXT
-            copyBtn.Parent = row
-            addCorner(copyBtn, 4)
-
-            copyBtn.MouseButton1Click:Connect(function()
-                local cStr = string.format("Vector3.new(%.1f, %.1f, %.1f)", e.Position.X, e.Position.Y, e.Position.Z)
-                pcall(function() if setclipboard then setclipboard(cStr) end end)
-                copyBtn.Text = "COPIADO!"
-                task.delay(1, function() copyBtn.Text = "COPIAR POS" end)
-            end)
-
-            -- Botão 2: Ir até o Ovo (Voo Direto no Solo)
-            local gotoBtn = Instance.new("TextButton")
-            gotoBtn.Size = UDim2.new(0, 78, 0, 22)
-            gotoBtn.Position = UDim2.new(1, -82, 0, 13)
-            gotoBtn.BackgroundColor3 = C_BLUE_DARK
-            gotoBtn.Text = "IR ATE OVO"
-            gotoBtn.Font = Enum.Font.GothamBold
-            gotoBtn.TextSize = 9
-            gotoBtn.TextColor3 = C_TEXT
-            gotoBtn.Parent = row
-            addCorner(gotoBtn, 4)
-
-            gotoBtn.MouseButton1Click:Connect(function()
+            goBtn.MouseButton1Click:Connect(function()
                 task.spawn(function()
-                    addLog("MOVIMENTO", "Iniciando deslocamento direto até " .. e.Name .. " (" .. math.floor(e.Distance) .. " studs)...")
-                    local ok = movePlayerDirect(e.Position, Config.MoveSpeed)
-                    if ok then
-                        addLog("MOVIMENTO", "Chegou ao ovo! Interagindo com o prompt...")
-                        if e.Prompt then triggerPrompt(e.Prompt) end
-                    else
-                        addLog("MOVIMENTO", "Deslocamento finalizado.")
-                    end
+                    addLog("MOVIMENTO", "Indo até: " .. egg.Name)
+                    movePlayerDirect(egg.Position, Config.MoveSpeed)
                 end)
             end)
         end
     end
-
-    StatusLabel.Text = string.format("Monitorando %d ovos no mapa (%d exibidos pelo filtro).", #currentDiscovered, matched)
 end
 
-local function executeRadarScan()
-    StatusLabel.Text = "Executando varredura profunda no Workspace..."
+local function executeCleanRadarScan()
     local eggs = scanAllEggs()
-    renderRadarList(eggs)
-    addLog("RADAR", string.format("Varredura concluída. %d ovos identificados.", #eggs))
+    renderCleanRadar(eggs)
     updateESP()
 end
 
-RefreshBtn.MouseButton1Click:Connect(executeRadarScan)
-SearchInput:GetPropertyChangedSignal("Text"):Connect(function()
-    Config.SearchQuery = SearchInput.Text
-    renderRadarList(currentDiscovered)
+RadarRefreshBtn.MouseButton1Click:Connect(executeCleanRadarScan)
+SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+    renderCleanRadar(currentDiscovered)
 end)
 
-ToggleESPBtn.MouseButton1Click:Connect(function()
+ESPToggleBtn.MouseButton1Click:Connect(function()
     Config.ESPEnabled = not Config.ESPEnabled
-    ToggleESPBtn.BackgroundColor3 = Config.ESPEnabled and C_GREEN or Color3.fromRGB(30, 41, 59)
-    ToggleESPBtn.Text = Config.ESPEnabled and "ESP: ON" or "ESP: OFF"
+    ESPToggleBtn.BackgroundColor3 = Config.ESPEnabled and C_GREEN or Color3.fromRGB(30, 41, 59)
+    ESPToggleBtn.Text = Config.ESPEnabled and "ESP: ON" or "ESP: OFF"
     updateESP()
-    addLog("ESP", Config.ESPEnabled and "ESP ativado." or "ESP desativado.")
 end)
 
 --================================================================--
--- 2. ABA: INSPETOR E EXTRAÇÃO ESTRUTURAL
+-- 3. ABA: CONFIGURAÇÕES & UNLOAD DEFINITIVO
 --================================================================--
-local InspectorPage = createPage("Inspector")
-local DumpCard = createCard(InspectorPage, "INSPETOR DE ARQUIVOS E DADOS INTERNOS")
+local ConfigsPage = TabPages["Configurações"]
 
-local DumpDesc = Instance.new("TextLabel")
-DumpDesc.Size = UDim2.new(1, 0, 0, 36)
-DumpDesc.BackgroundTransparency = 1
-DumpDesc.Font = Enum.Font.Gotham
-DumpDesc.TextSize = 9
-DumpDesc.TextColor3 = C_MUTED
-DumpDesc.TextXAlignment = Enum.TextXAlignment.Left
-DumpDesc.TextWrapped = true
-DumpDesc.Text = "Exporta tabelas completas de ReplicatedStorage.Data (Assets com 118 Pets, Raridades, Áreas, Guardas), modelos em AssetModels e ClientRenderedAssets para ROUBE_UM_OVO_DUMP.txt."
-DumpDesc.Parent = DumpCard
+-- Toggle Travar Ilha
+local IslandLockCard = createCleanCard(ConfigsPage, 44)
+local IslandLockLabel = Instance.new("TextLabel")
+IslandLockLabel.Size = UDim2.new(1, -110, 1, 0)
+IslandLockLabel.Position = UDim2.new(0, 12, 0, 0)
+IslandLockLabel.BackgroundTransparency = 1
+IslandLockLabel.Font = Enum.Font.Gotham
+IslandLockLabel.TextSize = 10
+IslandLockLabel.TextColor3 = C_TEXT
+IslandLockLabel.TextXAlignment = Enum.TextXAlignment.Left
+IslandLockLabel.Text = "Travar na Ilha Atual (Segurança)"
+IslandLockLabel.Parent = IslandLockCard
 
-local DumpBtn = Instance.new("TextButton")
-DumpBtn.Size = UDim2.new(1, 0, 0, 28)
-DumpBtn.BackgroundColor3 = C_BLUE_DARK
-DumpBtn.Text = "EXPORTAR DUMP ESTRUTURAL COMPLETO (TXT)"
-DumpBtn.Font = Enum.Font.GothamBold
-DumpBtn.TextSize = 10
-DumpBtn.TextColor3 = C_TEXT
-DumpBtn.Parent = DumpCard
-addCorner(DumpBtn, 4)
+local IslandLockToggleBtn = Instance.new("TextButton")
+IslandLockToggleBtn.Size = UDim2.new(0, 90, 0, 26)
+IslandLockToggleBtn.Position = UDim2.new(1, -98, 0.5, -13)
+IslandLockToggleBtn.BackgroundColor3 = Config.LockCurrentIsland and C_GREEN or Color3.fromRGB(30, 41, 59)
+IslandLockToggleBtn.Text = Config.LockCurrentIsland and "LIGADO" or "DESLIGADO"
+IslandLockToggleBtn.Font = Enum.Font.GothamBold
+IslandLockToggleBtn.TextSize = 9
+IslandLockToggleBtn.TextColor3 = C_TEXT
+IslandLockToggleBtn.Parent = IslandLockCard
+addCorner(IslandLockToggleBtn, 5)
 
-local DumpStatus = Instance.new("TextLabel")
-DumpStatus.Size = UDim2.new(1, 0, 0, 16)
-DumpStatus.BackgroundTransparency = 1
-DumpStatus.Font = Enum.Font.Gotham
-DumpStatus.TextSize = 9
-DumpStatus.TextColor3 = C_GREEN
-DumpStatus.Text = ""
-DumpStatus.Parent = DumpCard
-
-DumpBtn.MouseButton1Click:Connect(function()
-    DumpBtn.Text = "GERANDO DUMP ESTRUTURAL..."
-    task.spawn(function()
-        local txt, count = dumpGameData()
-        DumpBtn.Text = "EXPORTAR DUMP ESTRUTURAL COMPLETO (TXT)"
-        DumpStatus.Text = string.format("Dump exportado com sucesso! (%d ovos mapeados)", count)
-        task.delay(4, function() DumpStatus.Text = "" end)
-    end)
-end)
-
---================================================================--
--- 3. ABA: AUTO-ROUBO
---================================================================--
-local AutoStealPage = createPage("AutoSteal")
-local StealCard = createCard(AutoStealPage, "CONTROLE DO AUTO-ROUBO")
-
-local SetBaseBtn = Instance.new("TextButton")
-SetBaseBtn.Size = UDim2.new(1, 0, 0, 26)
-SetBaseBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
-SetBaseBtn.Text = "FIXAR POSIÇÃO ATUAL COMO BASE (PLOT)"
-SetBaseBtn.Font = Enum.Font.GothamBold
-SetBaseBtn.TextSize = 9
-SetBaseBtn.TextColor3 = C_TEXT
-SetBaseBtn.Parent = StealCard
-addCorner(SetBaseBtn, 4)
-
-local BaseStatus = Instance.new("TextLabel")
-BaseStatus.Size = UDim2.new(1, 0, 0, 16)
-BaseStatus.BackgroundTransparency = 1
-BaseStatus.Font = Enum.Font.Gotham
-BaseStatus.TextSize = 9
-BaseStatus.TextColor3 = C_MUTED
-BaseStatus.TextXAlignment = Enum.TextXAlignment.Left
-BaseStatus.Text = "Nenhuma base fixada (usará spawn inicial automaticamente)."
-BaseStatus.Parent = StealCard
-
-SetBaseBtn.MouseButton1Click:Connect(function()
-    local hrp = getHRP()
-    if hrp then
-        State.BaseCFrame = hrp.CFrame
-        BaseStatus.Text = string.format("Base fixada em: (%.1f, %.1f, %.1f)", hrp.Position.X, hrp.Position.Y, hrp.Position.Z)
-        BaseStatus.TextColor3 = C_GREEN
-        addLog("BASE", "Base registrada: " .. BaseStatus.Text)
-    end
-end)
-
-local MethodToggleBtn = Instance.new("TextButton")
-MethodToggleBtn.Size = UDim2.new(1, 0, 0, 26)
-MethodToggleBtn.BackgroundColor3 = (Config.StealMethod == "RagdollTP") and Color3.fromRGB(88, 28, 135) or Color3.fromRGB(30, 41, 59)
-MethodToggleBtn.Text = (Config.StealMethod == "RagdollTP") and "MÉTODO: RAGDOLL TP GALINHA (BYPASS ANTI-CHEAT)" or "MÉTODO: VOO DIRETO NO SOLO (ORIGINAL)"
-MethodToggleBtn.Font = Enum.Font.GothamBold
-MethodToggleBtn.TextSize = 9
-MethodToggleBtn.TextColor3 = C_TEXT
-MethodToggleBtn.Parent = StealCard
-addCorner(MethodToggleBtn, 4)
-
-MethodToggleBtn.MouseButton1Click:Connect(function()
-    if Config.StealMethod == "RagdollTP" then
-        Config.StealMethod = "VooDireto"
-        MethodToggleBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
-        MethodToggleBtn.Text = "MÉTODO: VOO DIRETO NO SOLO (ORIGINAL)"
-    else
-        Config.StealMethod = "RagdollTP"
-        MethodToggleBtn.BackgroundColor3 = Color3.fromRGB(88, 28, 135)
-        MethodToggleBtn.Text = "MÉTODO: RAGDOLL TP GALINHA (BYPASS ANTI-CHEAT)"
-    end
-    addLog("CONFIG", "Método de roubo alterado para: " .. Config.StealMethod)
-end)
-
-local ToggleStealBtn = Instance.new("TextButton")
-ToggleStealBtn.Size = UDim2.new(1, 0, 0, 32)
-ToggleStealBtn.BackgroundColor3 = Config.AutoStealEnabled and C_GREEN or C_BLUE_DARK
-ToggleStealBtn.Text = Config.AutoStealEnabled and "DESATIVAR AUTO-ROUBO" or "ATIVAR AUTO-ROUBO"
-ToggleStealBtn.Font = Enum.Font.GothamBold
-ToggleStealBtn.TextSize = 11
-ToggleStealBtn.TextColor3 = C_TEXT
-ToggleStealBtn.Parent = StealCard
-addCorner(ToggleStealBtn, 4)
-
-local StealInfoCard = createCard(AutoStealPage, "ESTATÍSTICAS DO CICLO ATUAL")
-local StealStatusLabel = Instance.new("TextLabel")
-StealStatusLabel.Size = UDim2.new(1, 0, 0, 44)
-StealStatusLabel.BackgroundTransparency = 1
-StealStatusLabel.Font = Enum.Font.Gotham
-StealStatusLabel.TextSize = 9
-StealStatusLabel.TextColor3 = C_MUTED
-StealStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-StealStatusLabel.TextWrapped = true
-StealStatusLabel.Text = "Ciclo: Desativado\nAlvo Atual: Nenhum\nMétodo: Solo na Ida / Voo Alto na Volta à Base"
-StealStatusLabel.Parent = StealInfoCard
-
--- 8.5. MECÂNICA DE RAGDOLL TP DA GALINHA (BYPASS DE ANTI-CHEAT VIA FÍSICA)
-local function findForestGuard()
-    -- 1. Buscar no Workspace por Modelos contendo Guard, Chicken ou Galinha
-    for _, obj in ipairs(Services.Workspace:GetChildren()) do
-        if obj:IsA("Model") then
-            local low = obj.Name:lower()
-            if (low:find("guard") or low:find("chicken") or low:find("forest") or low:find("galinha"))
-                and obj ~= Services.Workspace:FindFirstChild("_Guards") then
-                local p = getPositionOf(obj)
-                if p and (p - Vector3.new(598, 68, -328)).Magnitude < 160 then
-                    return obj, p
-                end
-            end
-        end
-    end
-    -- 2. Buscar na pasta _Guards se ativa
-    local gFolder = Services.Workspace:FindFirstChild("_Guards")
-    if gFolder then
-        for _, g in ipairs(gFolder:GetChildren()) do
-            local low = g.Name:lower()
-            if low:find("forest") or low:find("chicken") or low:find("galinha") then
-                local p = getPositionOf(g)
-                if p then return g, p end
-            end
-        end
-    end
-    -- 3. Coordenadas exatas do Ninho da Galinha da Ilha 1 (Forest Guard)
-    return nil, Vector3.new(598.0, 68.0, -328.0)
-end
-
-local function isPlayerInRagdoll()
-    local char = getChar()
-    if not char then return false end
-    local hum = getHum()
-    if hum then
-        local state = hum:GetState()
-        if state == Enum.HumanoidStateType.Ragdoll or state == Enum.HumanoidStateType.PlatformStanding or hum.PlatformStand then
-            return true
-        end
-    end
-    local lpRag = LocalPlayer:GetAttribute("RagdollEndTime") or LocalPlayer:GetAttribute("IsRagdoll") or LocalPlayer:GetAttribute("Ragdoll")
-    if lpRag and (type(lpRag) == "boolean" and lpRag or type(lpRag) == "number" and lpRag > 0) then
-        return true
-    end
-    local charRag = char:GetAttribute("RagdollEndTime") or char:GetAttribute("IsRagdoll") or char:GetAttribute("Ragdoll")
-    if charRag and (type(charRag) == "boolean" and charRag or type(charRag) == "number" and charRag > 0) then
-        return true
-    end
-    if char:FindFirstChildWhichIsA("BallSocketConstraint", true) then
-        return true
-    end
-    return false
-end
-
-local function executeRagdollSteal(target)
-    if not target or not target.Position then return false end
-    local myHrp = getHRP()
-    if not myHrp or State.IsUnloaded then return false end
-
-    local baseCF = State.BaseCFrame or myHrp.CFrame
-    local targetPos = target.Position
-
-    addLog("RAGDOLL", "Iniciando bypass via Ragdoll TP da Galinha...")
-    addLog("RAGDOLL", string.format("Alvo prioritário: %s [%s] (%d studs).", target.Name, target.Rarity, math.floor(target.Distance)))
-
-    -- 1. Ir até a Galinha da Floresta para receber o golpe
-    local guardObj, guardPos = findForestGuard()
-    addLog("RAGDOLL", string.format("Teleportando ao Ninho da Galinha em (%.1f, %.1f, %.1f)...", guardPos.X, guardPos.Y, guardPos.Z))
-    myHrp.CFrame = CFrame.new(guardPos + Vector3.new(0, 1.0, 0))
-    task.wait(0.12)
-
-    -- 2. Aguardar confirmação de Ragdoll (máximo 1.6s)
-    local ragdollActive = false
-    local t0 = tick()
-    while tick() - t0 < 1.6 do
-        if State.IsUnloaded then return false end
-        if isPlayerInRagdoll() then
-            ragdollActive = true
-            break
-        end
-        if guardObj then
-            local gP = getPositionOf(guardObj)
-            if gP then
-                myHrp.CFrame = CFrame.new(gP + Vector3.new(math.random(-1, 1) * 0.4, 0.4, math.random(-1, 1) * 0.4))
-            end
-        end
-        task.wait(0.08)
-    end
-
-    if ragdollActive then
-        addLog("RAGDOLL", "Ragdoll ativo! Anti-cheat suspenso pelo servidor. Disparando salto instantâneo...")
-    else
-        addLog("RAGDOLL", "Tempo limite de hit atingido. Executando salto rápido sincronizado...")
-    end
-
-    -- 3. Teleporte instantâneo para o Ovo Alvo
-    myHrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 1.8, 0))
-    task.wait(0.05)
-
-    -- 4. Disparo do ProximityPrompt
-    local pInstance = target.Prompt or (target.Instance and target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true))
-    if pInstance then
-        pcall(function()
-            if fireproximityprompt then
-                fireproximityprompt(pInstance, 0)
-                fireproximityprompt(pInstance, 1)
-            else
-                triggerPrompt(pInstance)
-            end
-        end)
-    end
-    task.wait(0.06)
-
-    -- 5. Teleporte instantâneo de volta à Base na mesma janela de ragdoll
-    myHrp.CFrame = baseCF + Vector3.new(0, 2.5, 0)
-    addLog("RAGDOLL", "Retornou à base instantaneamente!")
-
-    -- 6. Aguardar o depósito automático no plot
-    addLog("BASE", "Na base! Aguardando o jogo depositar o ovo no plot...")
-    task.wait(Config.AutoDepositWait)
-    return true
-end
-
--- Função do Ciclo de Roubo
-local function runStealCycle()
-    if State.IsExecutingSteal or not Config.AutoStealEnabled then return end
-    State.IsExecutingSteal = true
-
-    local myHrp = getHRP()
-    if not myHrp then
-        State.IsExecutingSteal = false
-        return
-    end
-
-    if not State.BaseCFrame then
-        State.BaseCFrame = myHrp.CFrame
-        BaseStatus.Text = string.format("Base automática: (%.1f, %.1f, %.1f)", myHrp.Position.X, myHrp.Position.Y, myHrp.Position.Z)
-        BaseStatus.TextColor3 = C_GREEN
-    end
-    local basePos = State.BaseCFrame.Position
-
-    -- 1. Se já está com ovo na mão, voltar pelo alto à base imediatamente
-    local holding, heldName = isHoldingEgg()
-    if holding then
-        StealStatusLabel.Text = "Ciclo: Ovo em mãos (" .. tostring(heldName) .. ")\nRetornando à base com voo alto seguro..."
-        addLog("BASE", "Ovo detectado em mãos (" .. tostring(heldName) .. ")! Retornando à base...")
-        movePlayerOverhead(basePos + Vector3.new(0, 2.5, 0), Config.MoveSpeed)
-        addLog("BASE", "Na base! Aguardando o jogo depositar o ovo no plot...")
-        task.wait(Config.AutoDepositWait)
-        State.IsExecutingSteal = false
-        return
-    end
-
-    -- 2. Buscar ovos e filtrar por Ilha Atual e Distância Segura
-    local eggs = scanAllEggs()
-    local validTargets = {}
-
-    for _, e in ipairs(eggs) do
-        if not (Config.ShowOnlyUnowned and e.IsMyPlot) then
-            if e.Distance <= Config.MaxStealDistance then
-                if isEggInMyIsland(e.Position) then
-                    table.insert(validTargets, e)
-                end
-            end
-        end
-    end
-
-    if #validTargets == 0 then
-        StealStatusLabel.Text = "Ciclo: Aguardando ovos na ilha atual...\nAlvo Atual: Nenhum no alcance seguro (" .. tostring(Config.MaxStealDistance) .. " studs)"
-        task.wait(1.5)
-        State.IsExecutingSteal = false
-        return
-    end
-
-    local target = validTargets[1]
-    State.CurrentTargetEgg = target
-    StealStatusLabel.Text = string.format("Ciclo: Roubando...\nAlvo: %s [%s] (%dm)\nIndo em linha reta no solo...", target.Name, target.Rarity, math.floor(target.Distance))
-    addLog("ROUBO", "Indo até o alvo: " .. target.Name .. " (" .. math.floor(target.Distance) .. " studs)...")
-
-    -- 3. Execução de acordo com o Método Escolhido (Ragdoll TP vs Voo Direto)
-    if Config.StealMethod == "RagdollTP" then
-        StealStatusLabel.Text = string.format("Ciclo: Roubando via Ragdoll TP...\nAlvo: %s [%s] (%dm)", target.Name, target.Rarity, math.floor(target.Distance))
-        executeRagdollSteal(target)
-        State.IsExecutingSteal = false
-        return
-    end
-
-    -- Modo Voo Direto Clássico:
-    -- 3. Deslocamento direto no solo até o ovo
-    local arrived = movePlayerDirect(target.Position, Config.MoveSpeed)
-    if not arrived then
-        State.IsExecutingSteal = false
-        return
-    end
-
-    -- 4. Coletar Ovo via ProximityPrompt
-    addLog("ROUBO", "Chegou ao ovo! Coletando...")
-    local pInstance = target.Prompt or (target.Instance and target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true))
-
-    local pickedUp = false
-    for _ = 1, 6 do
-        if isHoldingEgg() then
-            pickedUp = true
-            break
-        end
-        if pInstance and pInstance.Parent then
-            triggerPrompt(pInstance)
-        end
-        task.wait(0.12)
-        if not pInstance or not pInstance.Parent or not pInstance.Enabled then
-            pickedUp = true
-            break
-        end
-    end
-
-    -- 5. Retorno à Base pelo alto
-    if pickedUp or isHoldingEgg() then
-        addLog("ROUBO", "Ovo coletado com sucesso! Retornando à base com voo alto...")
-        StealStatusLabel.Text = "Ciclo: Ovo coletado!\nRetornando à base pelo alto..."
-        movePlayerOverhead(basePos + Vector3.new(0, 2.5, 0), Config.MoveSpeed)
-        addLog("BASE", "Na base! Aguardando depósito...")
-        task.wait(Config.AutoDepositWait)
-    else
-        addLog("ROUBO", "Ovo protegido ou em recarga. Buscando próximo alvo...")
-        task.wait(0.4)
-    end
-
-    State.IsExecutingSteal = false
-end
-
-ToggleStealBtn.MouseButton1Click:Connect(function()
-    Config.AutoStealEnabled = not Config.AutoStealEnabled
-    ToggleStealBtn.BackgroundColor3 = Config.AutoStealEnabled and C_GREEN or C_BLUE_DARK
-    ToggleStealBtn.Text = Config.AutoStealEnabled and "DESATIVAR AUTO-ROUBO" or "ATIVAR AUTO-ROUBO"
-    addLog("ROUBO", Config.AutoStealEnabled and "Ciclo de auto-roubo ativado." or "Ciclo de auto-roubo desativado.")
-end)
-
-task.spawn(function()
-    while true do
-        if State.IsUnloaded then break end
-        if Config.AutoStealEnabled and not State.IsExecutingSteal then
-            runStealCycle()
-        end
-        task.wait(0.2)
-    end
-end)
-
---================================================================--
--- 4. ABA: CONFIGURAÇÕES
---================================================================--
-local ConfigsPage = createPage("Configs")
-local LimitsCard = createCard(ConfigsPage, "LIMITES DE SEGURANÇA E MOVIMENTAÇÃO")
-
--- Alternador: Travar Ilha Atual (LockCurrentIsland)
-local IslandLockBtn = Instance.new("TextButton")
-IslandLockBtn.Size = UDim2.new(1, 0, 0, 26)
-IslandLockBtn.BackgroundColor3 = Config.LockCurrentIsland and C_GREEN or Color3.fromRGB(30, 41, 59)
-IslandLockBtn.Text = Config.LockCurrentIsland and "TRAVAR ILHA ATUAL: LIGADO (PROTEÇÃO ANTI-MORTE)" or "TRAVAR ILHA ATUAL: DESLIGADO"
-IslandLockBtn.Font = Enum.Font.GothamBold
-IslandLockBtn.TextSize = 9
-IslandLockBtn.TextColor3 = C_TEXT
-IslandLockBtn.Parent = LimitsCard
-addCorner(IslandLockBtn, 4)
-
-IslandLockBtn.MouseButton1Click:Connect(function()
+IslandLockToggleBtn.MouseButton1Click:Connect(function()
     Config.LockCurrentIsland = not Config.LockCurrentIsland
-    IslandLockBtn.BackgroundColor3 = Config.LockCurrentIsland and C_GREEN or Color3.fromRGB(30, 41, 59)
-    IslandLockBtn.Text = Config.LockCurrentIsland and "TRAVAR ILHA ATUAL: LIGADO (PROTEÇÃO ANTI-MORTE)" or "TRAVAR ILHA ATUAL: DESLIGADO"
-    addLog("CONFIG", "Trava de ilha atual definida para: " .. tostring(Config.LockCurrentIsland))
+    IslandLockToggleBtn.BackgroundColor3 = Config.LockCurrentIsland and C_GREEN or Color3.fromRGB(30, 41, 59)
+    IslandLockToggleBtn.Text = Config.LockCurrentIsland and "LIGADO" or "DESLIGADO"
 end)
 
--- Slider: Alcance Seguro
-local DistSliderCard = createCard(ConfigsPage, "ALCANCE SEGURO MÁXIMO")
-local DistLabel = Instance.new("TextLabel")
-DistLabel.Size = UDim2.new(1, 0, 0, 16)
-DistLabel.BackgroundTransparency = 1
-DistLabel.Font = Enum.Font.Gotham
-DistLabel.TextSize = 9
-DistLabel.TextColor3 = C_TEXT
-DistLabel.Text = string.format("Alcance Máximo: %d studs (Recomendado: 350)", Config.MaxStealDistance)
-DistLabel.Parent = DistSliderCard
-
-local DistSliderBg = Instance.new("Frame")
-DistSliderBg.Size = UDim2.new(1, 0, 0, 12)
-DistSliderBg.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
-DistSliderBg.Parent = DistSliderCard
-addCorner(DistSliderBg, 6)
-
-local DistSliderFill = Instance.new("Frame")
-DistSliderFill.Size = UDim2.new(Config.MaxStealDistance / 1500, 0, 1, 0)
-DistSliderFill.BackgroundColor3 = C_BLUE
-DistSliderFill.BorderSizePixel = 0
-DistSliderFill.Parent = DistSliderBg
-addCorner(DistSliderFill, 6)
-
-local DistTrigger = Instance.new("TextButton")
-DistTrigger.Size = UDim2.new(1, 0, 1, 0)
-DistTrigger.BackgroundTransparency = 1
-DistTrigger.Text = ""
-DistTrigger.Parent = DistSliderBg
-
-local isDraggingDist = false
-DistTrigger.MouseButton1Down:Connect(function() isDraggingDist = true end)
-table.insert(ScriptConnections, Services.UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        isDraggingDist = false
-    end
-end))
-
-table.insert(ScriptConnections, Services.RunService.RenderStepped:Connect(function()
-    if isDraggingDist then
-        local mousePos = Services.UserInputService:GetMouseLocation().X
-        local barPos = DistSliderBg.AbsolutePosition.X
-        local barSize = DistSliderBg.AbsoluteSize.X
-        local pct = math.clamp((mousePos - barPos) / barSize, 0.05, 1)
-        DistSliderFill.Size = UDim2.new(pct, 0, 1, 0)
-        local val = math.floor(pct * 1500)
-        Config.MaxStealDistance = val
-        DistLabel.Text = string.format("Alcance Máximo: %d studs", val)
-    end
-end))
-
--- Slider: Velocidade de Voo
-local SpeedSliderCard = createCard(ConfigsPage, "VELOCIDADE DE DESLOCAMENTO")
+-- Slider Velocidade de Deslocamento
+local SpeedCard = createCleanCard(ConfigsPage, 48)
 local SpeedLabel = Instance.new("TextLabel")
-SpeedLabel.Size = UDim2.new(1, 0, 0, 16)
+SpeedLabel.Size = UDim2.new(1, -20, 0, 16)
+SpeedLabel.Position = UDim2.new(0, 10, 0, 6)
 SpeedLabel.BackgroundTransparency = 1
 SpeedLabel.Font = Enum.Font.Gotham
 SpeedLabel.TextSize = 9
 SpeedLabel.TextColor3 = C_TEXT
+SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
 SpeedLabel.Text = string.format("Velocidade: %d studs/s", Config.MoveSpeed)
-SpeedLabel.Parent = SpeedSliderCard
+SpeedLabel.Parent = SpeedCard
 
-local SpeedSliderBg = Instance.new("Frame")
-SpeedSliderBg.Size = UDim2.new(1, 0, 0, 12)
-SpeedSliderBg.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
-SpeedSliderBg.Parent = SpeedSliderCard
-addCorner(SpeedSliderBg, 6)
+local SpeedBg = Instance.new("Frame")
+SpeedBg.Size = UDim2.new(1, -20, 0, 10)
+SpeedBg.Position = UDim2.new(0, 10, 0, 28)
+SpeedBg.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
+SpeedBg.Parent = SpeedCard
+addCorner(SpeedBg, 5)
 
-local SpeedSliderFill = Instance.new("Frame")
-SpeedSliderFill.Size = UDim2.new(Config.MoveSpeed / 600, 0, 1, 0)
-SpeedSliderFill.BackgroundColor3 = C_BLUE
-SpeedSliderFill.BorderSizePixel = 0
-SpeedSliderFill.Parent = SpeedSliderBg
-addCorner(SpeedSliderFill, 6)
+local SpeedFill = Instance.new("Frame")
+SpeedFill.Size = UDim2.new(Config.MoveSpeed / 600, 0, 1, 0)
+SpeedFill.BackgroundColor3 = C_CYAN
+SpeedFill.BorderSizePixel = 0
+SpeedFill.Parent = SpeedBg
+addCorner(SpeedFill, 5)
 
-local SpeedTrigger = Instance.new("TextButton")
-SpeedTrigger.Size = UDim2.new(1, 0, 1, 0)
-SpeedTrigger.BackgroundTransparency = 1
-SpeedTrigger.Text = ""
-SpeedTrigger.Parent = SpeedSliderBg
+local SpeedBtn = Instance.new("TextButton")
+SpeedBtn.Size = UDim2.new(1, 0, 1, 0)
+SpeedBtn.BackgroundTransparency = 1
+SpeedBtn.Text = ""
+SpeedBtn.Parent = SpeedBg
 
-local isDraggingSpeed = false
-SpeedTrigger.MouseButton1Down:Connect(function() isDraggingSpeed = true end)
-table.insert(ScriptConnections, Services.UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        isDraggingSpeed = false
+local isDraggingSpd = false
+SpeedBtn.MouseButton1Down:Connect(function() isDraggingSpd = true end)
+table.insert(ScriptConnections, Services.UserInputService.InputEnded:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+        isDraggingSpd = false
     end
 end))
-
 table.insert(ScriptConnections, Services.RunService.RenderStepped:Connect(function()
-    if isDraggingSpeed then
-        local mousePos = Services.UserInputService:GetMouseLocation().X
-        local barPos = SpeedSliderBg.AbsolutePosition.X
-        local barSize = SpeedSliderBg.AbsoluteSize.X
-        local pct = math.clamp((mousePos - barPos) / barSize, 0.1, 1)
-        SpeedSliderFill.Size = UDim2.new(pct, 0, 1, 0)
+    if isDraggingSpd then
+        local mX = Services.UserInputService:GetMouseLocation().X
+        local bX = SpeedBg.AbsolutePosition.X
+        local bW = SpeedBg.AbsoluteSize.X
+        local pct = math.clamp((mX - bX) / bW, 0.1, 1)
+        SpeedFill.Size = UDim2.new(pct, 0, 1, 0)
         local val = math.floor(pct * 600)
         Config.MoveSpeed = val
         SpeedLabel.Text = string.format("Velocidade: %d studs/s", val)
     end
 end))
 
--- Card de Descarregamento Definitivo (Unload)
-local UnloadCard = createCard(ConfigsPage, "FINALIZAR / DESCARREGAR SCRIPT")
-local UnloadDesc = Instance.new("TextLabel")
-UnloadDesc.Size = UDim2.new(1, 0, 0, 24)
-UnloadDesc.BackgroundTransparency = 1
-UnloadDesc.Font = Enum.Font.Gotham
-UnloadDesc.TextSize = 9
-UnloadDesc.TextColor3 = C_MUTED
-UnloadDesc.TextXAlignment = Enum.TextXAlignment.Left
-UnloadDesc.TextWrapped = true
-UnloadDesc.Text = "Interrompe todas as automações, desconecta eventos, remove o ESP e fecha o menu."
-UnloadDesc.Parent = UnloadCard
+-- Card de Descarregamento Definitivo (UNLOAD)
+local UnloadFullCard = createCleanCard(ConfigsPage, 50)
+local UnloadBtnFull = Instance.new("TextButton")
+UnloadBtnFull.Size = UDim2.new(1, -20, 0, 32)
+UnloadBtnFull.Position = UDim2.new(0, 10, 0.5, -16)
+UnloadBtnFull.BackgroundColor3 = Color3.fromRGB(185, 28, 28)
+UnloadBtnFull.Text = "DESCARREGAR SCRIPT COMPLETAMENTE (UNLOAD)"
+UnloadBtnFull.Font = Enum.Font.GothamBold
+UnloadBtnFull.TextSize = 10
+UnloadBtnFull.TextColor3 = C_TEXT
+UnloadBtnFull.Parent = UnloadFullCard
+addCorner(UnloadBtnFull, 6)
+addStroke(UnloadBtnFull, C_RED, 1)
 
-local FullUnloadBtn = Instance.new("TextButton")
-FullUnloadBtn.Size = UDim2.new(1, 0, 0, 30)
-FullUnloadBtn.BackgroundColor3 = Color3.fromRGB(185, 28, 28)
-FullUnloadBtn.Text = "DESCARREGAR SCRIPT COMPLETAMENTE (UNLOAD)"
-FullUnloadBtn.Font = Enum.Font.GothamBold
-FullUnloadBtn.TextSize = 10
-FullUnloadBtn.TextColor3 = C_TEXT
-FullUnloadBtn.Parent = UnloadCard
-addCorner(FullUnloadBtn, 4)
-addStroke(FullUnloadBtn, C_RED, 1)
-
-FullUnloadBtn.MouseButton1Click:Connect(function()
+UnloadBtnFull.MouseButton1Click:Connect(function()
     unloadScript()
 end)
 
---================================================================--
--- 5. ABA: REGISTROS (LOGS EM TEMPO REAL)
---================================================================--
-local LogsPage = createPage("Logs")
-local LogCard = createCard(LogsPage, "CONSOLE DE EVENTOS EM TEMPO REAL")
-
-local LogTextLabel = Instance.new("TextLabel")
-LogTextLabel.Size = UDim2.new(1, 0, 0, 0)
-LogTextLabel.AutomaticSize = Enum.AutomaticSize.Y
-LogTextLabel.BackgroundTransparency = 1
-LogTextLabel.Font = Enum.Font.Code
-LogTextLabel.TextSize = 8
-LogTextLabel.TextColor3 = C_TEXT
-LogTextLabel.TextXAlignment = Enum.TextXAlignment.Left
-LogTextLabel.TextYAlignment = Enum.TextYAlignment.Top
-LogTextLabel.TextWrapped = true
-LogTextLabel.Text = "Registros iniciados."
-LogTextLabel.Parent = LogCard
-
-_G.UpdateLogConsole = function()
-    pcall(function()
-        LogTextLabel.Text = table.concat(State.Logs, "\n")
-    end)
+-- Atualização de Status em Tempo Real no Loop
+local function updateTargetCardText(target)
+    if target then
+        TargetInfoLabel.Text = string.format("[%s] %s (%dm)", target.Rarity, target.Name, math.floor(target.Distance))
+    else
+        TargetInfoLabel.Text = "Nenhum ovo elegível encontrado."
+    end
 end
 
--- 13. Tecla de Atalho (LeftControl) e Botão Mobile (RAD)
+-- Substituir hook de status do ciclo
+local old_runStealCycle = runStealCycle
+runStealCycle = function()
+    local myHrp = getHRP()
+    if not myHrp or State.IsUnloaded then return end
+
+    if not State.BaseCFrame then
+        State.BaseCFrame = myHrp.CFrame
+        BaseLabel.Text = string.format("Base: (%.0f, %.0f, %.0f)", myHrp.Position.X, myHrp.Position.Y, myHrp.Position.Z)
+        BaseLabel.TextColor3 = C_GREEN
+    end
+
+    local holding, heldName = isHoldingEgg()
+    if holding then
+        StatusBadge.Text = "ENTREGANDO"
+        StatusBadge.TextColor3 = C_CYAN
+        TargetInfoLabel.Text = "Ovo em mãos! Entregando na base..."
+        movePlayerOverhead(State.BaseCFrame.Position + Vector3.new(0, 2.5, 0), Config.MoveSpeed)
+        task.wait(Config.AutoDepositWait)
+        return
+    end
+
+    local eggs = scanAllEggs()
+    local valid = {}
+    for _, e in ipairs(eggs) do
+        if not (Config.ShowOnlyUnowned and e.IsMyPlot) then
+            if e.Distance <= Config.MaxStealDistance then
+                if isEggInMyIsland(e.Position) then
+                    table.insert(valid, e)
+                end
+            end
+        end
+    end
+
+    if #valid == 0 then
+        updateTargetCardText(nil)
+        task.wait(1.2)
+        return
+    end
+
+    local target = valid[1]
+    updateTargetCardText(target)
+    StatusBadge.Text = "ROUBANDO"
+    StatusBadge.TextColor3 = C_GREEN
+
+    if Config.StealMethod == "RagdollTP" then
+        executeRagdollSteal(target)
+    else
+        local arrived = movePlayerDirect(target.Position, Config.MoveSpeed)
+        if arrived then
+            local pInst = target.Prompt or (target.Instance and target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true))
+            if pInst then triggerPrompt(pInst) end
+            task.wait(0.3)
+            movePlayerOverhead(State.BaseCFrame.Position + Vector3.new(0, 2.5, 0), Config.MoveSpeed)
+            task.wait(Config.AutoDepositWait)
+        end
+    end
+end
+
+-- Atalho LeftControl e Botão Mobile Minimalista
 table.insert(ScriptConnections, Services.UserInputService.InputBegan:Connect(function(input, gpe)
     if not gpe and input.KeyCode == Enum.KeyCode.LeftControl then
         MainFrame.Visible = not MainFrame.Visible
@@ -2501,24 +2179,25 @@ end))
 
 local MobileBtn = Instance.new("TextButton")
 MobileBtn.Name = "MobileToggleBtn"
-MobileBtn.Size = UDim2.new(0, 38, 0, 38)
+MobileBtn.Size = UDim2.new(0, 36, 0, 36)
 MobileBtn.Position = UDim2.new(0.02, 0, 0.45, 0)
-MobileBtn.BackgroundColor3 = C_PANEL
-MobileBtn.Text = "RAD"
+MobileBtn.BackgroundColor3 = C_TOPBAR
+MobileBtn.Text = "OVO"
 MobileBtn.Font = Enum.Font.GothamBold
-MobileBtn.TextSize = 10
-MobileBtn.TextColor3 = C_BLUE
+MobileBtn.TextSize = 9
+MobileBtn.TextColor3 = C_CYAN
 MobileBtn.Parent = ScreenGui
-addCorner(MobileBtn, 19)
-addStroke(MobileBtn, C_BLUE, 1)
+addCorner(MobileBtn, 18)
+addStroke(MobileBtn, C_CYAN, 1)
 MobileBtn.Draggable = true
 
 MobileBtn.MouseButton1Click:Connect(function()
     MainFrame.Visible = not MainFrame.Visible
 end)
 
--- Inicialização com primeira varredura após 1 segundo
-task.delay(1, function()
-    executeRadarScan()
-    addLog("SISTEMA", "Roube um Ovo v8.0 (Ragdoll TP & Unload) carregado com sucesso!")
+-- Inicialização Limpa
+task.delay(0.8, function()
+    if State.IsUnloaded then return end
+    executeCleanRadarScan()
+    addLog("SISTEMA", "Roube um Ovo v9.0 carregado!")
 end)
