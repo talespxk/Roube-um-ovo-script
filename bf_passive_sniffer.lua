@@ -1,6 +1,6 @@
 --[[
     ================================================================================
-    BF PASSIVE FLIGHT RECORDER & AUTO-STEAL SNIFFER (100% INDETECTÁVEL)
+    BF PASSIVE FLIGHT RECORDER & AUTO-STEAL SNIFFER (100% INDETECTÁVEL v2.0)
     ================================================================================
     SEGURANÇA TOTAL:
     - NÃO usa hookfunction (0% risco de Luarmor Tampering).
@@ -12,11 +12,8 @@
     2. Execute este script PRIMEIRO.
     3. Execute o seu BigFroot (bfloader).
     4. Ative o Auto Steal do BigFroot e deixe ele roubar 1 ou 2 ovos.
-    5. O Sniffer grava CADA MILISSEGUNDO do que o BigFroot faz:
-       - Para onde ele teleporta e coordenadas exatas
-       - Como ele toca na galinha (física ou colisão)
-       - Como ele pega o ovo (Prompt, HoldDuration, atrasos)
-       - Como ele entrega na base
+    5. O Sniffer grava CADA MILISSEGUNDO do que o BigFroot faz e gera um
+       RELATÓRIO RESUMIDO com todas as velocidades, atrasos e coordenadas exatas!
     6. Clique no botão [COPIAR LOG COMPLETO] na tela e envie aqui!
     ================================================================================
 ]]
@@ -35,16 +32,64 @@ local function logEvent(category, message, details)
     eventCount = eventCount + 1
     local elapsed = os.clock() - startTime
     local timeStr = string.format("[%06.3fs]", elapsed)
-    local line = string.format("%s [%-12s] %s %s", timeStr, category, message, details and ("| " .. details) or "")
+    local line = string.format("%s [%-14s] %s %s", timeStr, category, message, details and ("| " .. details) or "")
     table.insert(flightLogs, line)
-    if #flightLogs > 1000 then
+    if #flightLogs > 1200 then
         table.remove(flightLogs, 1)
     end
 end
 
-logEvent("SISTEMA", "Gravador de Voo Passivo iniciado!", "Aguardando carregamento do BigFroot...")
+logEvent("SISTEMA", "Gravador de Voo Passivo v2.0 iniciado!", "Aguardando carregamento do BigFroot...")
 
--- 1. MONITORAMENTO DE TELEPORTE, VELOCIDADE E FÍSICA DO PERSONAGEM
+--================================================================--
+-- RASTREADOR DE CICLO DE ROUBO COM CÁLCULO DE DELTAS EM TEMPO REAL
+--================================================================--
+local CycleTracker = {
+    CurrentPhase = "IDLE",
+    TimeChicken = 0,
+    TimeHit = 0,
+    TimeEgg = 0,
+    TimePrompt = 0,
+    TimeHeld = 0,
+    TimeBase = 0,
+    TimeDeposit = 0,
+    TargetEggName = "Nenhum",
+    EggOffset = Vector3.zero,
+    BasePos = Vector3.zero,
+    ChickenPos = Vector3.zero
+}
+
+local function printCycleReport()
+    local dHit = CycleTracker.TimeHit - CycleTracker.TimeChicken
+    local dEgg = CycleTracker.TimeEgg - CycleTracker.TimeHit
+    local dPrompt = CycleTracker.TimePrompt - CycleTracker.TimeEgg
+    local dHeld = CycleTracker.TimeHeld - CycleTracker.TimePrompt
+    local dBase = CycleTracker.TimeBase - CycleTracker.TimeHeld
+    local dDeposit = CycleTracker.TimeDeposit - CycleTracker.TimeBase
+    local totalTime = CycleTracker.TimeDeposit - CycleTracker.TimeChicken
+
+    local report = {
+        "==================================================",
+        "[RELATÓRIO CONSOLIDADO DO AUTO-STEAL DO BF]",
+        string.format("Alvo Roubado: %s", CycleTracker.TargetEggName),
+        string.format("1. Espera pelo Hit da Galinha: %.3fs (Pos: %.1f, %.1f, %.1f)", math.max(0, dHit), CycleTracker.ChickenPos.X, CycleTracker.ChickenPos.Y, CycleTracker.ChickenPos.Z),
+        string.format("2. Salto até o Ovo Alvo: %.3fs", math.max(0, dEgg)),
+        string.format("3. Atraso antes do Prompt: %.3fs", math.max(0, dPrompt)),
+        string.format("4. Tempo até o Ovo Acoplar: %.3fs", math.max(0, dHeld)),
+        string.format("5. Salto de Volta para a Base: %.3fs (Pos Base: %.1f, %.1f, %.1f)", math.max(0, dBase), CycleTracker.BasePos.X, CycleTracker.BasePos.Y, CycleTracker.BasePos.Z),
+        string.format("6. Tempo até o Depósito no Plot: %.3fs", math.max(0, dDeposit)),
+        string.format("TEMPO TOTAL DO CICLO COMPLETO: %.3fs", math.max(0, totalTime)),
+        "=================================================="
+    }
+
+    for _, rLine in ipairs(report) do
+        table.insert(flightLogs, rLine)
+    end
+end
+
+--================================================================--
+-- 1. MONITORAMENTO FÍSICO DO PERSONAGEM
+--================================================================--
 local lastPos = nil
 
 local function setupCharacterTracker(char)
@@ -59,46 +104,79 @@ local function setupCharacterTracker(char)
     hrp:GetPropertyChangedSignal("CFrame"):Connect(function()
         local curPos = hrp.Position
         local delta = (curPos - lastPos).Magnitude
-        if delta > 12.0 then
+
+        if delta > 10.0 then
             local vel = hrp.AssemblyLinearVelocity.Magnitude
             local stateName = hum:GetState().Name
+            local now = os.clock()
             
+            -- Verificar proximidade
             local nearby = "Espaco Aberto"
+            local isNearChicken = false
+            local isNearEgg = false
+            local isNearPlot = false
+
+            -- Galinha
             for _, obj in ipairs(Workspace:GetChildren()) do
                 if obj:IsA("Model") and (obj.Name:lower():find("guard") or obj.Name:lower():find("chicken") or obj.Name:lower():find("galinha")) then
                     local p = obj:GetPivot().Position
                     if (p - curPos).Magnitude < 25 then
-                        nearby = "Perto da Galinha: " .. obj.Name .. " (" .. string.format("%.1f", (p - curPos).Magnitude) .. " studs)"
+                        nearby = "Galinha: " .. obj.Name .. " (" .. string.format("%.1f", (p - curPos).Magnitude) .. " studs)"
+                        isNearChicken = true
+                        CycleTracker.ChickenPos = p
                         break
                     end
                 end
             end
-            if nearby == "Espaco Aberto" then
+
+            -- Ovo
+            if not isNearChicken then
                 local eggSlots = Workspace:FindFirstChild("AreaEggSlotsClient")
                 if eggSlots then
                     for _, slot in ipairs(eggSlots:GetChildren()) do
                         local sPos = slot:GetPivot().Position
-                        if (sPos - curPos).Magnitude < 15 then
-                            nearby = "Perto do Ovo: " .. slot.Name .. " (" .. string.format("%.1f", (sPos - curPos).Magnitude) .. " studs)"
-                            break
-                        end
-                    end
-                end
-            end
-            if nearby == "Espaco Aberto" then
-                local plots = Workspace:FindFirstChild("Plots")
-                if plots then
-                    for _, plot in ipairs(plots:GetChildren()) do
-                        local pPos = plot:GetPivot().Position
-                        if (pPos - curPos).Magnitude < 35 then
-                            nearby = "Perto do Plot: " .. plot.Name .. " (" .. string.format("%.1f", (pPos - curPos).Magnitude) .. " studs)"
+                        if (sPos - curPos).Magnitude < 18 then
+                            nearby = "Ovo: " .. slot.Name .. " (" .. string.format("%.1f", (sPos - curPos).Magnitude) .. " studs)"
+                            isNearEgg = true
+                            CycleTracker.TargetEggName = slot.Name
                             break
                         end
                     end
                 end
             end
 
-            logEvent("TELEPORTE", string.format("Salto de %.1f studs! Para: (%.1f, %.1f, %.1f)", delta, curPos.X, curPos.Y, curPos.Z),
+            -- Plot
+            if not isNearChicken and not isNearEgg then
+                local plots = Workspace:FindFirstChild("Plots")
+                if plots then
+                    for _, plot in ipairs(plots:GetChildren()) do
+                        local pPos = plot:GetPivot().Position
+                        if (pPos - curPos).Magnitude < 35 then
+                            nearby = "Plot: " .. plot.Name .. " (" .. string.format("%.1f", (pPos - curPos).Magnitude) .. " studs)"
+                            isNearPlot = true
+                            CycleTracker.BasePos = curPos
+                            break
+                        end
+                    end
+                end
+            end
+
+            -- Transições da Máquina de Estados do Roubo
+            if isNearChicken and CycleTracker.CurrentPhase == "IDLE" then
+                CycleTracker.CurrentPhase = "AT_CHICKEN"
+                CycleTracker.TimeChicken = now
+                logEvent("FASE_ROUBO", "[1/6] BF foi até a Galinha!", string.format("Aguardando hit... Pos: (%.1f, %.1f, %.1f)", curPos.X, curPos.Y, curPos.Z))
+            elseif isNearEgg and (CycleTracker.CurrentPhase == "HIT_DETECTED" or CycleTracker.CurrentPhase == "AT_CHICKEN") then
+                CycleTracker.CurrentPhase = "AT_EGG"
+                CycleTracker.TimeEgg = now
+                logEvent("FASE_ROUBO", "[3/6] BF saltou para o Ovo!", string.format("Alvo: %s | Salto de %.1f studs", CycleTracker.TargetEggName, delta))
+            elseif isNearPlot and (CycleTracker.CurrentPhase == "EGG_HELD" or CycleTracker.CurrentPhase == "AT_EGG") then
+                CycleTracker.CurrentPhase = "AT_BASE"
+                CycleTracker.TimeBase = now
+                logEvent("FASE_ROUBO", "[5/6] BF retornou para a Base!", string.format("Pos Entrega: (%.1f, %.1f, %.1f)", curPos.X, curPos.Y, curPos.Z))
+            end
+
+            logEvent("TELEPORTE", string.format("Salto de %.1f studs -> (%.1f, %.1f, %.1f)", delta, curPos.X, curPos.Y, curPos.Z),
                 string.format("Vel: %.1f | Estado: %s | %s", vel, stateName, nearby))
         end
         lastPos = curPos
@@ -106,19 +184,30 @@ local function setupCharacterTracker(char)
 
     hum.StateChanged:Connect(function(oldState, newState)
         local vel = hrp.AssemblyLinearVelocity.Magnitude
-        logEvent("ESTADO", string.format("Humanoid mudou de [%s] para [%s]", oldState.Name, newState.Name),
-            string.format("Velocidade: %.1f | Pos: (%.1f, %.1f, %.1f)", vel, hrp.Position.X, hrp.Position.Y, hrp.Position.Z))
+        local now = os.clock()
+
+        if newState == Enum.HumanoidStateType.Ragdoll or (newState == Enum.HumanoidStateType.PlatformStanding and vel > 25) then
+            if CycleTracker.CurrentPhase == "AT_CHICKEN" then
+                CycleTracker.CurrentPhase = "HIT_DETECTED"
+                CycleTracker.TimeHit = now
+                local deltaHit = now - CycleTracker.TimeChicken
+                logEvent("FASE_ROUBO", "[2/6] Hit/Ragdoll confirmado!", string.format("Tempo de reacao: %.3fs | Velocidade do golpe: %.1f", deltaHit, vel))
+            end
+        end
+
+        logEvent("ESTADO", string.format("Humanoid [%s -> %s]", oldState.Name, newState.Name),
+            string.format("Vel: %.1f | Pos: (%.1f, %.1f, %.1f)", vel, hrp.Position.X, hrp.Position.Y, hrp.Position.Z))
     end)
 
     hum:GetPropertyChangedSignal("PlatformStand"):Connect(function()
-        logEvent("FISICA", "PlatformStand alterado: " .. tostring(hum.PlatformStand))
+        logEvent("FISICA", "PlatformStand = " .. tostring(hum.PlatformStand))
     end)
 
     hrp.Touched:Connect(function(otherPart)
         if otherPart and otherPart.Parent then
             local parentName = otherPart.Parent.Name:lower()
             if parentName:find("guard") or parentName:find("chicken") or parentName:find("galinha") or parentName:find("conveyor") or parentName:find("deposit") or parentName:find("esteira") then
-                logEvent("TOQUE", "HRP colidiu com: " .. otherPart.Parent.Name .. "." .. otherPart.Name,
+                logEvent("TOQUE", "HRP tocou em: " .. otherPart.Parent.Name .. "." .. otherPart.Name,
                     string.format("Pos: (%.1f, %.1f, %.1f)", otherPart.Position.X, otherPart.Position.Y, otherPart.Position.Z))
             end
         end
@@ -127,7 +216,14 @@ local function setupCharacterTracker(char)
     char.ChildAdded:Connect(function(child)
         local low = child.Name:lower()
         if not low:find("animate") and not child:IsA("Accessory") and not child:IsA("Shirt") and not child:IsA("Pants") then
-            logEvent("OVO_PEGO", "Ovo/Item acoplado: " .. child.Name .. " [" .. child.ClassName .. "]",
+            local now = os.clock()
+            if CycleTracker.CurrentPhase == "AT_EGG" or CycleTracker.CurrentPhase == "PROMPT_DONE" then
+                CycleTracker.CurrentPhase = "EGG_HELD"
+                CycleTracker.TimeHeld = now
+                local deltaHeld = now - (CycleTracker.TimePrompt > 0 and CycleTracker.TimePrompt or CycleTracker.TimeEgg)
+                logEvent("FASE_ROUBO", "[4/6] Ovo acoplado ao personagem!", string.format("Item: %s | Tempo de captura: %.3fs", child.Name, deltaHeld))
+            end
+            logEvent("OVO_PEGO", "Item/Ovo acoplado: " .. child.Name .. " [" .. child.ClassName .. "]",
                 string.format("Pos HRP: (%.1f, %.1f, %.1f)", hrp.Position.X, hrp.Position.Y, hrp.Position.Z))
         end
     end)
@@ -135,7 +231,15 @@ local function setupCharacterTracker(char)
     char.ChildRemoved:Connect(function(child)
         local low = child.Name:lower()
         if not low:find("animate") and not child:IsA("Accessory") and not child:IsA("Shirt") and not child:IsA("Pants") then
-            logEvent("OVO_ENTREGUE", "Ovo/Item saiu do personagem: " .. child.Name,
+            local now = os.clock()
+            if CycleTracker.CurrentPhase == "AT_BASE" or CycleTracker.CurrentPhase == "EGG_HELD" then
+                CycleTracker.CurrentPhase = "IDLE"
+                CycleTracker.TimeDeposit = now
+                local deltaDep = now - CycleTracker.TimeBase
+                logEvent("FASE_ROUBO", "[6/6] Ovo depositado no Plot com sucesso!", string.format("Tempo de deposito: %.3fs", deltaDep))
+                task.delay(0.1, printCycleReport)
+            end
+            logEvent("OVO_ENTREGUE", "Item/Ovo saiu do personagem: " .. child.Name,
                 string.format("Pos HRP: (%.1f, %.1f, %.1f)", hrp.Position.X, hrp.Position.Y, hrp.Position.Z))
         end
     end)
@@ -146,7 +250,9 @@ if LocalPlayer.Character then
 end
 LocalPlayer.CharacterAdded:Connect(setupCharacterTracker)
 
+--================================================================--
 -- 2. MONITORAMENTO DE PROXIMITY PROMPTS
+--================================================================--
 ProximityPromptService.PromptButtonHoldBegan:Connect(function(prompt, player)
     if player == LocalPlayer then
         local pPos = prompt.Parent and (prompt.Parent:IsA("BasePart") and prompt.Parent.Position or prompt.Parent:GetPivot().Position) or Vector3.zero
@@ -157,13 +263,22 @@ end)
 
 ProximityPromptService.PromptTriggered:Connect(function(prompt, player)
     if player == LocalPlayer then
+        local now = os.clock()
+        if CycleTracker.CurrentPhase == "AT_EGG" then
+            CycleTracker.CurrentPhase = "PROMPT_DONE"
+            CycleTracker.TimePrompt = now
+            local dPrompt = now - CycleTracker.TimeEgg
+            logEvent("FASE_ROUBO", "Prompt de roubo disparado!", string.format("Atraso de disparo: %.3fs | MaxDist: %.1f", dPrompt, prompt.MaxActivationDistance))
+        end
         local pPos = prompt.Parent and (prompt.Parent:IsA("BasePart") and prompt.Parent.Position or prompt.Parent:GetPivot().Position) or Vector3.zero
         logEvent("PROMPT_TRIGGER", "PROMPT DISPARADO! " .. prompt.ActionText .. " | Obj: " .. prompt.ObjectText,
             string.format("Pai: %s | Pos: (%.1f, %.1f, %.1f) | MaxDist: %.1f", prompt.Parent and prompt.Parent.Name or "N/D", pPos.X, pPos.Y, pPos.Z, prompt.MaxActivationDistance))
     end
 end)
 
+--================================================================--
 -- 3. INTERFACE VISUAL COMPACTA
+--================================================================--
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "BF_Passive_Sniffer_GUI"
 ScreenGui.ResetOnSpawn = false
@@ -176,7 +291,7 @@ end)
 if not ScreenGui.Parent then ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
 local Frame = Instance.new("Frame")
-Frame.Size = UDim2.new(0, 380, 0, 240)
+Frame.Size = UDim2.new(0, 420, 0, 260)
 Frame.Position = UDim2.new(0.02, 0, 0.05, 0)
 Frame.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
 Frame.BorderSizePixel = 0
@@ -201,7 +316,7 @@ Title.Font = Enum.Font.GothamBold
 Title.TextSize = 12
 Title.TextColor3 = Color3.fromRGB(56, 189, 248)
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "BF SNIFFER PASSIVO (FLIGHT RECORDER)"
+Title.Text = "BF SNIFFER PASSIVO v2.0 (FLIGHT RECORDER)"
 Title.Parent = Frame
 
 local StatusLabel = Instance.new("TextLabel")
@@ -216,7 +331,7 @@ StatusLabel.Text = "Gravando em tempo real... 0 eventos"
 StatusLabel.Parent = Frame
 
 local LogBox = Instance.new("ScrollingFrame")
-LogBox.Size = UDim2.new(1, -20, 0, 140)
+LogBox.Size = UDim2.new(1, -20, 0, 155)
 LogBox.Position = UDim2.new(0, 10, 0, 50)
 LogBox.BackgroundColor3 = Color3.fromRGB(10, 15, 29)
 LogBox.BorderSizePixel = 0
@@ -238,8 +353,8 @@ LogText.Text = "Iniciando captura..."
 LogText.Parent = LogBox
 
 local CopyBtn = Instance.new("TextButton")
-CopyBtn.Size = UDim2.new(1, -20, 0, 30)
-CopyBtn.Position = UDim2.new(0, 10, 1, -36)
+CopyBtn.Size = UDim2.new(1, -20, 0, 32)
+CopyBtn.Position = UDim2.new(0, 10, 1, -38)
 CopyBtn.BackgroundColor3 = Color3.fromRGB(16, 185, 129)
 CopyBtn.Font = Enum.Font.GothamBold
 CopyBtn.TextSize = 11
@@ -274,7 +389,7 @@ task.spawn(function()
         task.wait(0.5)
         StatusLabel.Text = string.format("Gravando em tempo real... %d eventos capturados", eventCount)
         local recentLogs = {}
-        local startIdx = math.max(1, #flightLogs - 15)
+        local startIdx = math.max(1, #flightLogs - 18)
         for i = startIdx, #flightLogs do
             table.insert(recentLogs, flightLogs[i])
         end
