@@ -1,34 +1,29 @@
 --[[
     ================================================================================
-    ROUBE UM OVO - MEGA SNIFFER & DUMPER FORENSE DEFINITIVO (v4.1 ULTRA CRASH-PROOF)
+    ROUBE UM OVO - MEGA SNIFFER & DUMPER FORENSE DEFINITIVO (v4.2 SUPER-FORENSIC)
     PlaceId: 107778070777162 | Jogo: Roube um Ovo (Steal an Egg)
     ================================================================================
-    ARQUITETURA ZERO-CRASH & COMPATIBILIDADE TOTAL (SCRIPTVERSE / LUARMOR):
-    - MODO INICIAL 100% PASSIVO (PADRAO):
-      * ZERO hookfunction, ZERO hookmetamethod no startup.
-      * Compatibilidade total contra anti-tamper, anti-dump e protetores de script.
-      * O jogo NUNCA reinicia ou fecha ao executar scripts concorrentes!
-    - DEEP REMOTE SPY BLINDADO (ATIVADO POR BOTAO NA GUI):
-      * Envolvido em newcclosure (indetectavel contra verificacoes de C-closure).
-      * Chamada de retorno oldNamecall em tail call direta (preserva a pilha C do Luau).
-      * Captura segura com pcall em todos os argumentos de FireServer e InvokeServer.
-    - FILTRO ANTI-FLOOD INTELIGENTE:
-      * Remotes de alta frequencia (CoinsGathered, AwayEarnings, Ping) sao agregados
-        em contadores e nao esgotam a memoria nem o buffer de logs.
-    - MONITOR NATIVO DE ESTEIRA & TREADMILL:
-      * 100% baseado em eventos nativos do motor (.Touched, MoveDirection, Prompts).
-      * Rastreia toques fisicos, velocidade e direcao na esteira da sua base.
-    - EXTRATOR FORENSE DE ESP & RENDA DOS OVOS:
-      * Escaneia BillboardGuis/SurfaceGuis criados pelo script concorrente nos ovos.
-      * Extrai os textos de renda e valores reais calculados pelo concorrente ($/s).
-    - GRAVADOR DE VOO & WAYPOINTS:
-      * Trajetoria de CFrame, altitude Y, velocidade e estado (Ragdoll/Hit).
-    - EXPORTACAO EM 5 ARQUIVOS & BOTOES DE COPIA RAPIDA PARA DISCORD:
-      * [COPIAR REMOTES] (Leve, sem spam, cabe direto no Discord/chat)
-      * [COPIAR ESTEIRA] (Eventos de esteira e toques)
-      * [COPIAR ESP/RENDA] (Textos e dados extraidos do concorrente)
-      * [SALVAR 5 ARQUIVOS TXT] (Grava no disco via writefile)
-      * [COPIAR MESTRE] (Relatorio completo consolidado)
+    MELHORIAS & RECURSOS v4.2:
+    1. AUTO-ATIVACAO SEGURA DO DEEP REMOTE SPY:
+       - Inicia o sniffer em Modo Seguro e, apos 2.5 segundos (quando o ScriptVerse ja
+         terminou de carregar), ativa o Deep Remote Spy com newcclosure e tail call estrita.
+       - Captura TODOS os remotes enviados (FireServer e InvokeServer) sem o usuario precisar
+         lembrar de clicar no botao!
+    2. COLETOR E EXTRATOR DE ARMAS SECRETAS (GEARGIVERS):
+       - Identifica os 4 pedestais secretos sob o mapa:
+         * GearGiver_Slap (Luva de Tapa / Slap)
+         * GearGiver (Taser Gun / Arma de Choque)
+         * GearGiver_SentryTurret (Torreta Sentinela)
+         * GearGiver_BeeLauncher (Lancador de Abelhas)
+       - Botao dedicado na interface: [PEGAR ARMAS SECRETAS] para tentar reivindicar os itens!
+    3. FILTRO ANTI-FLOOD INTELIGENTE:
+       - Agrupa RE/PenRoster/CoinsGathered, AwayEarnings e Pings sem inundar o buffer.
+    4. MONITOR NATIVO DE ESTEIRA & TREADMILL:
+       - Registra RE/Treadmill/RenderStateShifted e toques fisicos (.Touched) na esteira.
+    5. EXTRATOR FORENSE DE ESP & RENDA DOS OVOS:
+       - Captura os textos de BillboardGuis do concorrente nos ovos ($/s e nomes reais).
+    6. EXPORTACAO MODULAR EM 5 ARQUIVOS:
+       - Salva via writefile e fornece botoes de copia seletiva para o Discord.
     ================================================================================
 ]]
 
@@ -62,12 +57,12 @@ local treadmillEvents = {}     -- Eventos de esteira / treadmill / toques
 local competitorEspLogs = {}   -- Textos de ESP, BillboardGuis e renda do concorrente
 local competitorGuiDump = {}   -- Elementos da interface do concorrente
 local flightWaypoints = {}     -- Trajetoria de voo / coordenadas CFrame
+local secretGearsDump = {}     -- Relatorio de Armas e Itens Secretos (GearGivers)
 local structuralDumpLines = {} -- Dump estrutural completo do jogo
 local liveLogs = {}            -- Log de status ao vivo
 
 local spamCounters = {}        -- Contadores de spam (CoinsGathered, etc.)
 
--- Lista de Remotes que geram flood continuo
 local SPAM_FILTER = {
     ["CoinsGathered"] = true,
     ["PenRoster/CoinsGathered"] = true,
@@ -118,20 +113,20 @@ local function logLive(cat, msg, details)
     end
 end
 
-logLive("SISTEMA", "Mega Sniffer & Dumper v4.1 (Modo Seguro Ativo)!")
+logLive("SISTEMA", "Mega Sniffer & Dumper v4.2 SUPER-FORENSIC Iniciado!")
 
 --================================================================--
--- 1. DEEP REMOTE SPY BLINDADO (COM CONTROLE MANUAL E newcclosure)
+-- 1. DEEP REMOTE SPY BLINDADO COM AUTO-ATIVACAO SEGURA
 --================================================================--
 local deepSpyActive = false
-local deepSpyHookMethod = "Desativado (Modo Seguro)"
+local deepSpyHookMethod = "Aguardando Inicializacao Segura..."
+local DeepSpyBtn = nil
 
 local function recordOutgoingRemote(method, targetInstance, args, callerScript)
     local elapsed = os.clock() - startTime
     local targetName = targetInstance and targetInstance.Name or "Desconhecido"
     local targetPath = getHierarchyPath(targetInstance)
 
-    -- Verifica se e remote de spam
     local isSpam = SPAM_FILTER[targetName] or SPAM_FILTER[targetPath]
     if not isSpam then
         for pattern, _ in pairs(SPAM_FILTER) do
@@ -217,7 +212,6 @@ local function recordIncomingRemote(remoteInstance, args)
     end
 end
 
--- Ativacao Segura do Deep Spy com newcclosure e tail-call estrita
 local function enableDeepRemoteSpy()
     if deepSpyActive then return true end
     local ok, err = pcall(function()
@@ -237,7 +231,6 @@ local function enableDeepRemoteSpy()
                 end)
                 pcall(recordOutgoingRemote, method, self, args, caller)
             end
-            -- OBRIGATORIO: Retorno em tail call direto para preservar a pilha C e yields
             return oldNamecall(self, ...)
         end
 
@@ -259,7 +252,19 @@ local function enableDeepRemoteSpy()
     end
 end
 
--- Monitoramento Passivo Nativo de RemoteEvents (OnClientEvent - 100% SEGURO)
+-- Auto-ativacao segura apos 2.5s de delay
+task.delay(2.5, function()
+    if not deepSpyActive then
+        local success = enableDeepRemoteSpy()
+        if success and DeepSpyBtn then
+            DeepSpyBtn.BackgroundColor3 = Color3.fromRGB(147, 51, 234)
+            DeepSpyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            DeepSpyBtn.Text = "DEEP REMOTE SPY ATIVADO AUTOMATICAMENTE (newcclosure SEGURO)"
+        end
+    end
+end)
+
+-- Monitoramento Passivo de RemoteEvents (OnClientEvent)
 local hookedCount = 0
 for _, desc in ipairs(game:GetDescendants()) do
     if desc:IsA("RemoteEvent") then
@@ -272,9 +277,9 @@ for _, desc in ipairs(game:GetDescendants()) do
         end)
     end
 end
-logLive("SISTEMA", string.format("Escuta passiva nativa ativada em %d RemoteEvents!", hookedCount))
+logLive("SISTEMA", string.format("Escuta passiva ativada em %d RemoteEvents do jogo!", hookedCount))
 
--- Interceptacao Passiva de Mensagens do Console (LogService)
+-- Console MessageOut
 Services.LogService.MessageOut:Connect(function(msg, msgType)
     local typeName = msgType.Name
     local low = msg:lower()
@@ -286,7 +291,90 @@ Services.LogService.MessageOut:Connect(function(msg, msgType)
 end)
 
 --================================================================--
--- 2. MONITORAMENTO DE AUTO-ESTEIRA & TREADMILL (100% NATIVO)
+-- 2. INVESTIGADOR E COLETOR DE ARMAS SECRETAS (GEARGIVERS)
+--================================================================--
+local SECRET_GEARS = {
+    { Name = "GearGiver_Slap", Display = "Slap (Luva de Tapa)" },
+    { Name = "GearGiver", Display = "Taser Gun (Arma de Choque)" },
+    { Name = "GearGiver_SentryTurret", Display = "Sentry Turret (Torreta)" },
+    { Name = "GearGiver_BeeLauncher", Display = "Bee Launcher (Lancador de Abelhas)" }
+}
+
+local function scanAndReportSecretGears()
+    secretGearsDump = {}
+    table.insert(secretGearsDump, "================================================================================")
+    table.insert(secretGearsDump, "ROUBE UM OVO - ARMAS E ITENS SECRETOS NO MAPA (GEARGIVERS)")
+    table.insert(secretGearsDump, "================================================================================\n")
+
+    -- 2.1 Verifica pastas de armas no ReplicatedStorage
+    local gearFolder = Services.ReplicatedStorage:FindFirstChild("GearTools")
+    if gearFolder then
+        table.insert(secretGearsDump, "Armas cadastradas em ReplicatedStorage.GearTools:")
+        for _, tool in ipairs(gearFolder:GetChildren()) do
+            table.insert(secretGearsDump, string.format("  - %s [%s]", tool.Name, tool.ClassName))
+        end
+        table.insert(secretGearsDump, "")
+    end
+
+    -- 2.2 Localiza os pedestais no Workspace
+    for _, gearInfo in ipairs(SECRET_GEARS) do
+        local model = Services.Workspace:FindFirstChild(gearInfo.Name, true)
+        if model then
+            local pos = model:GetPivot().Position
+            table.insert(secretGearsDump, string.format("[ENCONTRADO] %s (%s)", gearInfo.Display, gearInfo.Name))
+            table.insert(secretGearsDump, string.format("  Localizacao: (%.1f, %.1f, %.1f) | Caminho: %s", pos.X, pos.Y, pos.Z, getHierarchyPath(model)))
+            local childrenInfo = {}
+            for _, c in ipairs(model:GetChildren()) do
+                table.insert(childrenInfo, string.format("%s[%s]", c.Name, c.ClassName))
+            end
+            table.insert(secretGearsDump, "  Filhos: " .. table.concat(childrenInfo, ", "))
+            table.insert(secretGearsDump, "")
+        else
+            table.insert(secretGearsDump, string.format("[NAO ENCONTRADO] %s (%s)", gearInfo.Display, gearInfo.Name))
+        end
+    end
+end
+
+task.spawn(scanAndReportSecretGears)
+
+local function attemptCollectAllSecretGears()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false, "Personagem ou HumanoidRootPart nao encontrado" end
+
+    local collectedCount = 0
+    for _, gearInfo in ipairs(SECRET_GEARS) do
+        local model = Services.Workspace:FindFirstChild(gearInfo.Name, true)
+        if model then
+            for _, part in ipairs(model:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    -- Simula o toque fisico na placa de pressao
+                    pcall(function()
+                        if firetouchinterest then
+                            firetouchinterest(hrp, part, 0)
+                            task.wait(0.02)
+                            firetouchinterest(hrp, part, 1)
+                        end
+                    end)
+                    if part:FindFirstChildWhichIsA("ProximityPrompt") then
+                        pcall(function()
+                            local prompt = part:FindFirstChildWhichIsA("ProximityPrompt")
+                            if fireproximityprompt then
+                                fireproximityprompt(prompt)
+                            end
+                        end)
+                    end
+                end
+            end
+            collectedCount = collectedCount + 1
+            logLive("SECRET_GEAR", "Tentativa de toque enviada para " .. gearInfo.Display)
+        end
+    end
+    return true, string.format("Toques enviados para %d pedestais!", collectedCount)
+end
+
+--================================================================--
+-- 3. MONITORAMENTO DE AUTO-ESTEIRA & TREADMILL
 --================================================================--
 local function recordTreadmillEvent(category, message, details)
     local elapsed = os.clock() - startTime
@@ -298,7 +386,6 @@ local function recordTreadmillEvent(category, message, details)
     logLive("ESTEIRA", message, details)
 end
 
--- Monitoramento Fisico de Esteiras no Workspace (.Touched nativo)
 local monitoredTreadmillParts = {}
 local function scanAndHookTreadmillParts()
     for _, desc in ipairs(Services.Workspace:GetDescendants()) do
@@ -337,7 +424,7 @@ task.spawn(function()
 end)
 
 --================================================================--
--- 3. EXTRATOR FORENSE DE ESP, RENDA DOS OVOS & GUI DO CONCORRENTE
+-- 4. EXTRATOR FORENSE DE ESP, RENDA DOS OVOS & GUI DO CONCORRENTE
 --================================================================--
 local knownCompetitorGuiObjects = {}
 
@@ -351,12 +438,10 @@ local function recordCompetitorData(category, message, details)
     logLive("ESP_DADO", message, details)
 end
 
--- Varredura periodica passiva de BillboardGuis/SurfaceGuis nos Ovos e Slots
 task.spawn(function()
     while true do
         task.wait(2.0)
         pcall(function()
-            -- 3.1 Busca por BillboardGuis / ESP nos Ovos e Slots
             for _, gui in ipairs(Services.Workspace:GetDescendants()) do
                 if (gui:IsA("BillboardGui") or gui:IsA("SurfaceGui") or gui:IsA("Highlight")) and not knownCompetitorGuiObjects[gui] then
                     local isOurGui = gui.Name:find("BF_") or gui.Name:find("Antigravity")
@@ -380,7 +465,6 @@ task.spawn(function()
                 end
             end
 
-            -- 3.2 Busca por Telas/Janelas do Concorrente (CoreGui, PlayerGui, gethui)
             local guiContainers = { LocalPlayer:FindFirstChild("PlayerGui") }
             pcall(function()
                 if gethui then table.insert(guiContainers, gethui()) end
@@ -419,7 +503,7 @@ task.spawn(function()
 end)
 
 --================================================================--
--- 4. GRAVADOR DE VOO & WAYPOINTS DA TELEMETRIA DO PERSONAGEM
+-- 5. GRAVADOR DE VOO & WAYPOINTS DA TELEMETRIA DO PERSONAGEM
 --================================================================--
 local lastWaypointPos = nil
 local lastWaypointTime = 0
@@ -537,7 +621,6 @@ if LocalPlayer.Character then
 end
 LocalPlayer.CharacterAdded:Connect(setupCharacterFlightTracker)
 
--- Monitoramento de ProximityPrompts
 Services.ProximityPromptService.PromptButtonHoldBegan:Connect(function(prompt, player)
     if player == LocalPlayer then
         local pPos = prompt.Parent and prompt.Parent:GetPivot().Position or Vector3.zero
@@ -559,7 +642,7 @@ Services.ProximityPromptService.PromptTriggered:Connect(function(prompt, player)
 end)
 
 --================================================================--
--- 5. DUMP ESTRUTURAL COMPLETO DO JOGO
+-- 6. DUMP ESTRUTURAL COMPLETO DO JOGO
 --================================================================--
 local isDumping = false
 
@@ -573,13 +656,13 @@ local function runFullStructuralDump()
     end
 
     addLine("================================================================================")
-    addLine("ROUBE UM OVO - DUMP ESTRUTURAL COMPLETO (v4.1 FORENSE)")
+    addLine("ROUBE UM OVO - DUMP ESTRUTURAL COMPLETO (v4.2 FORENSE)")
     addLine("Data/Hora: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | Sessao: " .. string.format("%.2fs", os.clock() - startTime))
     addLine("PlaceId: " .. tostring(game.PlaceId) .. " | JobId: " .. tostring(game.JobId))
     addLine("Jogador: " .. (LocalPlayer and LocalPlayer.Name or "N/D") .. " (" .. (LocalPlayer and tostring(LocalPlayer.UserId) or "N/D") .. ")")
     addLine("================================================================================\n")
 
-    -- 5.1 CATALOGO DE REMOTES
+    -- 6.1 CATALOGO DE REMOTES
     addLine("--------------------------------------------------------------------------------")
     addLine("[SECAO 1] TODOS OS REMOTES DO JOGO (COMUNICACAO CLIENTE <-> SERVIDOR)")
     addLine("--------------------------------------------------------------------------------")
@@ -593,7 +676,7 @@ local function runFullStructuralDump()
     for _, r in ipairs(remotes) do addLine(r) end
     addLine("\n")
 
-    -- 5.2 ASSETS, PETS E ILHAS (REPLICATEDSTORAGE)
+    -- 6.2 ASSETS, PETS E ILHAS (REPLICATEDSTORAGE)
     addLine("--------------------------------------------------------------------------------")
     addLine("[SECAO 2] REPLICATEDSTORAGE: ASSETS, PETS, ILHAS E GUARDAS")
     addLine("--------------------------------------------------------------------------------")
@@ -620,7 +703,7 @@ local function runFullStructuralDump()
         end
     end
 
-    -- 5.3 SLOTS VIVOS
+    -- 6.3 SLOTS VIVOS
     addLine("--------------------------------------------------------------------------------")
     addLine("[SECAO 3] SLOTS VIVOS DE OVOS (WORKSPACE.AREAEGGSLOTSCLIENT)")
     addLine("--------------------------------------------------------------------------------")
@@ -649,7 +732,7 @@ local function runFullStructuralDump()
     end
     addLine("\n")
 
-    -- 5.4 PLOTS E BASES
+    -- 6.4 PLOTS E BASES
     addLine("--------------------------------------------------------------------------------")
     addLine("[SECAO 4] BASES DE JOGADORES (WORKSPACE.PLOTS)")
     addLine("--------------------------------------------------------------------------------")
@@ -681,13 +764,13 @@ end
 task.spawn(runFullStructuralDump)
 
 --================================================================--
--- 6. GERADORES DE RELATORIOS ESPECIALIZADOS
+-- 7. GERADORES DE RELATORIOS ESPECIALIZADOS
 --================================================================--
 
 local function generateRemotesReport()
     local lines = {}
     table.insert(lines, "================================================================================")
-    table.insert(lines, "ROUBE UM OVO - RELATORIO DE REMOTES INTERCEPTADOS (v4.1 FORENSE)")
+    table.insert(lines, "ROUBE UM OVO - RELATORIO DE REMOTES INTERCEPTADOS (v4.2 FORENSE)")
     table.insert(lines, "Data/Hora: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | Sessao: " .. string.format("%.2fs", os.clock() - startTime))
     table.insert(lines, "Deep Spy Ativo: " .. tostring(deepSpyActive) .. " (" .. deepSpyHookMethod .. ")")
     table.insert(lines, "================================================================================\n")
@@ -698,7 +781,7 @@ local function generateRemotesReport()
     if #outgoingRemotes > 0 then
         for _, r in ipairs(outgoingRemotes) do table.insert(lines, r) end
     else
-        table.insert(lines, "Nenhum remote enviado registrado. Clique em 'ATIVAR DEEP SPY' na GUI para monitorar chamadas de saída!")
+        table.insert(lines, "Nenhum remote de saida registrado ainda. O Deep Spy foi iniciado com seguranca!")
     end
     table.insert(lines, "\n")
 
@@ -728,7 +811,7 @@ end
 local function generateTreadmillReport()
     local lines = {}
     table.insert(lines, "================================================================================")
-    table.insert(lines, "ROUBE UM OVO - RELATORIO FORENSE DE ESTEIRA & TREADMILL (v4.1)")
+    table.insert(lines, "ROUBE UM OVO - RELATORIO FORENSE DE ESTEIRA & TREADMILL (v4.2)")
     table.insert(lines, "Data/Hora: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | Sessao: " .. string.format("%.2fs", os.clock() - startTime))
     table.insert(lines, "================================================================================\n")
 
@@ -746,7 +829,7 @@ end
 local function generateEspAndGuiReport()
     local lines = {}
     table.insert(lines, "================================================================================")
-    table.insert(lines, "ROUBE UM OVO - RELATORIO FORENSE DE ESP, RENDA & CONCORRENTE (v4.1)")
+    table.insert(lines, "ROUBE UM OVO - RELATORIO FORENSE DE ESP, RENDA & CONCORRENTE (v4.2)")
     table.insert(lines, "Data/Hora: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | Sessao: " .. string.format("%.2fs", os.clock() - startTime))
     table.insert(lines, "================================================================================\n")
 
@@ -775,7 +858,7 @@ end
 local function generateFlightReport()
     local lines = {}
     table.insert(lines, "================================================================================")
-    table.insert(lines, "ROUBE UM OVO - TELEMETRIA & WAYPOINTS DE VOO FORENSE (v4.1)")
+    table.insert(lines, "ROUBE UM OVO - TELEMETRIA & WAYPOINTS DE VOO FORENSE (v4.2)")
     table.insert(lines, "Data/Hora: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | Total de Pontos: " .. #flightWaypoints)
     table.insert(lines, "================================================================================\n")
 
@@ -784,9 +867,10 @@ local function generateFlightReport()
 end
 
 local function generateMasterReport()
+    scanAndReportSecretGears()
     local master = {
         "================================================================================",
-        "ROUBE UM OVO - RELATORIO FORENSE MESTRE DEFINITIVO (v4.1 ULTRA CRASH-PROOF)",
+        "ROUBE UM OVO - RELATORIO FORENSE MESTRE DEFINITIVO (v4.2 SUPER-FORENSIC)",
         "Data/Hora: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | Tempo: " .. string.format("%.2fs", os.clock() - startTime),
         "PlaceId: " .. tostring(game.PlaceId) .. " | JobId: " .. tostring(game.JobId),
         "Jogador: " .. (LocalPlayer and LocalPlayer.Name or "N/D") .. " (" .. (LocalPlayer and tostring(LocalPlayer.UserId) or "N/D") .. ")",
@@ -798,6 +882,8 @@ local function generateMasterReport()
         "\n\n",
         generateEspAndGuiReport(),
         "\n\n",
+        table.concat(secretGearsDump, "\n"),
+        "\n\n",
         generateFlightReport(),
         "\n\n",
         "================================================================================",
@@ -805,14 +891,14 @@ local function generateMasterReport()
         "================================================================================",
         table.concat(structuralDumpLines, "\n"),
         "\n================================================================================",
-        "FIM DO RELATORIO FORENSE MESTRE v4.1",
+        "FIM DO RELATORIO FORENSE MESTRE v4.2",
         "================================================================================"
     }
     return table.concat(master, "\n")
 end
 
 --================================================================--
--- 7. INTERFACE GRAFICA COM ABAS & CONTROLE SEGURO
+-- 8. INTERFACE GRAFICA COM ABAS & CONTROLE SEGURO
 --================================================================--
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "BF_Mega_Sniffer_GUI_v4"
@@ -826,7 +912,7 @@ end)
 if not ScreenGui.Parent then ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 560, 0, 420)
+MainFrame.Size = UDim2.new(0, 560, 0, 430)
 MainFrame.Position = UDim2.new(0.02, 0, 0.05, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(13, 17, 23)
 MainFrame.BorderSizePixel = 0
@@ -862,7 +948,7 @@ Title.Font = Enum.Font.GothamBold
 Title.TextSize = 11
 Title.TextColor3 = Color3.fromRGB(56, 189, 248)
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "MEGA SNIFFER FORENSE v4.1 (MODO SEGURO ATIVO)"
+Title.Text = "MEGA SNIFFER FORENSE v4.2"
 Title.Parent = TopBar
 
 local MinBtn = Instance.new("TextButton")
@@ -979,20 +1065,21 @@ LogText.TextWrapped = true
 LogText.Text = "Aguardando eventos..."
 LogText.Parent = LogBox
 
--- Barra Intermediária: Botao de Ativacao Segura do Deep Spy
+-- Barra Intermediária: Status e Ativador do Deep Spy
 local DeepSpyBar = Instance.new("Frame")
 DeepSpyBar.Size = UDim2.new(1, -20, 0, 26)
 DeepSpyBar.Position = UDim2.new(0, 10, 0, 262)
 DeepSpyBar.BackgroundTransparency = 1
 DeepSpyBar.Parent = MainFrame
 
-local DeepSpyBtn = Instance.new("TextButton")
-DeepSpyBtn.Size = UDim2.new(1, 0, 1, 0)
-DeepSpyBtn.BackgroundColor3 = Color3.fromRGB(33, 38, 45)
+DeepSpyBtn = Instance.new("TextButton")
+DeepSpyBtn.Size = UDim2.new(0.60, -4, 1, 0)
+DeepSpyBtn.Position = UDim2.new(0, 0, 0, 0)
+DeepSpyBtn.BackgroundColor3 = deepSpyActive and Color3.fromRGB(147, 51, 234) or Color3.fromRGB(33, 38, 45)
 DeepSpyBtn.Font = Enum.Font.GothamBold
-DeepSpyBtn.TextSize = 10
-DeepSpyBtn.TextColor3 = Color3.fromRGB(148, 163, 184)
-DeepSpyBtn.Text = "[CLIQUE PARA ATIVAR] DEEP REMOTE SPY (MONITORAR REMOTES ENVIADOS)"
+DeepSpyBtn.TextSize = 9
+DeepSpyBtn.TextColor3 = deepSpyActive and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(148, 163, 184)
+DeepSpyBtn.Text = deepSpyActive and "DEEP REMOTE SPY ATIVADO (newcclosure)" or "[ATIVAR AGORA] DEEP REMOTE SPY"
 DeepSpyBtn.Parent = DeepSpyBar
 
 local DeepSpyCorner = Instance.new("UICorner")
@@ -1006,12 +1093,32 @@ DeepSpyBtn.MouseButton1Click:Connect(function()
             DeepSpyBtn.BackgroundColor3 = Color3.fromRGB(147, 51, 234)
             DeepSpyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
             DeepSpyBtn.Text = "DEEP REMOTE SPY ATIVADO (newcclosure SEGURO)"
-        else
-            DeepSpyBtn.BackgroundColor3 = Color3.fromRGB(239, 68, 68)
-            DeepSpyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-            DeepSpyBtn.Text = "FALHA AO ATIVAR HOOKMETAMETHOD NO EXECUTOR"
         end
     end
+end)
+
+-- Botao Coletar Armas Secretas
+local CollectGearsBtn = Instance.new("TextButton")
+CollectGearsBtn.Size = UDim2.new(0.40, 0, 1, 0)
+CollectGearsBtn.Position = UDim2.new(0.60, 4, 0, 0)
+CollectGearsBtn.BackgroundColor3 = Color3.fromRGB(217, 119, 6)
+CollectGearsBtn.Font = Enum.Font.GothamBold
+CollectGearsBtn.TextSize = 9
+CollectGearsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CollectGearsBtn.Text = "PEGAR ARMAS SECRETAS"
+CollectGearsBtn.Parent = DeepSpyBar
+
+local CollectGearsCorner = Instance.new("UICorner")
+CollectGearsCorner.CornerRadius = UDim.new(0, 4)
+CollectGearsCorner.Parent = CollectGearsBtn
+
+CollectGearsBtn.MouseButton1Click:Connect(function()
+    CollectGearsBtn.Text = "COLETANDO..."
+    local ok, res = attemptCollectAllSecretGears()
+    CollectGearsBtn.Text = ok and "TOQUES ENVIADOS!" or "FALHA"
+    task.delay(2.0, function()
+        CollectGearsBtn.Text = "PEGAR ARMAS SECRETAS"
+    end)
 end)
 
 -- Barra de Acoes Rapidas (Copias Seletivas para Discord)
@@ -1091,7 +1198,6 @@ local ClearCorner = Instance.new("UICorner")
 ClearCorner.CornerRadius = UDim.new(0, 6)
 ClearCorner.Parent = ClearBtn
 
--- Handlers dos Botoes
 local function notifyBtn(btn, tempText, origText, origColor)
     btn.Text = tempText
     task.delay(2.0, function()
@@ -1179,7 +1285,7 @@ MinBtn.MouseButton1Click:Connect(function()
         ButtonBar.Visible = false
         MinBtn.Text = "+"
     else
-        MainFrame.Size = UDim2.new(0, 560, 0, 420)
+        MainFrame.Size = UDim2.new(0, 560, 0, 430)
         LogBox.Visible = true
         TabBar.Visible = true
         DeepSpyBar.Visible = true
@@ -1229,11 +1335,10 @@ task.spawn(function()
             LogText.Text = #lines > 0 and table.concat(lines, "\n") or "Sem eventos no momento."
             LogBox.CanvasPosition = Vector2.new(0, 99999)
 
-            -- Atualiza Contadores no Titulo
-            Title.Text = string.format("MEGA SNIFFER v4.1 | Remotes:%d | Esteira:%d | ESP:%d",
+            Title.Text = string.format("MEGA SNIFFER v4.2 | Remotes:%d | Esteira:%d | ESP:%d",
                 #outgoingRemotes, #treadmillEvents, #competitorEspLogs)
         end
     end
 end)
 
-logLive("SISTEMA", "Sniffer pronto no Modo Seguro! Execute o script concorrente.")
+logLive("SISTEMA", "Sniffer pronto! O Deep Spy ativara automaticamente em 2.5s.")
