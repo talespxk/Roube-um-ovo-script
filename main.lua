@@ -3,18 +3,15 @@ if not game:IsLoaded() then
 end
 
 --[[
-    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v10.0 MASTER CLEAN)
+    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v12.1 SAFE WALK)
     -----------------------------------------------------------------------
-    - Nomes Únicos de Ovos: Cada um dos 5 slots de cada ilha possui o nome
-      real do pet do drop (Godzilla, King Kong, Kitsune, Oni Tiger, etc.).
+    - Radar honesto: somente mostra pet/raridade/renda quando o cliente replica
+      evidência real. Slots opacos aparecem como N/D.
     - Sistema de Unload Completo: Botão no topo e configurações para encerrar
       100% das threads, limpar conexões, remover ESP e fechar interface.
     - Catálogo Oficial dos 11 Biomas (Ilhas 1 a 11): Coordenadas exatas, nomes
       reais e raridades legítimas (Comum a Titã - Godzilla/Kitsune).
-    - Mecânica de Ragdoll TP da Galinha (Bypass Anti-Cheat):
-      Provoca hit proposital da Galinha da Floresta (Biome 1) e usa a janela
-      de Ragdoll da física para teleportar ao melhor ovo e à base sem tomar
-      dano fatal nem rubberband do servidor.
+    - Navegação por Humanoid/Pathfinding sem alterar CFrame do personagem.
     - Suporte a Ovos Especiais: Demonic Egg, Dragon Egg, Limited e Brainrot.
     - Neutralização Ativa Anti-Cheat e Movimento Seguro.
 ]]
@@ -50,6 +47,7 @@ local Services = {
     RunService = safeService("RunService"),
     UserInputService = safeService("UserInputService"),
     TweenService = safeService("TweenService"),
+    PathfindingService = safeService("PathfindingService"),
     ReplicatedStorage = safeService("ReplicatedStorage"),
     CoreGui = safeService("CoreGui"),
     StarterGui = safeService("StarterGui")
@@ -87,13 +85,13 @@ end
 
 -- 5. Configuração e Estado Geral
 local Config = {
-    StealMethod = "RagdollTP", -- "RagdollTP" ou "VooDireto"
+    StealMethod = "CaminhadaSegura",
     AutoStealEnabled = false,
     AutoEsteiraEnabled = false,
     SafeFlightEnabled = true,
     LockCurrentIsland = false, -- Padrão: busca em todo o mapa
     MaxStealDistance = 450,
-    MoveSpeed = 350,
+    MoveSpeed = 24,
     TargetRarity = "Qualquer",
     MinRarityScore = 0,
     ESPEnabled = false,
@@ -111,6 +109,9 @@ local State = {
     PlotFound = false,
     IsExecutingSteal = false,
     IsOnTreadmill = false,
+    CarryConfirmed = false,
+    CarryEvidence = nil,
+    LastCarryChange = 0,
     CurrentTargetEgg = nil,
     LastPromptTriggered = nil,
     Logs = {}
@@ -125,6 +126,7 @@ local TargetInfoLabel = nil
 local BaseLabel = nil
 local EsteiraStatusLabel = nil
 local MainToggleBtn = nil
+local EsteiraToggleBtn = nil
 local unloadScript = nil
 local executeDirectSteal = nil
 
@@ -227,6 +229,9 @@ end
 
 registerConnection(LocalPlayer.CharacterAdded:Connect(function(newChar)
     if State.IsUnloaded then return end
+    State.CarryConfirmed = false
+    State.CarryEvidence = nil
+    State.LastCarryChange = os.clock()
     task.wait(0.1)
     disableCharacterAntiCheats(newChar)
     registerConnection(newChar.ChildAdded:Connect(function(child)
@@ -271,7 +276,7 @@ end
 -- NÃO verificamos mais PlayerGui.AssetEggData (também disparava falso positivo).
 -- APENAS verificamos:
 --   Camada 1: Atributos explícitos com "egg", "carry", "hold", "grab"
---   Camada 2: Tool no Character ou Backpack com "egg"/"ovo" no nome ou atributo
+--   Camada 2: Tool equipada com "egg"/"ovo" no nome ou atributo IsEgg
 --   Camada 3: Model soldado ao Character com "egg"/"ovo" no nome ou atributo IsEgg
 -- ============================================================================
 -- Sistema Oficial de Renda por Segundo ($/s) e Formatação de Valores
@@ -333,6 +338,59 @@ local standardLimbNames = {
 }
 
 -- 6. Detecção de Posse de Ovo Ultra-Confiável (Multi-Camada)
+local carryStateRemote = Services.ReplicatedStorage:FindFirstChild("AreaEggCarryStateChanged", true)
+if carryStateRemote and carryStateRemote:IsA("RemoteEvent") then
+    registerConnection(carryStateRemote.OnClientEvent:Connect(function(...)
+        local args = table.pack(...)
+        local belongsToLocalPlayer = true
+        local carrying = nil
+        local evidence = nil
+
+        for index = 1, args.n do
+            local value = args[index]
+            if typeof(value) == "Instance" and value:IsA("Player") then
+                belongsToLocalPlayer = value == LocalPlayer
+            elseif typeof(value) == "Instance" then
+                evidence = value.Name
+            elseif type(value) == "boolean" then
+                carrying = value
+            elseif type(value) == "number" then
+                local eventPlayer = Services.Players:GetPlayerByUserId(value)
+                if eventPlayer then belongsToLocalPlayer = eventPlayer == LocalPlayer end
+            elseif type(value) == "string" and #value >= 8
+                and value ~= LocalPlayer.Name and value ~= LocalPlayer.DisplayName then
+                evidence = value
+            elseif type(value) == "table" then
+                local owner = value.Player or value.Owner or value.UserId or value.PlayerId
+                if owner ~= nil then
+                    belongsToLocalPlayer = owner == LocalPlayer
+                        or tostring(owner) == tostring(LocalPlayer.UserId)
+                        or tostring(owner) == LocalPlayer.Name
+                end
+                local tableState = value.IsCarrying
+                if tableState == nil then tableState = value.Carrying end
+                if tableState == nil then tableState = value.Holding end
+                if type(tableState) == "boolean" then carrying = tableState end
+                evidence = value.EggUid or value.EggUID or value.Uid or value.UID or evidence
+            end
+        end
+
+        if carrying == nil then
+            if evidence ~= nil then
+                carrying = true
+            elseif args.n == 0 then
+                carrying = false
+            end
+        end
+
+        if belongsToLocalPlayer and carrying ~= nil then
+            State.CarryConfirmed = carrying
+            State.CarryEvidence = carrying and tostring(evidence or "AreaEggCarryStateChanged") or nil
+            State.LastCarryChange = os.clock()
+        end
+    end))
+end
+
 local function isHoldingEgg()
     local char = LocalPlayer.Character
     if not char then return false, nil end
@@ -363,19 +421,17 @@ local function isHoldingEgg()
         end
     end
 
-    -- Camada 2: uma Tool só conta se ela própria se declarar como ovo.
-    for _, container in ipairs({char, LocalPlayer:FindFirstChildOfClass("Backpack")}) do
-        if container then
-            for _, item in ipairs(container:GetChildren()) do
-                if item:IsA("Tool") then
-                    local toolName = item.Name:lower()
-                    local namedAsEgg = toolName:find("egg", 1, true) ~= nil
-                        or toolName:find("ovo", 1, true) ~= nil
-                    if namedAsEgg or item:GetAttribute("IsEgg") == true
-                        or item:GetAttribute("EggType") ~= nil then
-                        return true, item.Name
-                    end
-                end
+    if State.CarryConfirmed == true then
+        return true, State.CarryEvidence or "AreaEggCarryStateChanged"
+    end
+
+    -- Backpack é inventário, não mãos. Somente Tool equipada conta.
+    for _, item in ipairs(char:GetChildren()) do
+        if item:IsA("Tool") then
+            local toolName = item.Name:lower()
+            if toolName:find("egg", 1, true) or toolName:find("ovo", 1, true)
+                or item:GetAttribute("IsEgg") == true then
+                return true, item.Name
             end
         end
     end
@@ -386,8 +442,7 @@ local function isHoldingEgg()
         while current and current ~= char do
             local low = current.Name:lower()
             if low:find("egg", 1, true) or low:find("ovo", 1, true)
-                or current:GetAttribute("IsEgg") == true
-                or current:GetAttribute("EggType") ~= nil then
+                or current:GetAttribute("IsEgg") == true then
                 return true, current.Name
             end
             current = current.Parent
@@ -413,16 +468,6 @@ local function isHoldingEgg()
                     if isEgg then return true, eggName end
                 end
             end
-        end
-    end
-
-    -- Camada 4: Interface de ovo no PlayerGui
-    local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    local eggData = playerGui and playerGui:FindFirstChild("AssetEggData")
-    if eggData then
-        local ok, enabled = pcall(function() return eggData.Enabled end)
-        if ok and enabled == true then
-            return true, "AssetEggData"
         end
     end
 
@@ -993,6 +1038,7 @@ local function resolveEggDetails(instance, prompt)
     local maxScore = 300
     local detectedWeight = 0
     local detectedIncome = nil
+    local resolvedPet = false
 
     -- Determinar ilha real
     local isl = getIslandByPos(pos)
@@ -1051,6 +1097,7 @@ local function resolveEggDetails(instance, prompt)
                     foundName = pData.DisplayName
                     detectedRarity = pData.Rarity
                     maxScore = math.max(maxScore, RarityScoreMap[pData.Rarity] or 5000)
+                    resolvedPet = true
                 end
                 return true
             end
@@ -1062,6 +1109,7 @@ local function resolveEggDetails(instance, prompt)
             foundName = entry.DisplayName
             detectedRarity = entry.Rarity
             maxScore = math.max(maxScore, RarityScoreMap[entry.Rarity] or 5000)
+            resolvedPet = true
             if entry.Weight then detectedWeight = entry.Weight end
             return true
         end
@@ -1210,12 +1258,14 @@ local function resolveEggDetails(instance, prompt)
     end
 
     if plotOwnerName then
-        if foundName and not foundName:find("ovo selvagem") then
+        if resolvedPet and foundName then
             foundName = string.format("%s (Base de %s)", foundName, plotOwnerName)
         else
-            foundName = string.format("Ovo Protegido (Base de %s)", plotOwnerName)
+            foundName = string.format("Ovo não identificado (Base de %s)", plotOwnerName)
+            detectedRarity = "N/D"
+            maxScore = 0
+            detectedIncome = nil
         end
-        if not detectedRarity then detectedRarity = "RARO" end
     end
 
     -- MÉTODO 5: Leitura de Renda Real e Atributos de Money
@@ -1236,23 +1286,20 @@ local function resolveEggDetails(instance, prompt)
         end)
     end
 
-    -- A raridade da ilha/guarda nunca vira raridade de um ovo desconhecido.
+    -- O dump comprova que slots selvagens não expõem o pet. Não inventar
+    -- raridade nem renda usando os dados do guarda/ilha.
     if not foundName then
-        if isl.Id == "Titan Temple" then
-            local slotLabel = slotNum and string.format(" [Slot %d]", slotNum) or ""
-            foundName = string.format("Ovo do Templo%s (%s)", slotLabel, isl.Name)
-            detectedRarity = "LENDÁRIO"
-            maxScore = 15000
-            detectedIncome = "$50k/s"
-        elseif isl.Id ~= "Bases" then
-            local slotLabel = slotNum and string.format(" [Slot %d]", slotNum) or ""
-            foundName = string.format("%s%s (%s)", isl.EggShell or "Ovo", slotLabel, isl.Name)
-            detectedRarity = isl.Rarity or "COMUM"
-            maxScore = math.min(isl.Score or 300, 70000)
+        if isl.Id ~= "Bases" then
+            local slotLabel = slotNum and string.format("Slot %d", slotNum)
+                or string.format("X %.0f / Z %.0f", pos.X, pos.Z)
+            foundName = string.format("Ovo selvagem [%s] (%s)", slotLabel, isl.Name)
+            detectedRarity = "N/D"
+            maxScore = 0
+            detectedIncome = nil
         else
-            foundName = "Ovo de Base"
-            detectedRarity = "COMUM"
-            maxScore = 300
+            foundName = "Ovo não identificado"
+            detectedRarity = "N/D"
+            maxScore = 0
         end
     end
 
@@ -1260,7 +1307,7 @@ local function resolveEggDetails(instance, prompt)
         detectedRarity = "COMUM"
     end
 
-    if not detectedIncome then
+    if resolvedPet and not detectedIncome then
         local pClean = foundName and foundName:lower():match("^([%a%s]+)") or ""
         pClean = pClean:gsub("%s+$", "")
         local base = PetBaseIncome[pClean] or RarityBaseIncome[detectedRarity] or 10
@@ -1319,6 +1366,9 @@ local function scanAllEggs()
 
         local cleanName, rarity, score, weight, income = resolveEggDetails(instance, prompt)
         local zone, isMyPlot, owner = identifyZone(instance)
+        if zone == "Mapa Geral" and pos.X >= 510 then
+            zone = getIslandNameByPos(pos)
+        end
         local dist = (pos - myPos).Magnitude
 
         table.insert(rawList, {
@@ -1387,10 +1437,12 @@ local function scanAllEggs()
                 if not existing.Prompt and cand.Prompt then
                     existing.Prompt = cand.Prompt
                 end
-                if (existing.Name:find("Ovo Selvagem") or existing.Name == "Assets") and not cand.Name:find("Ovo Selvagem") then
+                if existing.Rarity == "N/D" and cand.Rarity ~= "N/D" then
                     existing.Name = cand.Name
                     existing.Rarity = cand.Rarity
                     existing.RarityScore = cand.RarityScore
+                    existing.WeightKg = cand.WeightKg
+                    existing.Income = cand.Income
                 end
                 break
             end
@@ -1410,11 +1462,10 @@ local function scanAllEggs()
     return deduplicated
 end
 
--- 9. SISTEMAS DE MOVIMENTAÇÃO: RETÃO NO SOLO (IDA) & VOO ALTO SEGURO (VOLTA)
+-- 9. NAVEGAÇÃO SEGURA: sem escrever CFrame no personagem.
 local isMoving = false
 
--- A. Deslocamento Direto no Solo (Ida rápida em linha reta sem subir no céu)
-local function movePlayerDirect(targetPos, speed, onStep)
+local function movePlayerSafe(targetPos, speed, onStep)
     local hrp = getHRP()
     local char = LocalPlayer.Character
     if not hrp or not char or isMoving then return false end
@@ -1422,182 +1473,95 @@ local function movePlayerDirect(targetPos, speed, onStep)
     if not humanoid or humanoid.Health <= 0 then return false end
 
     isMoving = true
-    disableCharacterAntiCheats(char)
-    speed = speed or Config.MoveSpeed or 350
-    local startPos = hrp.Position
-    local dist = (targetPos - startPos).Magnitude
-
-    if dist < 3.5 then
-        isMoving = false
-        return true
-    end
-
-    local noclipConn = Services.RunService.Stepped:Connect(function()
-        if char and char.Parent then
-            for _, part in ipairs(char:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    part.CanCollide = false
-                    part.CanTouch = false
-                end
-            end
-        end
-    end)
-
-    pcall(function()
-        humanoid.PlatformStand = true
-        humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-    end)
+    local oldWalkSpeed = humanoid.WalkSpeed
+    humanoid.WalkSpeed = math.clamp(tonumber(speed) or 24, 16, 32)
+    humanoid.PlatformStand = false
 
     local function cleanup()
-        pcall(function() if noclipConn then noclipConn:Disconnect() end end)
-        if char and char.Parent then
-            for _, part in ipairs(char:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    part.CanCollide = true
-                    part.CanTouch = true
-                    part.AssemblyLinearVelocity = Vector3.zero
-                    part.AssemblyAngularVelocity = Vector3.zero
-                end
-            end
-            if humanoid and humanoid.Health > 0 then
-                humanoid.PlatformStand = false
-                humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-            end
+        if humanoid and humanoid.Parent and humanoid.Health > 0 then
+            humanoid:Move(Vector3.zero, false)
+            humanoid.WalkSpeed = oldWalkSpeed
         end
         isMoving = false
     end
 
-    local totalTime = dist / math.max(speed, 100)
-    local startTime = os.clock()
+    local function walkTo(point, timeout)
+        humanoid:MoveTo(point)
+        local started = os.clock()
+        local lastProgressAt = started
+        local lastDistance = (hrp.Position - point).Magnitude
 
-    while (os.clock() - startTime) < (totalTime + 0.3) do
-        if State.IsUnloaded or not char or not char.Parent or not humanoid or humanoid.Health <= 0 then
-            cleanup()
-            return false
-        end
-
-        local elapsed = os.clock() - startTime
-        local alpha = math.clamp(elapsed / math.max(totalTime, 0.001), 0, 1)
-
-        -- Altitude segura: nunca arrastar no chão nem subir demais
-        local safeY = math.max(targetPos.Y, 68.0) + 1.5
-        local safeTarget = Vector3.new(targetPos.X, safeY, targetPos.Z)
-        local curTarget = startPos:Lerp(safeTarget, alpha)
-        local lookDir = (safeTarget - curTarget)
-        if lookDir.Magnitude > 0.1 then
-            hrp.CFrame = CFrame.new(curTarget, curTarget + lookDir)
-        else
-            hrp.CFrame = CFrame.new(curTarget)
-        end
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-
-        local remaining = (targetPos - hrp.Position).Magnitude
-        if onStep then onStep(remaining) end
-        if remaining < 3.5 then break end
-
-        Services.RunService.Heartbeat:Wait()
-    end
-
-    local finalY = math.max(targetPos.Y, 68.0) + 1.5
-    hrp.CFrame = CFrame.new(Vector3.new(targetPos.X, finalY, targetPos.Z))
-    cleanup()
-    return (targetPos - hrp.Position).Magnitude < 7
-end
-
--- B. Rota de Retorno Segura Rente ao Solo (Y=69.5, Noclip Contínuo)
--- NÃO sobe mais a Y=92 (kill zones). Desliza horizontalmente com CanCollide=false.
-local function movePlayerOverhead(targetPos, speed, onStep)
-    local hrp = getHRP()
-    local char = LocalPlayer.Character
-    if not hrp or not char or isMoving then return false end
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then return false end
-
-    isMoving = true
-    disableCharacterAntiCheats(char)
-    speed = speed or Config.MoveSpeed or 350
-
-    -- Altitude segura: rente ao solo, acima de obstáculos baixos, abaixo de kill zones
-    local SAFE_Y = 69.5
-    local startPos = hrp.Position
-    -- Ponto final: altitude segura ou altitude do alvo (o que for maior)
-    local endY = math.max(targetPos.Y, 68.0) + 1.5
-    local endPos = Vector3.new(targetPos.X, math.max(endY, SAFE_Y), targetPos.Z)
-    -- Ponto de cruzeiro: manter Y=69.5 durante o percurso horizontal
-    local cruiseStart = Vector3.new(startPos.X, SAFE_Y, startPos.Z)
-    local cruiseEnd = Vector3.new(targetPos.X, SAFE_Y, targetPos.Z)
-
-    local noclipConn = Services.RunService.Stepped:Connect(function()
-        if char and char.Parent then
-            for _, part in ipairs(char:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    part.CanCollide = false
-                    part.CanTouch = false
-                end
+        while os.clock() - started < timeout do
+            if State.IsUnloaded or not char.Parent or humanoid.Health <= 0 then return false end
+            local distance = (hrp.Position - point).Magnitude
+            if onStep then onStep((hrp.Position - targetPos).Magnitude) end
+            if distance <= 4 then return true end
+            if distance < lastDistance - 0.75 then
+                lastDistance = distance
+                lastProgressAt = os.clock()
+            elseif os.clock() - lastProgressAt > 3.0 then
+                return false
             end
-        end
-    end)
-
-    pcall(function()
-        humanoid.PlatformStand = true
-        humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-    end)
-
-    local function cleanup()
-        pcall(function() if noclipConn then noclipConn:Disconnect() end end)
-        if char and char.Parent then
-            for _, part in ipairs(char:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    part.CanCollide = true
-                    part.CanTouch = true
-                    part.AssemblyLinearVelocity = Vector3.zero
-                    part.AssemblyAngularVelocity = Vector3.zero
-                end
-            end
-            if humanoid and humanoid.Health > 0 then
-                humanoid.PlatformStand = false
-                humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-            end
-        end
-        isMoving = false
-    end
-
-    -- Interpolação linear entre dois pontos (reutilizável)
-    local function lerpSegment(pA, pB, segSpeed)
-        local sDist = (pB - pA).Magnitude
-        if sDist < 1.0 then return end
-        local sTime = sDist / math.max(segSpeed, 100)
-        local sStart = os.clock()
-        while (os.clock() - sStart) < (sTime + 0.15) do
-            if State.IsUnloaded or not char or not char.Parent or not humanoid or humanoid.Health <= 0 then return end
-            local alpha = math.clamp((os.clock() - sStart) / math.max(sTime, 0.001), 0, 1)
-            local cur = pA:Lerp(pB, alpha)
-            local lookDir = (pB - cur)
-            if lookDir.Magnitude > 0.1 then
-                hrp.CFrame = CFrame.new(cur, cur + lookDir)
-            else
-                hrp.CFrame = CFrame.new(cur)
-            end
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
-            if onStep then onStep((targetPos - hrp.Position).Magnitude) end
-            if (pB - hrp.Position).Magnitude < 3.0 then break end
             Services.RunService.Heartbeat:Wait()
         end
-        hrp.CFrame = CFrame.new(pB)
+        return false
     end
 
-    -- Execução: subir suavemente ao nível de cruzeiro → cruzar horizontalmente → descer ao alvo
-    if State.IsUnloaded then cleanup() return false end
-    lerpSegment(startPos, cruiseStart, speed)            -- Ajuste vertical suave
-    if State.IsUnloaded then cleanup() return false end
-    lerpSegment(cruiseStart, cruiseEnd, speed)            -- Cruzeiro horizontal
-    if State.IsUnloaded then cleanup() return false end
-    lerpSegment(cruiseEnd, endPos, speed * 0.9)           -- Descida suave ao alvo
+    local reached = false
+    for _ = 1, 4 do
+        if (hrp.Position - targetPos).Magnitude <= 5 then
+            reached = true
+            break
+        end
+
+        local path = Services.PathfindingService:CreatePath({
+            AgentRadius = 2,
+            AgentHeight = 5,
+            AgentCanJump = true,
+            AgentCanClimb = true,
+            WaypointSpacing = 10,
+        })
+        local computed = pcall(function()
+            path:ComputeAsync(hrp.Position, targetPos)
+        end)
+
+        if computed and path.Status == Enum.PathStatus.Success then
+            local waypoints = path:GetWaypoints()
+            local routeOk = true
+            for index = 2, #waypoints do
+                local waypoint = waypoints[index]
+                if waypoint.Action == Enum.PathWaypointAction.Jump then
+                    humanoid.Jump = true
+                end
+                if not walkTo(waypoint.Position, 8) then
+                    routeOk = false
+                    break
+                end
+            end
+            if routeOk and (hrp.Position - targetPos).Magnitude <= 7 then
+                reached = true
+                break
+            end
+        else
+            -- Para alvos próximos ainda é seguro tentar MoveTo direto.
+            local distance = (hrp.Position - targetPos).Magnitude
+            if distance <= 120 and walkTo(targetPos, math.max(5, distance / humanoid.WalkSpeed + 3)) then
+                reached = true
+                break
+            end
+        end
+    end
 
     cleanup()
-    return (targetPos - hrp.Position).Magnitude < 7
+    return reached
+end
+
+local function movePlayerDirect(targetPos, speed, onStep)
+    return movePlayerSafe(targetPos, speed, onStep)
+end
+
+local function movePlayerOverhead(targetPos, speed, onStep)
+    return movePlayerSafe(targetPos, speed, onStep)
 end
 
 -- Acionamento Rápido de ProximityPrompt
@@ -1624,7 +1588,7 @@ local function triggerPrompt(prompt)
 end
 
 --================================================================--
--- 9.5. MOTOR MASTER DE AUTO-ROUBO (RAGDOLL TP & VOO DIRETO)
+-- 9.5. MOTOR MASTER DE AUTO-ROUBO (CAMINHADA SEGURA)
 --================================================================--
 
 -- A. Identificação do Plot do Jogador e Ponto de Depósito / Esteira
@@ -1764,72 +1728,13 @@ local function isPlayerInRagdoll()
     return false
 end
 
--- D. Execução de Roubo via Ragdoll TP (Bypass de Anti-Cheat)
+-- D. Compatibilidade: qualquer método antigo usa caminhada segura.
 local function executeRagdollSteal(target)
-    if not target or not target.Position then return false end
-    local myHrp = getHRP()
-    if not myHrp or State.IsUnloaded then return false end
-
-    local baseCF = getMyDepositCFrame() or State.BaseCFrame or myHrp.CFrame
-    local targetPos = target.Position
-
-    addLog("ROUBO", string.format("Iniciando Ragdoll TP para %s [%s]...", target.Name, target.Rarity))
-
-    -- 1. Teleporte ao Ninho da Galinha para provocar agro
-    local guardObj, guardPos = findForestGuard()
-    myHrp.CFrame = CFrame.new(guardPos + Vector3.new(0, 1.2, 0))
-    task.wait(0.1)
-
-    -- 2. Aguardar ativação de Ragdoll pelo golpe
-    local ragdollActive = false
-    local t0 = tick()
-    while (tick() - t0) < 1.4 do
-        if State.IsUnloaded then return false end
-        if isPlayerInRagdoll() then
-            ragdollActive = true
-            break
-        end
-        if guardObj then
-            local gP = getPositionOf(guardObj)
-            if gP then
-                myHrp.CFrame = CFrame.new(gP + Vector3.new(math.random(-1, 1) * 0.3, 0.4, math.random(-1, 1) * 0.3))
-            end
-        end
-        task.wait(0.07)
-    end
-
-    -- 3. Se o Ragdoll não ativou a tempo, usar deslocamento seguro para não tomar rubberband
-    if not ragdollActive then
-        addLog("ROUBO", "Galinha fora de alcance. Chaveando para deslocamento seguro...")
-        return executeDirectSteal(target)
-    end
-
-    -- Teleporte instantâneo para o Ovo Alvo dentro da janela de física
-    myHrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 1.8, 0))
-    
-    -- Âncora micro-física para garantir acionamento estável (Mecânica Ouroboros)
-    local oldAnchored = myHrp.Anchored
-    myHrp.Anchored = true
-    task.wait(0.04)
-
-    -- 4. Disparo do Prompt
-    local pInstance = target.Prompt or (target.Instance and target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true))
-    if pInstance then
-        triggerPrompt(pInstance)
-    end
-    task.wait(0.06)
-    myHrp.Anchored = oldAnchored
-
-    -- 5. Teleporte instantâneo de volta à Esteira da Base
-    myHrp.CFrame = baseCF
-    addLog("ROUBO", "Retornou à base! Entregando ovo na esteira...")
-
-    -- 6. Espera de depósito
-    task.wait(Config.AutoDepositWait or 1.0)
-    return true
+    addLog("ROUBO", "Ragdoll TP removido; usando caminhada segura.")
+    return executeDirectSteal(target)
 end
 
--- E. Execução de Roubo via Voo Direto / Solo (LEGADO — usada como fallback pelo RagdollTP)
+-- E. Execução legada redirecionada para a mesma caminhada segura.
 executeDirectSteal = function(target)
     if not target or not target.Position then return false end
     local myHrp = getHRP()
@@ -1838,7 +1743,7 @@ executeDirectSteal = function(target)
     local baseCF = getMyDepositCFrame() or State.BaseCFrame or myHrp.CFrame
     local targetPos = target.Position
 
-    addLog("ROUBO", string.format("Voo direto em andamento para %s [%s]...", target.Name, target.Rarity))
+    addLog("ROUBO", string.format("Caminhando com segurança para %s [%s]...", target.Name, target.Rarity))
 
     local arrived = movePlayerDirect(targetPos, Config.MoveSpeed)
     if arrived then
@@ -1878,7 +1783,7 @@ local SM_TIMEOUTS = {
     INTERACTING = 1.5,
     VERIFYING_CARRY = 0.8,
     CONFIRMING = 1.5,
-    GLOBAL_CYCLE = 30.0,
+    GLOBAL_CYCLE = 120.0,
 }
 
 -- Gera chave de posição para o blacklist (arredonda para evitar flutuações)
@@ -1952,9 +1857,9 @@ local function runStateMachineTick()
         return
     end
 
-    -- Timeout global do ciclo (30s)
+    -- Caminhada real precisa de uma janela maior que o antigo TP.
     if StealSM.CycleStart > 0 and (os.clock() - StealSM.CycleStart) > SM_TIMEOUTS.GLOBAL_CYCLE then
-        addLog("TIMEOUT", "Ciclo global excedeu 30s — resetando")
+        addLog("TIMEOUT", "Ciclo global excedeu o limite seguro — resetando")
         setStealState("IDLE")
         return
     end
@@ -2037,13 +1942,6 @@ local function runStateMachineTick()
         addLog("ALVO", string.format("Selecionado: %s [%s] %s a %d studs",
             StealSM.Target.Name, StealSM.Target.Rarity, StealSM.Target.Income or "", math.floor(StealSM.Target.Distance)))
 
-        -- Se método é RagdollTP, usar fluxo legado direto
-        if Config.StealMethod == "RagdollTP" then
-            executeRagdollSteal(StealSM.Target)
-            setStealState("IDLE")
-            return
-        end
-
         setStealState("MOVING_TO_EGG")
         return
 
@@ -2057,7 +1955,7 @@ local function runStateMachineTick()
 
         -- Calcular timeout dinâmico: distância / velocidade + 3s margem
         local dist = (target.Position - myHrp.Position).Magnitude
-        local dynamicTimeout = (dist / math.max(Config.MoveSpeed, 100)) + 3.0
+        local dynamicTimeout = (dist / math.max(Config.MoveSpeed, 8)) + 8.0
 
         if elapsed > dynamicTimeout then
             addLog("TIMEOUT", "MOVING_TO_EGG excedeu timeout — resetando")
@@ -2117,15 +2015,18 @@ local function runStateMachineTick()
         local targetPrompt = StealSM.Target and (StealSM.Target.Prompt or (StealSM.Target.Instance and StealSM.Target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true)))
         local promptGone = not targetPrompt or not targetPrompt.Parent or not targetPrompt.Enabled
 
-        -- Se ovo está em mãos OU se o prompt sumiu/desativou (coletado com sucesso)
-        if holding or promptGone then
-            addLog("VERIFICAR", "Ovo confirmado em mãos! Iniciando retorno à base...")
+        -- Prompt desaparecer sozinho também ocorre por streaming, disputa ou
+        -- rejeição do servidor. Somente carry positivo confirma a coleta.
+        if holding then
+            addLog("VERIFICAR", "Carry confirmado (" .. tostring(heldName) .. ") — retornando à base")
             setStealState("RETURNING")
             return
         end
 
         if elapsed > SM_TIMEOUTS.VERIFYING_CARRY then
-            addLog("VERIFICAR", "Coleta não confirmada — selecionando outro alvo")
+            addLog("VERIFICAR", promptGone
+                and "Prompt sumiu sem carry confirmado — ignorando falso positivo"
+                or "Coleta não confirmada — selecionando outro alvo")
             if StealSM.Target and StealSM.Target.Position then
                 StealSM.Blacklist[posKey(StealSM.Target.Position)] = os.clock() + 3.0
             end
@@ -2145,7 +2046,7 @@ local function runStateMachineTick()
         end
 
         local dist = (baseCF.Position - myHrp.Position).Magnitude
-        local dynamicTimeout = (dist / math.max(Config.MoveSpeed, 100)) + 3.0
+        local dynamicTimeout = (dist / math.max(Config.MoveSpeed, 8)) + 8.0
 
         if elapsed > dynamicTimeout then
             addLog("TIMEOUT", "RETURNING excedeu timeout — resetando")
@@ -2162,21 +2063,18 @@ local function runStateMachineTick()
         if arrived then
             setStealState("DEPOSITING")
         else
-            -- Se falhou ao mover, tentar teleporte direto (fallback)
-            myHrp.CFrame = baseCF
-            setStealState("DEPOSITING")
+            addLog("RETORNO", "Rota segura até a base indisponível — TP não será usado")
+            setStealState("IDLE")
         end
         return
 
     --=== DEPOSITING ===--
     elseif current == "DEPOSITING" then
         task.wait(0.5)
-        local depositPart, depositCFrame = getMyDepositTarget()
-        if depositCFrame then
-            myHrp.CFrame = depositCFrame
-        end
+        local depositPart = getMyDepositTarget()
         if depositPart and depositPart.Parent then
-            myHrp.CFrame = depositPart.CFrame + Vector3.new(0, 1.0, 0)
+            myHum:MoveTo(depositPart.Position)
+            task.wait(0.6)
             pcall(function()
                 if firetouchinterest then
                     firetouchinterest(myHrp, depositPart, 0)
@@ -2193,6 +2091,8 @@ local function runStateMachineTick()
         local holding, _ = isHoldingEgg()
         if not holding then
             addLog("CONFIRMAR", "Ovo depositado com sucesso!")
+            State.CarryConfirmed = false
+            State.CarryEvidence = nil
             StealSM.Target = nil
             StealSM.ConsecutiveFails = 0
             StealSM.DepositRetries = 0
@@ -2203,6 +2103,8 @@ local function runStateMachineTick()
         -- Nunca formar CONFIRMING -> RETURNING -> DEPOSITING em loop.
         if elapsed >= 1.5 then
             addLog("CONFIRMAR", "Confirmação atrasada pelo servidor — liberando o ciclo")
+            State.CarryConfirmed = false
+            State.CarryEvidence = nil
             StealSM.Target = nil
             StealSM.ConsecutiveFails = 0
             StealSM.DepositRetries = 0
@@ -2483,6 +2385,7 @@ local function clearAllESP()
 end
 
 local RarityColors = {
+    ["N/D"] = Color3.fromRGB(148, 163, 184),
     ["DIVINE"] = Color3.fromRGB(244, 63, 94),
     ["TITAN"] = Color3.fromRGB(236, 72, 153),
     ["ADMIN ABUSE"] = Color3.fromRGB(239, 68, 68),
@@ -2644,7 +2547,7 @@ Title.Font = Enum.Font.GothamBold
 Title.TextSize = 13
 Title.TextColor3 = C_CYAN
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "ROUBE UM OVO  v12.0"
+Title.Text = "ROUBE UM OVO  v12.1"
 Title.Parent = Topbar
 
 StatusBadge = Instance.new("TextLabel")
@@ -2696,7 +2599,7 @@ addCorner(TabBar, 8)
 
 local TabButtons = {}
 local TabPages = {}
-local tabNames = {"Auto-Roubo", "Auto-Esteira", "Radar de Ovos", "Teleportes", "Configuracoes"}
+local tabNames = {"Auto-Roubo", "Auto-Esteira", "Radar de Ovos", "Rotas Seguras", "Configuracoes"}
 local activeTab = "Auto-Roubo"
 
 local ContentArea = Instance.new("Frame")
@@ -2776,25 +2679,15 @@ addStroke(MainToggleBtn, Config.AutoStealEnabled and C_GREEN or C_CYAN, 1.2)
 local MethodBtn = Instance.new("TextButton")
 MethodBtn.Size = UDim2.new(1, 0, 0, 36)
 MethodBtn.BackgroundColor3 = Color3.fromRGB(26, 36, 60)
-MethodBtn.Text = (Config.StealMethod == "RagdollTP") and "[METODO: SALTO POR IMPACTO (GALINHA BYPASS)]" or "[METODO: VOO DIRETO NO SOLO]"
+MethodBtn.Text = "[MÉTODO: CAMINHADA SEGURA — TP REMOVIDO]"
 MethodBtn.Font = Enum.Font.GothamBold
 MethodBtn.TextSize = 11
-MethodBtn.TextColor3 = (Config.StealMethod == "RagdollTP") and C_PURPLE or C_CYAN
+MethodBtn.TextColor3 = C_GREEN
 MethodBtn.Parent = AutoStealPage
 addCorner(MethodBtn, 6)
 addStroke(MethodBtn, C_BORDER, 1)
 
-MethodBtn.MouseButton1Click:Connect(function()
-    if Config.StealMethod == "RagdollTP" then
-        Config.StealMethod = "VooDireto"
-        MethodBtn.Text = "[METODO: VOO DIRETO NO SOLO]"
-        MethodBtn.TextColor3 = C_CYAN
-    else
-        Config.StealMethod = "RagdollTP"
-        MethodBtn.Text = "[METODO: SALTO POR IMPACTO (GALINHA BYPASS)]"
-        MethodBtn.TextColor3 = C_PURPLE
-    end
-end)
+MethodBtn.AutoButtonColor = false
 
 -- Card da Base (Completamente Legível)
 local BaseCard = createCleanCard(AutoStealPage, 54)
@@ -2857,6 +2750,15 @@ TargetInfoLabel.Parent = TargetCard
 
 MainToggleBtn.MouseButton1Click:Connect(function()
     Config.AutoStealEnabled = not Config.AutoStealEnabled
+    if Config.AutoStealEnabled then
+        Config.AutoEsteiraEnabled = false
+        State.IsOnTreadmill = false
+        if EsteiraToggleBtn then
+            EsteiraToggleBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+            EsteiraToggleBtn.Text = "ATIVAR AUTO-ESTEIRA (TREINO)"
+            addStroke(EsteiraToggleBtn, C_CYAN, 1)
+        end
+    end
     MainToggleBtn.BackgroundColor3 = Config.AutoStealEnabled and C_GREEN or Color3.fromRGB(30, 41, 59)
     MainToggleBtn.Text = Config.AutoStealEnabled and "AUTO-ROUBO ATIVADO (EM EXECUCAO)" or "ATIVAR AUTO-ROUBO"
     addStroke(MainToggleBtn, Config.AutoStealEnabled and C_GREEN or C_CYAN, 1)
@@ -2883,7 +2785,7 @@ EsteiraDesc.TextXAlignment = Enum.TextXAlignment.Left
 EsteiraDesc.Text = "Treina continuamente na esteira da sua propria base. Quando estiver na esteira, o personagem corre sem parar (sem entrar no estado travado/parado)."
 EsteiraDesc.Parent = EsteiraDescCard
 
-local EsteiraToggleBtn = Instance.new("TextButton")
+EsteiraToggleBtn = Instance.new("TextButton")
 EsteiraToggleBtn.Size = UDim2.new(1, 0, 0, 42)
 EsteiraToggleBtn.BackgroundColor3 = Config.AutoEsteiraEnabled and C_GREEN or Color3.fromRGB(30, 41, 59)
 EsteiraToggleBtn.Text = Config.AutoEsteiraEnabled and "AUTO-ESTEIRA ATIVADA (TREINANDO)" or "ATIVAR AUTO-ESTEIRA (TREINO)"
@@ -2923,58 +2825,83 @@ local function findMyTreadmill()
     if not myPlot then return nil, nil end
     local plotCenter = myPlot:GetPivot().Position
 
-    -- 1. Buscar na pasta de renders de esteira proximo do plot (<= 55 studs)
-    local ctr = Services.Workspace:FindFirstChild("__ClientTreadmillRenders")
-    if ctr then
-        local bestCandidate = nil
-        local bestDist = 55
-        for _, child in ipairs(ctr:GetChildren()) do
-            local pos = child:IsA("Model") and child:GetPivot().Position or (child:IsA("BasePart") and child.Position)
-            if pos then
-                local d = (pos - plotCenter).Magnitude
-                if d < bestDist then
-                    bestDist = d
-                    bestCandidate = child
+    local function getTreadmillPart(root)
+        if root:IsA("BasePart") then return root end
+        local fallback = nil
+        local largestArea = 0
+        for _, desc in ipairs(root:GetDescendants()) do
+            if desc:IsA("BasePart") then
+                local low = desc.Name:lower()
+                if low:find("treadmill", 1, true) or low:find("esteira", 1, true)
+                    or low:find("belt", 1, true) or low:find("run", 1, true) then
+                    return desc
+                end
+                local area = desc.Size.X * desc.Size.Z
+                if area > largestArea then
+                    largestArea = area
+                    fallback = desc
                 end
             end
         end
-        if bestCandidate then
-            local pos = bestCandidate:IsA("Model") and bestCandidate:GetPivot().Position or bestCandidate.Position
-            return bestCandidate, pos + Vector3.new(0, 1.6, 0)
-        end
+        return fallback
     end
 
-    -- 2. Buscar dentro do proprio plot
+    -- Primeiro use uma peça real que pertença ao próprio plot.
     for _, desc in ipairs(myPlot:GetDescendants()) do
         local low = desc.Name:lower()
-        if low:find("treadmill") or low:find("esteira") or low:find("speed") or low:find("belt") then
-            if desc:IsA("BasePart") then
-                return desc, desc.Position + Vector3.new(0, 1.6, 0)
-            elseif desc:IsA("Model") then
-                return desc, desc:GetPivot().Position + Vector3.new(0, 1.6, 0)
-            end
+        if low:find("treadmill", 1, true) or low:find("esteira", 1, true)
+            or low:find("speed", 1, true) or low:find("belt", 1, true) then
+            local part = getTreadmillPart(desc)
+            if part then return part, part.Position + Vector3.new(0, 1.5, 0) end
         end
     end
 
-    return nil, plotCenter + Vector3.new(0, 2.0, 0)
+    -- Renders do cliente podem ficar fora da hierarquia do plot. Priorize o
+    -- UserId no nome e, como fallback, a menor distância horizontal.
+    local ctr = Services.Workspace:FindFirstChild("__ClientTreadmillRenders")
+    if ctr then
+        local bestCandidate = nil
+        local bestPart = nil
+        local bestScore = math.huge
+        local myId = tostring(LocalPlayer.UserId)
+        for _, child in ipairs(ctr:GetChildren()) do
+            local part = getTreadmillPart(child)
+            if part then
+                local delta = part.Position - plotCenter
+                local horizontalDistance = Vector3.new(delta.X, 0, delta.Z).Magnitude
+                local ownerMatch = child.Name:find(myId, 1, true) ~= nil
+                local score = ownerMatch and (horizontalDistance - 1000) or horizontalDistance
+                if (ownerMatch or horizontalDistance <= 120) and score < bestScore then
+                    bestScore = score
+                    bestCandidate = child
+                    bestPart = part
+                end
+            end
+        end
+        if bestCandidate and bestPart then
+            return bestPart, bestPart.Position + Vector3.new(0, 1.5, 0)
+        end
+    end
+
+    return nil, nil
 end
 
 GoToEsteiraBtn.MouseButton1Click:Connect(function()
-    local hrp = getHRP()
-    if not hrp then return end
     local _, tPos = findMyTreadmill()
     if tPos then
-        hrp.CFrame = CFrame.new(tPos)
-        addLog("ESTEIRA", "Teleportado para a sua esteira!")
+        task.spawn(function()
+            addLog("ESTEIRA", "Caminhando até a sua esteira...")
+            local arrived = movePlayerSafe(tPos, 24)
+            addLog("ESTEIRA", arrived and "Chegou à esteira." or "Não foi possível calcular uma rota segura.")
+        end)
     else
-        addLog("ESTEIRA", "Esteira nao encontrada. Indo para a base.")
-        local dep = getMyDepositCFrame()
-        if dep then hrp.CFrame = dep end
+        addLog("ESTEIRA", "Esteira real não encontrada no seu plot.")
     end
 end)
 
 -- Conexao de corrida continua no Heartbeat (resolve 100% o estado parado)
 local esteiraHeartbeatConn = nil
+local treadmillNavigating = false
 local function setupEsteiraRunner()
     if esteiraHeartbeatConn then esteiraHeartbeatConn:Disconnect() end
     esteiraHeartbeatConn = Services.RunService.Heartbeat:Connect(function()
@@ -2993,7 +2920,7 @@ local function setupEsteiraRunner()
             return
         end
 
-        local _, tPos = findMyTreadmill()
+        local tPart, tPos = findMyTreadmill()
         if not tPos then
             State.IsOnTreadmill = false
             return
@@ -3002,14 +2929,24 @@ local function setupEsteiraRunner()
         local hDist = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(tPos.X, 0, tPos.Z)).Magnitude
 
         if hDist > 4.0 then
-            hrp.CFrame = CFrame.new(tPos)
+            State.IsOnTreadmill = false
+            if not treadmillNavigating and not isMoving then
+                treadmillNavigating = true
+                task.spawn(function()
+                    movePlayerSafe(tPos, 24)
+                    treadmillNavigating = false
+                end)
+            end
+            return
         end
         State.IsOnTreadmill = true
         if StatusBadge and StatusBadge.Text ~= "NA ESTEIRA" then
             StatusBadge.Text = "NA ESTEIRA"
             StatusBadge.TextColor3 = C_YELLOW
         end
-        hum:Move(Vector3.new(0, 0, -1), false)
+        local runDirection = Vector3.new(tPart.CFrame.LookVector.X, 0, tPart.CFrame.LookVector.Z)
+        if runDirection.Magnitude < 0.1 then runDirection = Vector3.new(0, 0, -1) end
+        hum:Move(runDirection.Unit, false)
     end)
     table.insert(ScriptConnections, esteiraHeartbeatConn)
 end
@@ -3018,6 +2955,13 @@ setupEsteiraRunner()
 
 EsteiraToggleBtn.MouseButton1Click:Connect(function()
     Config.AutoEsteiraEnabled = not Config.AutoEsteiraEnabled
+    if Config.AutoEsteiraEnabled then
+        Config.AutoStealEnabled = false
+        setStealState("IDLE")
+        MainToggleBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+        MainToggleBtn.Text = "ATIVAR AUTO-ROUBO"
+        addStroke(MainToggleBtn, C_CYAN, 1)
+    end
     EsteiraToggleBtn.BackgroundColor3 = Config.AutoEsteiraEnabled and C_GREEN or Color3.fromRGB(30, 41, 59)
     EsteiraToggleBtn.Text = Config.AutoEsteiraEnabled and "AUTO-ESTEIRA ATIVADA (TREINANDO)" or "ATIVAR AUTO-ESTEIRA (TREINO)"
     addStroke(EsteiraToggleBtn, Config.AutoEsteiraEnabled and C_GREEN or C_CYAN, 1)
@@ -3154,10 +3098,12 @@ local function executeCleanRadarScan()
 
             local eggPos = egg.Position
             GoBtn.MouseButton1Click:Connect(function()
-                local hrp = getHRP()
-                if hrp and eggPos then
-                    hrp.CFrame = CFrame.new(eggPos + Vector3.new(0, 2.0, 0))
-                    addLog("TELEPORTE", "Teleportado para: " .. egg.Name)
+                if eggPos and not isMoving then
+                    task.spawn(function()
+                        addLog("ROTA", "Calculando caminho seguro para: " .. egg.Name)
+                        local arrived = movePlayerSafe(eggPos, 24)
+                        addLog("ROTA", arrived and "Destino alcançado." or "Não existe rota segura até esse ovo.")
+                    end)
                 end
             end)
         end
@@ -3183,9 +3129,9 @@ EspToggleBtn.MouseButton1Click:Connect(function()
 end)
 
 --================================================================--
--- ABA 4: TELEPORTES (BASE, ESTEIRA E TODAS AS 11 ILHAS)
+-- ABA 4: ROTAS SEGURAS (BASE, ESTEIRA E TODAS AS 11 ILHAS)
 --================================================================--
-local TeleportsPage = TabPages["Teleportes"]
+local TeleportsPage = TabPages["Rotas Seguras"]
 
 local QuickTpCard = createCleanCard(TeleportsPage, 50)
 local TpBaseBtn = Instance.new("TextButton")
@@ -3201,11 +3147,13 @@ addCorner(TpBaseBtn, 6)
 addStroke(TpBaseBtn, C_GREEN, 1.2)
 
 TpBaseBtn.MouseButton1Click:Connect(function()
-    local hrp = getHRP()
-    if hrp then
-        local dep = getMyDepositCFrame() or State.BaseCFrame
-        if dep then hrp.CFrame = dep end
-        addLog("TELEPORTE", "Teleportado para a base!")
+    local dep = getMyDepositCFrame() or State.BaseCFrame
+    if dep and not isMoving then
+        task.spawn(function()
+            addLog("ROTA", "Caminhando para a base...")
+            local arrived = movePlayerSafe(dep.Position, 24)
+            addLog("ROTA", arrived and "Base alcançada." or "Rota segura para a base indisponível.")
+        end)
     end
 end)
 
@@ -3222,11 +3170,13 @@ addCorner(TpEsteiraBtn, 6)
 addStroke(TpEsteiraBtn, C_YELLOW, 1.2)
 
 TpEsteiraBtn.MouseButton1Click:Connect(function()
-    local hrp = getHRP()
-    if hrp then
-        local _, tPos = findMyTreadmill()
-        if tPos then hrp.CFrame = CFrame.new(tPos) end
-        addLog("TELEPORTE", "Teleportado para a esteira!")
+    local _, tPos = findMyTreadmill()
+    if tPos and not isMoving then
+        task.spawn(function()
+            addLog("ROTA", "Caminhando para a esteira...")
+            local arrived = movePlayerSafe(tPos, 24)
+            addLog("ROTA", arrived and "Esteira alcançada." or "Rota segura para a esteira indisponível.")
+        end)
     end
 end)
 
@@ -3265,10 +3215,12 @@ for idx, isl in ipairs(OfficialIslands) do
     local targetX = (isl.MinX + math.min(isl.MaxX, isl.MinX + 120)) / 2
     local targetZ = isl.BaseZ or -350
     islBtn.MouseButton1Click:Connect(function()
-        local hrp = getHRP()
-        if hrp then
-            hrp.CFrame = CFrame.new(targetX, 68, targetZ)
-            addLog("TELEPORTE", "Teleportado para: " .. isl.Name)
+        if not isMoving then
+            task.spawn(function()
+                addLog("ROTA", "Caminhando para: " .. isl.Name)
+                local arrived = movePlayerSafe(Vector3.new(targetX, 68, targetZ), 24)
+                addLog("ROTA", arrived and ("Chegou a " .. isl.Name) or "Não existe rota segura para essa ilha.")
+            end)
         end
     end)
 end
@@ -3387,7 +3339,7 @@ SpeedLabel.Font = Enum.Font.GothamBold
 SpeedLabel.TextSize = 11
 SpeedLabel.TextColor3 = C_TEXT
 SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
-SpeedLabel.Text = string.format("Velocidade de Deslocamento: %d studs/s", Config.MoveSpeed)
+SpeedLabel.Text = string.format("Velocidade de Caminhada: %d", Config.MoveSpeed)
 SpeedLabel.Parent = SlidersCard
 
 local SpeedSliderBg = Instance.new("Frame")
@@ -3398,7 +3350,7 @@ SpeedSliderBg.Parent = SlidersCard
 addCorner(SpeedSliderBg, 5)
 
 local SpeedSliderFill = Instance.new("Frame")
-SpeedSliderFill.Size = UDim2.new(Config.MoveSpeed / 600, 0, 1, 0)
+SpeedSliderFill.Size = UDim2.new((Config.MoveSpeed - 16) / 16, 0, 1, 0)
 SpeedSliderFill.BackgroundColor3 = C_CYAN
 SpeedSliderFill.BorderSizePixel = 0
 SpeedSliderFill.Parent = SpeedSliderBg
@@ -3423,11 +3375,11 @@ table.insert(ScriptConnections, Services.RunService.RenderStepped:Connect(functi
         local mousePos = Services.UserInputService:GetMouseLocation().X
         local barPos = SpeedSliderBg.AbsolutePosition.X
         local barSize = SpeedSliderBg.AbsoluteSize.X
-        local pct = math.clamp((mousePos - barPos) / barSize, 0.1, 1)
+        local pct = math.clamp((mousePos - barPos) / barSize, 0, 1)
         SpeedSliderFill.Size = UDim2.new(pct, 0, 1, 0)
-        local val = math.floor(pct * 600)
+        local val = 16 + math.floor(pct * 16)
         Config.MoveSpeed = val
-        SpeedLabel.Text = string.format("Velocidade de Deslocamento: %d studs/s", val)
+        SpeedLabel.Text = string.format("Velocidade de Caminhada: %d", val)
     end
 end))
 
@@ -3783,7 +3735,7 @@ end)
 task.delay(0.8, function()
     if State.IsUnloaded then return end
     executeCleanRadarScan()
-    addLog("SISTEMA", "Roube um Ovo v10.0 carregado com sucesso!")
+    addLog("SISTEMA", "Roube um Ovo v12.1 carregado com sucesso!")
     pcall(function()
         Services.StarterGui:SetCore("SendNotification", {
             Title = "Roube um Ovo Hub",
