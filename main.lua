@@ -1,5 +1,9 @@
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
 --[[
-    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v9.5 NOMES ÚNICOS & CLEAN UI)
+    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v10.0 MASTER CLEAN)
     -----------------------------------------------------------------------
     - Nomes Únicos de Ovos: Cada um dos 5 slots de cada ilha possui o nome
       real do pet do drop (Godzilla, King Kong, Kitsune, Oni Tiger, etc.).
@@ -15,12 +19,7 @@
     - Neutralização Ativa Anti-Cheat e Movimento Seguro.
 ]]
 
--- 1. Silenciamento Total Preventivo contra LogService.MessageOut
-local function silentOutput(...) end
-local print = silentOutput
-local warn = silentOutput
-
--- 2. Limpeza Preventiva de Globais
+-- 1. Limpeza Preventiva de Globais
 pcall(function()
     _G.DiscoveredEggs = nil
     _G.UpdateRadarCards = nil
@@ -38,7 +37,7 @@ pcall(function()
     end
 end)
 
--- 3. Serviços Seguros via cloneref
+-- 2. Serviços Seguros via cloneref
 local function safeService(name)
     local s = game:GetService(name)
     return (cloneref and cloneref(s)) or s
@@ -52,7 +51,8 @@ local Services = {
     UserInputService = safeService("UserInputService"),
     TweenService = safeService("TweenService"),
     ReplicatedStorage = safeService("ReplicatedStorage"),
-    CoreGui = safeService("CoreGui")
+    CoreGui = safeService("CoreGui"),
+    StarterGui = safeService("StarterGui")
 }
 
 local LocalPlayer = Services.Players.LocalPlayer
@@ -61,13 +61,100 @@ while not LocalPlayer do
     LocalPlayer = Services.Players.LocalPlayer
 end
 
--- Gerenciador Mestre de Conexões e Limpeza de Execuções Anteriores
+-- 3. Paleta de Cores e Estilos Globais
+local C_BG = Color3.fromRGB(15, 23, 42)
+local C_TOPBAR = Color3.fromRGB(30, 41, 59)
+local C_CARD = Color3.fromRGB(24, 33, 53)
+local C_BORDER = Color3.fromRGB(51, 65, 85)
+local C_CYAN = Color3.fromRGB(56, 189, 248)
+local C_TEXT = Color3.fromRGB(248, 250, 252)
+local C_MUTED = Color3.fromRGB(148, 163, 184)
+local C_GREEN = Color3.fromRGB(34, 197, 94)
+local C_PURPLE = Color3.fromRGB(168, 85, 247)
+local C_RED = Color3.fromRGB(239, 68, 68)
+local C_YELLOW = Color3.fromRGB(234, 179, 8)
+
+-- 4. Gerenciador Mestre de Conexões e Limpeza
+local ScriptConnections = {}
 
 local function registerConnection(conn)
     if conn then
         table.insert(ScriptConnections, conn)
     end
     return conn
+end
+
+-- 5. Configuração e Estado Geral
+local Config = {
+    StealMethod = "RagdollTP", -- "RagdollTP" ou "VooDireto"
+    AutoStealEnabled = false,
+    AutoEsteiraEnabled = false,
+    SafeFlightEnabled = true,
+    LockCurrentIsland = true,
+    MaxStealDistance = 450,
+    MoveSpeed = 350,
+    TargetRarity = "Qualquer",
+    MinRarityScore = 0,
+    ESPEnabled = false,
+    ShowOnlyUnowned = true,
+    AutoDepositWait = 1.0,
+    SearchQuery = "",
+    InfJumpEnabled = false,
+    NoclipEnabled = false,
+    WalkSpeed = 16
+}
+
+local State = {
+    IsUnloaded = false,
+    BaseCFrame = nil,
+    PlotFound = false,
+    IsExecutingSteal = false,
+    IsOnTreadmill = false,
+    CurrentTargetEgg = nil,
+    LastPromptTriggered = nil,
+    Logs = {}
+}
+
+-- Declarações antecipadas de componentes da UI e Funções
+local ScreenGui = nil
+local MobileBtn = nil
+local MainFrame = nil
+local StatusBadge = nil
+local TargetInfoLabel = nil
+local BaseLabel = nil
+local EsteiraStatusLabel = nil
+local MainToggleBtn = nil
+local unloadScript = nil
+local executeDirectSteal = nil
+
+-- Função segura de anexação da GUI ao container do executor
+local function attachGui(gui)
+    local attached = false
+    if gethui then
+        local ok, res = pcall(gethui)
+        if ok and res then
+            gui.Parent = res
+            attached = true
+        end
+    end
+    if not attached and Services.CoreGui then
+        local ok = pcall(function()
+            gui.Parent = Services.CoreGui
+        end)
+        if ok and gui.Parent == Services.CoreGui then
+            attached = true
+        end
+    end
+    if not attached then
+        pcall(function()
+            local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 5)
+            if pg then
+                gui.Parent = pg
+                attached = true
+            end
+        end)
+    end
+    return attached
 end
 
 local function purgeAllGuis()
@@ -110,7 +197,7 @@ pcall(function()
 end)
 purgeAllGuis()
 
--- 4. NEUTRALIZAÇÃO ATIVA DE ANTI-CHEAT LOCAL DO CHARACTER (SEM DESATIVAR RAGDOLL)
+-- 6. NEUTRALIZAÇÃO ATIVA DE ANTI-CHEAT LOCAL DO CHARACTER (SEM DESATIVAR RAGDOLL)
 local function disableCharacterAntiCheats(char)
     if not char then return end
     pcall(function()
@@ -153,49 +240,6 @@ registerConnection(LocalPlayer.CharacterAdded:Connect(function(newChar)
         end
     end))
 end))
-
--- 5. Configuração e Estado Geral
-local Config = {
-    StealMethod = "RagdollTP", -- "RagdollTP" ou "VooDireto"
-    AutoStealEnabled = false,
-    AutoEsteiraEnabled = false,
-    SafeFlightEnabled = true,
-    LockCurrentIsland = true,
-    MaxStealDistance = 450,
-    MoveSpeed = 350,
-    TargetRarity = "Qualquer",
-    MinRarityScore = 0,
-    ESPEnabled = false,
-    ShowOnlyUnowned = true,
-    AutoDepositWait = 1.0,
-    SearchQuery = "",
-    InfJumpEnabled = false,
-    NoclipEnabled = false,
-    WalkSpeed = 16
-}
-
-
-local State = {
-    IsUnloaded = false,
-    BaseCFrame = nil,
-    PlotFound = false,
-    IsExecutingSteal = false,
-    IsOnTreadmill = false,
-    CurrentTargetEgg = nil,
-    LastPromptTriggered = nil,
-    Logs = {}
-}
-
--- Declarações antecipadas de componentes da UI para acesso global interno
-local ScreenGui = nil
-local MobileBtn = nil
-local MainFrame = nil
-local StatusBadge = nil
-local TargetInfoLabel = nil
-local BaseLabel = nil
-local EsteiraStatusLabel = nil
-local MainToggleBtn = nil
-local unloadScript = nil
 
 local function addLog(category, msg)
     local timestamp = os.date("%H:%M:%S")
@@ -1518,7 +1562,7 @@ local function executeRagdollSteal(target)
 end
 
 -- E. Execução de Roubo via Voo Direto / Solo
-local function executeDirectSteal(target)
+executeDirectSteal = function(target)
     if not target or not target.Position then return false end
     local myHrp = getHRP()
     if not myHrp or State.IsUnloaded then return false end
@@ -1976,24 +2020,8 @@ ScreenGui.Name = "RoubeUmOvoMasterHub"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
-pcall(function()
-    if gethui then ScreenGui.Parent = gethui()
-    elseif Services.CoreGui then ScreenGui.Parent = Services.CoreGui
-    else ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
-end)
+attachGui(ScreenGui)
 
--- Paleta de Cores Slate Dark Moderna
-local C_BG = Color3.fromRGB(15, 23, 42)
-local C_TOPBAR = Color3.fromRGB(30, 41, 59)
-local C_CARD = Color3.fromRGB(24, 33, 53)
-local C_BORDER = Color3.fromRGB(51, 65, 85)
-local C_CYAN = Color3.fromRGB(56, 189, 248)
-local C_TEXT = Color3.fromRGB(248, 250, 252)
-local C_MUTED = Color3.fromRGB(148, 163, 184)
-local C_GREEN = Color3.fromRGB(34, 197, 94)
-local C_PURPLE = Color3.fromRGB(168, 85, 247)
-local C_RED = Color3.fromRGB(239, 68, 68)
-local C_YELLOW = Color3.fromRGB(234, 179, 8)
 
 local function addCorner(instance, rad)
     local corner = Instance.new("UICorner")
@@ -3076,7 +3104,14 @@ unloadScript = function()
 end
 
 -- Exportar Unload globalmente para permitir fechamento via console / executor
-_G.RoubeUmOvoUnload = unloadScript
+pcall(function()
+        Services.StarterGui:SetCore("SendNotification", {
+            Title = "Roube um Ovo Hub",
+            Text = "Script descarregado com sucesso!",
+            Duration = 3
+        })
+    end)
+    _G.RoubeUmOvoUnload = unloadScript
 if getgenv then
     pcall(function() getgenv().RoubeUmOvoUnload = unloadScript end)
 end
@@ -3170,4 +3205,11 @@ task.delay(0.8, function()
     if State.IsUnloaded then return end
     executeCleanRadarScan()
     addLog("SISTEMA", "Roube um Ovo v10.0 carregado com sucesso!")
+    pcall(function()
+        Services.StarterGui:SetCore("SendNotification", {
+            Title = "Roube um Ovo Hub",
+            Text = "Script carregado com sucesso! [CTRL ou botao para abrir/fechar]",
+            Duration = 5
+        })
+    end)
 end)
