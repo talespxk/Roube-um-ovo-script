@@ -263,80 +263,54 @@ local function getHum()
     return c and c:FindFirstChildWhichIsA("Humanoid")
 end
 
--- 6. Detecção de Posse de Ovo Ultra-Ampla
-local standardLimbNames = {
-    ["head"] = true, ["uppertorso"] = true, ["lowertorso"] = true,
-    ["leftupperarm"] = true, ["rightupperarm"] = true, ["leftlowerarm"] = true,
-    ["rightlowerarm"] = true, ["lefthand"] = true, ["righthand"] = true,
-    ["leftlowerleg"] = true, ["rightlowerleg"] = true, ["leftfoot"] = true,
-    ["rightfoot"] = true, ["humanoidrootpart"] = true,
-    ["leftupperleg"] = true, ["rightupperleg"] = true, ["torso"] = true,
-    ["left arm"] = true, ["right arm"] = true, ["left leg"] = true,
-    ["right leg"] = true, ["animate"] = true, ["humanoid"] = true
-}
-
+-- 6. Detecção de Posse de Ovo — Estratégia de 3 Camadas (v11.0 — Sem Falso Positivo R15)
+-- ============================================================================
+-- NÃO verificamos mais BasePart soldadas genéricas (Motor6D, Weld, WeldConstraint)
+-- porque partes do corpo R15 (Head com Neck, UpperTorso, etc.) disparam falso positivo.
+-- NÃO verificamos mais PlayerGui.AssetEggData (também disparava falso positivo).
+-- APENAS verificamos:
+--   Camada 1: Atributos explícitos com "egg", "carry", "hold", "grab"
+--   Camada 2: Tool no Character ou Backpack com "egg"/"ovo" no nome ou atributo
+--   Camada 3: Model soldado ao Character com "egg"/"ovo" no nome ou atributo IsEgg
+-- ============================================================================
 local function isHoldingEgg()
     local char = LocalPlayer.Character
     if not char then return false, nil end
 
-    -- 1. Atributos no Personagem
-    for k, v in pairs(char:GetAttributes()) do
-        local low = k:lower()
-        if low:find("egg") or low:find("carry") or low:find("hold") or low:find("uid") or low:find("grab") then
-            if v ~= nil and v ~= "" and v ~= false then
-                return true, k .. "=" .. tostring(v)
+    -- Camada 1: Atributos explícitos no Character e LocalPlayer
+    for _, target in ipairs({char, LocalPlayer}) do
+        for k, v in pairs(target:GetAttributes()) do
+            local low = k:lower()
+            if low:find("egg") or low:find("carry") or low:find("hold") or low:find("grab") then
+                if v ~= nil and v ~= "" and v ~= false then
+                    return true, k .. "=" .. tostring(v)
+                end
             end
         end
     end
 
-    -- 2. Atributos no LocalPlayer
-    for k, v in pairs(LocalPlayer:GetAttributes()) do
-        local low = k:lower()
-        if low:find("egg") or low:find("carry") or low:find("hold") or low:find("uid") or low:find("grab") then
-            if v ~= nil and v ~= "" and v ~= false then
-                return true, k .. "=" .. tostring(v)
+    -- Camada 2: Tool no Character ou Backpack com nome/atributo de ovo
+    for _, container in ipairs({char, LocalPlayer:FindFirstChildOfClass("Backpack")}) do
+        if container then
+            for _, item in ipairs(container:GetChildren()) do
+                if item:IsA("Tool") then
+                    local n = item.Name:lower()
+                    if n:find("egg") or n:find("ovo") or item:GetAttribute("IsEgg") or item:GetAttribute("EggType") then
+                        return true, item.Name
+                    end
+                end
             end
         end
     end
 
-    -- 3. Objetos soldados ao personagem (Chicken Egg, UUID ou modelo anexado)
+    -- Camada 3: Model soldado ao Character com nome contendo "egg" ou "ovo"
+    -- (NUNCA verifica BasePart avulsa — evita falso positivo com membros R15)
     for _, child in ipairs(char:GetChildren()) do
-        local low = child.Name:lower()
-        if not standardLimbNames[low] and not child:IsA("Accessory") and not child:IsA("Shirt")
-            and not child:IsA("Pants") and not child:IsA("BodyColors") and not child:IsA("CharacterMesh") then
-            if child:IsA("Tool") then
+        if child:IsA("Model") then
+            local low = child.Name:lower()
+            if low:find("egg") or low:find("ovo") or child:GetAttribute("IsEgg") then
                 return true, child.Name
             end
-            if child:IsA("Model") or child:IsA("BasePart") then
-                local hasWeld = child:FindFirstChildWhichIsA("WeldConstraint", true)
-                    or child:FindFirstChildWhichIsA("Weld", true)
-                    or child:FindFirstChildWhichIsA("Motor6D", true)
-                if hasWeld then
-                    return true, child.Name
-                end
-            end
-        end
-    end
-
-    -- 4. Mochila (Backpack)
-    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
-    if bp then
-        for _, item in ipairs(bp:GetChildren()) do
-            if item:IsA("Tool") then
-                local n = item.Name:lower()
-                if n:find("egg") or n:find("ovo") or item:GetAttribute("IsEgg") or item:GetAttribute("EggType") then
-                    return true, item.Name
-                end
-            end
-        end
-    end
-
-    -- 5. Indicador em PlayerGui
-    local pgui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    if pgui then
-        local eggDataGui = pgui:FindFirstChild("AssetEggData")
-        if eggDataGui and eggDataGui.Enabled then
-            return true, "AssetEggData"
         end
     end
 
@@ -486,7 +460,7 @@ local KnownPetsCatalog = {
     ["froggo"] = { DisplayName = "Froggo", Rarity = "MYTHIC" },
 }
 
--- 7.1. BANCO DE DADOS DAS 11 ILHAS OFICIAIS E PETS ÚNICOS POR SLOT
+-- 7.1. BANCO DE DADOS DAS 11 ILHAS OFICIAIS — 8 PETS POR ILHA (Drop Tables Oficiais v11.0)
 local OfficialIslands = {
     {
         Id = "Forest",
@@ -499,11 +473,14 @@ local OfficialIslands = {
         EggShell = "Ovo da Floresta",
         Guard = "Forest Guard",
         SlotPets = {
-            [1] = { Name = "Brr Brr Patapim", Rarity = "LENDÁRIO", Score = 15000 },
-            [2] = { Name = "Urso (Bear)", Rarity = "ÉPICO", Score = 8000 },
-            [3] = { Name = "Raposa do Pântano (Mire Fox)", Rarity = "ÉPICO", Score = 8000 },
-            [4] = { Name = "Guaxinim (Raccoon)", Rarity = "RARO", Score = 3500 },
-            [5] = { Name = "Galinha (Chicken)", Rarity = "COMUM", Score = 300 }
+            [1] = { Name = "Galinha (Chicken)", Rarity = "COMUM", Score = 300 },
+            [2] = { Name = "Cachorro (Dog)", Rarity = "COMUM", Score = 300 },
+            [3] = { Name = "Pássaro (DesertLark)", Rarity = "INCOMUM", Score = 1500 },
+            [4] = { Name = "Coruja Escavadora (Burrowing Owl)", Rarity = "RARO", Score = 3500 },
+            [5] = { Name = "Guaxinim (Raccoon)", Rarity = "RARO", Score = 3500 },
+            [6] = { Name = "Raposa do Pântano (Mire Fox)", Rarity = "ÉPICO", Score = 8000 },
+            [7] = { Name = "Urso (Bear)", Rarity = "ÉPICO", Score = 8000 },
+            [8] = { Name = "Brr Brr Patapim", Rarity = "LENDÁRIO", Score = 15000 }
         }
     },
     {
@@ -513,15 +490,18 @@ local OfficialIslands = {
         BaseZ = -410,
         Rarity = "INCOMUM",
         Score = 1500,
-        TopDrop = "Crocodile",
+        TopDrop = "Basilisk",
         EggShell = "Ovo do Lago",
         Guard = "Lake Guard",
         SlotPets = {
-            [1] = { Name = "Crocodilo (Crocodile)", Rarity = "ÉPICO", Score = 8000 },
-            [2] = { Name = "Cisne (Swan)", Rarity = "ÉPICO", Score = 8000 },
+            [1] = { Name = "Sapo (Frog)", Rarity = "COMUM", Score = 300 },
+            [2] = { Name = "Patinho (Duckling)", Rarity = "COMUM", Score = 300 },
             [3] = { Name = "Peixe-Gato (Catfish)", Rarity = "INCOMUM", Score = 1500 },
-            [4] = { Name = "Patinho (Duckling)", Rarity = "COMUM", Score = 300 },
-            [5] = { Name = "Sapo (Frog)", Rarity = "COMUM", Score = 300 }
+            [4] = { Name = "Tartaruga (Turtle)", Rarity = "RARO", Score = 3500 },
+            [5] = { Name = "Trulimero Trulicina", Rarity = "ÉPICO", Score = 8000 },
+            [6] = { Name = "Cisne (Swan)", Rarity = "ÉPICO", Score = 8000 },
+            [7] = { Name = "Axolotl (Dream Axolotl)", Rarity = "LENDÁRIO", Score = 15000 },
+            [8] = { Name = "Leviatã (Basilisk)", Rarity = "COSMIC", Score = 30000 }
         }
     },
     {
@@ -531,15 +511,18 @@ local OfficialIslands = {
         BaseZ = -325,
         Rarity = "RARO",
         Score = 3500,
-        TopDrop = "Scorpio",
+        TopDrop = "Irihorus",
         EggShell = "Ovo do Deserto",
         Guard = "Desert Guard",
         SlotPets = {
-            [1] = { Name = "Aranha da Areia (Sand Spider)", Rarity = "MÍTICO", Score = 20000 },
-            [2] = { Name = "Escorpião (Scorpio)", Rarity = "LENDÁRIO", Score = 15000 },
-            [3] = { Name = "Cobra Coral (Rattlesnake)", Rarity = "LENDÁRIO", Score = 15000 },
-            [4] = { Name = "Camelo (Camel)", Rarity = "RARO", Score = 3500 },
-            [5] = { Name = "Jerboa", Rarity = "COMUM", Score = 300 }
+            [1] = { Name = "Jerboa", Rarity = "COMUM", Score = 300 },
+            [2] = { Name = "Feneco (FennecFox)", Rarity = "INCOMUM", Score = 1500 },
+            [3] = { Name = "Camelo (Camel)", Rarity = "RARO", Score = 3500 },
+            [4] = { Name = "Tob Tobi Tob Tob", Rarity = "ÉPICO", Score = 8000 },
+            [5] = { Name = "Cobra Coral (Rattlesnake)", Rarity = "LENDÁRIO", Score = 15000 },
+            [6] = { Name = "Aranha da Areia (Sand Spider)", Rarity = "MÍTICO", Score = 20000 },
+            [7] = { Name = "Escorpião (DeathstalkerScorpion)", Rarity = "MÍTICO", Score = 20000 },
+            [8] = { Name = "Esfinge Real (Irihorus)", Rarity = "COSMIC", Score = 30000 }
         }
     },
     {
@@ -549,15 +532,18 @@ local OfficialIslands = {
         BaseZ = -410,
         Rarity = "ÉPICO",
         Score = 8000,
-        TopDrop = "Bananita Dolphinita",
+        TopDrop = "Warden",
         EggShell = "Ovo da Selva",
         Guard = "Jungle Guard",
         SlotPets = {
-            [1] = { Name = "Tigre Real (Tiger)", Rarity = "MÍTICO", Score = 20000 },
-            [2] = { Name = "Gorila (Gorilla)", Rarity = "LENDÁRIO", Score = 15000 },
-            [3] = { Name = "Orangutango (Orangutini)", Rarity = "LENDÁRIO", Score = 15000 },
-            [4] = { Name = "Golfinho Banana (Bananita)", Rarity = "ÉPICO", Score = 8000 },
-            [5] = { Name = "Chimpanzé (Chimpanzee)", Rarity = "RARO", Score = 3500 }
+            [1] = { Name = "Chimpanzé (Chimpanzee)", Rarity = "RARO", Score = 3500 },
+            [2] = { Name = "Tucano (Toucan)", Rarity = "RARO", Score = 3500 },
+            [3] = { Name = "Crocodilo (Crocodile)", Rarity = "ÉPICO", Score = 8000 },
+            [4] = { Name = "Gorila (Gorilla)", Rarity = "LENDÁRIO", Score = 15000 },
+            [5] = { Name = "Orangutango (Orangutini Ananassini)", Rarity = "LENDÁRIO", Score = 15000 },
+            [6] = { Name = "Aranha (Spider)", Rarity = "MÍTICO", Score = 20000 },
+            [7] = { Name = "Tigre Real (Tiger)", Rarity = "MÍTICO", Score = 20000 },
+            [8] = { Name = "Rei Cobra (Warden)", Rarity = "SECRET", Score = 45000 }
         }
     },
     {
@@ -567,15 +553,18 @@ local OfficialIslands = {
         BaseZ = -315,
         Rarity = "LENDÁRIO",
         Score = 15000,
-        TopDrop = "Yeti",
+        TopDrop = "Ice Dragon",
         EggShell = "Ovo da Neve",
         Guard = "Snow Guard",
         SlotPets = {
-            [1] = { Name = "Yeti das Neves", Rarity = "SECRET", Score = 45000 },
-            [2] = { Name = "Mamute Real (Mammoth)", Rarity = "MÍTICO", Score = 20000 },
+            [1] = { Name = "Pinguim (Penguin)", Rarity = "RARO", Score = 3500 },
+            [2] = { Name = "Morsa (Walrus)", Rarity = "ÉPICO", Score = 8000 },
             [3] = { Name = "Urso Polar (Polar Bear)", Rarity = "LENDÁRIO", Score = 15000 },
-            [4] = { Name = "Morsa (Walrus)", Rarity = "ÉPICO", Score = 8000 },
-            [5] = { Name = "Pinguim (Penguin)", Rarity = "RARO", Score = 3500 }
+            [4] = { Name = "Tigre Dentes-de-Sabre (Sabertooth Tiger)", Rarity = "MÍTICO", Score = 20000 },
+            [5] = { Name = "Mamute (Mammoth)", Rarity = "MÍTICO", Score = 20000 },
+            [6] = { Name = "Mamute Colossal (Colossal Mammoth)", Rarity = "COSMIC", Score = 30000 },
+            [7] = { Name = "Yeti das Neves", Rarity = "SECRET", Score = 45000 },
+            [8] = { Name = "Dragão de Gelo (Ice Dragon)", Rarity = "ETERNAL", Score = 70000 }
         }
     },
     {
@@ -585,15 +574,18 @@ local OfficialIslands = {
         BaseZ = -400,
         Rarity = "MÍTICO",
         Score = 20000,
-        TopDrop = "Shadow Dragon",
+        TopDrop = "Dragon",
         EggShell = "Ovo do Vulcão",
         Guard = "Volcano Guard",
         SlotPets = {
-            [1] = { Name = "Dragão da Sombra (Shadow Dragon)", Rarity = "MÍTICO", Score = 20000 },
-            [2] = { Name = "Touro Flamejante (Flaming Bull)", Rarity = "LENDÁRIO", Score = 15000 },
-            [3] = { Name = "Iguana de Lava (Lava Iguana)", Rarity = "LENDÁRIO", Score = 15000 },
-            [4] = { Name = "Sapo de Lava (Lava Frog)", Rarity = "ÉPICO", Score = 8000 },
-            [5] = { Name = "Geco de Cinzas (Ash Gecko)", Rarity = "RARO", Score = 3500 }
+            [1] = { Name = "Geco de Cinzas (Ash Gecko)", Rarity = "RARO", Score = 3500 },
+            [2] = { Name = "Sapo de Lava (Lava Frog)", Rarity = "ÉPICO", Score = 8000 },
+            [3] = { Name = "Touro Flamejante (Flaming Bull)", Rarity = "LENDÁRIO", Score = 15000 },
+            [4] = { Name = "Iguana de Lava (Lava Iguana)", Rarity = "LENDÁRIO", Score = 15000 },
+            [5] = { Name = "Chillin Chilli", Rarity = "MÍTICO", Score = 20000 },
+            [6] = { Name = "Cérbero (Cerberus)", Rarity = "SECRET", Score = 45000 },
+            [7] = { Name = "Fênix Vermilhão (Ascended Vermilion Phoenix)", Rarity = "ETERNAL", Score = 70000 },
+            [8] = { Name = "Dragão de Lava (Dragon)", Rarity = "ETERNAL", Score = 70000 }
         }
     },
     {
@@ -607,11 +599,14 @@ local OfficialIslands = {
         EggShell = "Ovo do Abismo",
         Guard = "Abyss Ocean Guard",
         SlotPets = {
-            [1] = { Name = "El Maja", Rarity = "ETERNAL", Score = 70000 },
-            [2] = { Name = "Kraken", Rarity = "SECRET", Score = 45000 },
-            [3] = { Name = "Baleia Alabaster (Beluga)", Rarity = "COSMIC", Score = 30000 },
-            [4] = { Name = "Tubarão Baleia (Whale Shark)", Rarity = "COSMIC", Score = 30000 },
-            [5] = { Name = "Orca Assassina", Rarity = "MÍTICO", Score = 20000 }
+            [1] = { Name = "Peixe-Papagaio (Parrotfish)", Rarity = "RARO", Score = 3500 },
+            [2] = { Name = "Peixe-Espada (Swordfish)", Rarity = "ÉPICO", Score = 8000 },
+            [3] = { Name = "Tubarão (Finned Thresher)", Rarity = "LENDÁRIO", Score = 15000 },
+            [4] = { Name = "Orca Assassina (Orca)", Rarity = "MÍTICO", Score = 20000 },
+            [5] = { Name = "Tubarão Baleia (Whale Shark)", Rarity = "COSMIC", Score = 30000 },
+            [6] = { Name = "Baleia Alabaster (Alabaster Whale)", Rarity = "COSMIC", Score = 30000 },
+            [7] = { Name = "Kraken", Rarity = "SECRET", Score = 45000 },
+            [8] = { Name = "El Maja", Rarity = "ETERNAL", Score = 70000 }
         }
     },
     {
@@ -625,11 +620,14 @@ local OfficialIslands = {
         EggShell = "Ovo Pré-Histórico",
         Guard = "Prehistoric Guard",
         SlotPets = {
-            [1] = { Name = "Mosassauro (Mosasaurus)", Rarity = "ETERNAL", Score = 70000 },
-            [2] = { Name = "T-Rex (Tyrannosaurus Rex)", Rarity = "SECRET", Score = 45000 },
-            [3] = { Name = "Tralaledon", Rarity = "SECRET", Score = 45000 },
-            [4] = { Name = "Brontossauro (Bronto)", Rarity = "COSMIC", Score = 30000 },
-            [5] = { Name = "Pterodáctilo (Pterodactyl)", Rarity = "LENDÁRIO", Score = 15000 }
+            [1] = { Name = "Dodô (Dodo)", Rarity = "RARO", Score = 3500 },
+            [2] = { Name = "Pterodáctilo (Pterodactyl)", Rarity = "LENDÁRIO", Score = 15000 },
+            [3] = { Name = "Anquilossauro (Ankylosaurus)", Rarity = "MÍTICO", Score = 20000 },
+            [4] = { Name = "Tricerátops (Triceratops)", Rarity = "COSMIC", Score = 30000 },
+            [5] = { Name = "Brontossauro (Bronto)", Rarity = "COSMIC", Score = 30000 },
+            [6] = { Name = "T-Rex (TyrannosaurusRex)", Rarity = "SECRET", Score = 45000 },
+            [7] = { Name = "Tralaledon", Rarity = "SECRET", Score = 45000 },
+            [8] = { Name = "Mosassauro (Mosasaurus)", Rarity = "ETERNAL", Score = 70000 }
         }
     },
     {
@@ -643,11 +641,14 @@ local OfficialIslands = {
         EggShell = "Ovo Cósmico",
         Guard = "Cosmic Guard",
         SlotPets = {
-            [1] = { Name = "Unicórnio Divino (Unicorn)", Rarity = "DIVINE", Score = 100000 },
-            [2] = { Name = "Dragão Lunar Eterno", Rarity = "ETERNAL", Score = 70000 },
-            [3] = { Name = "Dragão Cósmico (Cave Dragon)", Rarity = "SECRET", Score = 45000 },
-            [4] = { Name = "Chefe Esqueleto Cósmico", Rarity = "SECRET", Score = 45000 },
-            [5] = { Name = "Geco Cósmico (Galaxy Gecko)", Rarity = "LENDÁRIO", Score = 15000 }
+            [1] = { Name = "Centopeia (Centapede)", Rarity = "ÉPICO", Score = 8000 },
+            [2] = { Name = "Geco Cósmico (Galaxy Gecko)", Rarity = "LENDÁRIO", Score = 15000 },
+            [3] = { Name = "Gorila Cósmico (Cyclops Gorilla)", Rarity = "MÍTICO", Score = 20000 },
+            [4] = { Name = "La Vacca Saturno Saturnita", Rarity = "COSMIC", Score = 30000 },
+            [5] = { Name = "Chefe Esqueleto Cósmico (Alien Skeleton Boss)", Rarity = "SECRET", Score = 45000 },
+            [6] = { Name = "Dragão Cósmico (Cave Dragon)", Rarity = "SECRET", Score = 45000 },
+            [7] = { Name = "Dragão Lunar Eterno (Eternal Lunar Dragon)", Rarity = "ETERNAL", Score = 70000 },
+            [8] = { Name = "Unicórnio Divino (Unicorn)", Rarity = "DIVINE", Score = 100000 }
         }
     },
     {
@@ -661,11 +662,14 @@ local OfficialIslands = {
         EggShell = "Ovo de Cerejeira",
         Guard = "Cherry Blossom Guard",
         SlotPets = {
-            [1] = { Name = "Kitsune Ancestral", Rarity = "DIVINE", Score = 100000 },
-            [2] = { Name = "Tigre Oni (Oni Tiger)", Rarity = "ETERNAL", Score = 70000 },
-            [3] = { Name = "Cervo Sagrado (Stag)", Rarity = "SECRET", Score = 45000 },
-            [4] = { Name = "Carpa Cósmica (Koi)", Rarity = "COSMIC", Score = 30000 },
-            [5] = { Name = "Coruja das Neves (Snowy Owl)", Rarity = "COSMIC", Score = 30000 }
+            [1] = { Name = "Grou (Crane)", Rarity = "ÉPICO", Score = 8000 },
+            [2] = { Name = "Salamandra (Salamander)", Rarity = "LENDÁRIO", Score = 15000 },
+            [3] = { Name = "Panda Vermelho (Red Panda)", Rarity = "MÍTICO", Score = 20000 },
+            [4] = { Name = "Coruja das Neves (Snowy Owl)", Rarity = "COSMIC", Score = 30000 },
+            [5] = { Name = "Carpa Cósmica (Koi)", Rarity = "COSMIC", Score = 30000 },
+            [6] = { Name = "Cervo Sagrado (Stag)", Rarity = "SECRET", Score = 45000 },
+            [7] = { Name = "Tigre Oni (Oni Tiger)", Rarity = "ETERNAL", Score = 70000 },
+            [8] = { Name = "Kitsune Ancestral (Kitsune)", Rarity = "DIVINE", Score = 100000 }
         }
     },
     {
@@ -679,11 +683,14 @@ local OfficialIslands = {
         EggShell = "Ovo de Titã",
         Guard = "Titan Temple Guard",
         SlotPets = {
-            [1] = { Name = "Godzilla (Titã)", Rarity = "TITAN", Score = 150000 },
-            [2] = { Name = "King Kong (Gorilla King)", Rarity = "ETERNAL", Score = 70000 },
+            [1] = { Name = "Caranguejo (Crab)", Rarity = "LENDÁRIO", Score = 15000 },
+            [2] = { Name = "Aranha Titânica (Kaiju Spider)", Rarity = "LENDÁRIO", Score = 15000 },
             [3] = { Name = "Lâmina Oculta (Blade Head)", Rarity = "MÍTICO", Score = 20000 },
-            [4] = { Name = "Rinoceronte (Rhino)", Rarity = "COSMIC", Score = 30000 },
-            [5] = { Name = "Aranha Titânica (Kaiju Spider)", Rarity = "LENDÁRIO", Score = 15000 }
+            [4] = { Name = "Louva-a-Deus (Mantis)", Rarity = "COSMIC", Score = 30000 },
+            [5] = { Name = "Rinoceronte (Rhino)", Rarity = "COSMIC", Score = 30000 },
+            [6] = { Name = "Tubarão Mutante (Shark)", Rarity = "SECRET", Score = 45000 },
+            [7] = { Name = "King Kong (Gorilla King)", Rarity = "ETERNAL", Score = 70000 },
+            [8] = { Name = "Godzilla (Nightflame)", Rarity = "TITAN", Score = 150000 }
         }
     }
 }
@@ -757,8 +764,10 @@ local RarityScoreMap = {
     ["COMMON"] = 300
 }
 
--- 8. MAPEAMENTO NUMÉRICO DE MESHID E BANCO DE DADOS DINÂMICO
-local NumericMeshToEggMap = {}
+-- 8. MAPEAMENTO NUMÉRICO DE MESHID — LISTA SEM SOBRESCRITA
+-- Cada MeshId numérico mapeia para uma LISTA de nomes possíveis.
+-- Isso evita que pets com malhas genéricas compartilhadas sobrescrevam uns aos outros.
+local NumericMeshToEggMap = {} -- { [numericId] = { "Pet1", "Pet2", ... } }
 local AssetsDirectoryData = {}
 local RarityDataMap = {}
 
@@ -766,7 +775,14 @@ local function registerNumericMesh(meshIdStr, eggName)
     if not meshIdStr or not eggName then return end
     local num = tostring(meshIdStr):match("(%d+)")
     if num and num ~= "" then
-        NumericMeshToEggMap[num] = eggName
+        if not NumericMeshToEggMap[num] then
+            NumericMeshToEggMap[num] = {}
+        end
+        -- Evitar duplicatas na lista
+        for _, existing in ipairs(NumericMeshToEggMap[num]) do
+            if existing == eggName then return end
+        end
+        table.insert(NumericMeshToEggMap[num], eggName)
     end
 end
 
@@ -856,7 +872,8 @@ local function findNearbyRenderedAsset(pos, maxDist)
     return bestObj
 end
 
--- Identificação Completa de Nome Real, Raridade e Estatísticas do Ovo (v10.3 Sem Repetições)
+-- Identificação Completa de Nome Real, Raridade e Estatísticas do Ovo (v11.0 — Prioridade Corrigida)
+-- PRIORIDADE: (1) Slot da Ilha → (2) ProximityPrompt → (3) Atributos → (4) MeshId → (5) Hierarquia
 local function resolveEggDetails(instance, prompt)
     local pos = getPositionOf(prompt or instance)
     local foundName = nil
@@ -865,8 +882,46 @@ local function resolveEggDetails(instance, prompt)
     local detectedWeight = 0
     local detectedIncome = nil
 
-    local renderedModel = findNearbyRenderedAsset(pos, 6.5)
+    -- Determinar ilha e slot PRIMEIRO (mais confiável)
+    local isl = getIslandByPos(pos)
+    local slotNum = nil
 
+    -- Extrair número do slot do nome da instância
+    if instance then
+        slotNum = instance.Name:match("Slot_(%d+)")
+        if slotNum then
+            slotNum = tonumber(slotNum)
+        else
+            -- Verificar atributos para índice de slot
+            pcall(function()
+                local si = instance:GetAttribute("SlotIndex") or instance:GetAttribute("Slot")
+                if si then slotNum = tonumber(si) end
+            end)
+        end
+    end
+
+    -- Se estamos em uma ilha real (não lobby), tentar resolução por slot
+    if isl.Id ~= "Bases" and isl.SlotPets then
+        if slotNum and isl.SlotPets[slotNum] then
+            local pet = isl.SlotPets[slotNum]
+            foundName = string.format("%s [Slot %d - %s]", isl.EggShell, slotNum, pet.Name)
+            detectedRarity = pet.Rarity or isl.Rarity
+            maxScore = math.max(maxScore, pet.Score or isl.Score)
+        elseif not slotNum then
+            -- Sem slot determinístico — calcular pela posição Z relativa
+            -- Ordena os ovos da ilha por Z para estimar o índice
+            local estimatedSlot = math.floor((math.abs(pos.Z) % 8)) + 1
+            estimatedSlot = math.clamp(estimatedSlot, 1, #isl.SlotPets)
+            local pet = isl.SlotPets[estimatedSlot]
+            if pet then
+                foundName = string.format("%s [~Slot %d - %s]", isl.EggShell, estimatedSlot, pet.Name)
+                detectedRarity = pet.Rarity or isl.Rarity
+                maxScore = math.max(maxScore, pet.Score or isl.Score)
+            end
+        end
+    end
+
+    -- Função utilitária para inspecionar strings em catálogos
     local function inspectStr(s)
         if not s or s == "" then return false end
         local low = tostring(s):lower()
@@ -876,10 +931,10 @@ local function resolveEggDetails(instance, prompt)
             return false
         end
 
-        -- 1. Casamento direto no catálogo oficial de 118 Pets
+        -- Casamento direto no catálogo oficial de Pets
         for pKey, pData in pairs(KnownPetsCatalog) do
             if low == pKey or low:find(pKey, 1, true) then
-                if not foundName or #pData.DisplayName > #foundName then
+                if not foundName or #pData.DisplayName > #(foundName:match("^(.-)%s*%[") or foundName) then
                     foundName = pData.DisplayName
                     detectedRarity = pData.Rarity
                     maxScore = math.max(maxScore, RarityScoreMap[pData.Rarity] or 5000)
@@ -888,7 +943,7 @@ local function resolveEggDetails(instance, prompt)
             end
         end
 
-        -- 2. Casamento em AssetsDirectoryData
+        -- Casamento em AssetsDirectoryData
         if AssetsDirectoryData[low] then
             local entry = AssetsDirectoryData[low]
             foundName = entry.DisplayName
@@ -898,7 +953,7 @@ local function resolveEggDetails(instance, prompt)
             return true
         end
 
-        -- 3. Detecção de peso e renda
+        -- Detecção de peso e renda
         local kg = low:match("([%d%,%.]+)%s*kg")
         if kg then
             local n = tonumber((kg:gsub(",", "")))
@@ -910,7 +965,7 @@ local function resolveEggDetails(instance, prompt)
             detectedIncome = "$" .. num .. (suf or ""):upper() .. "/s"
         end
 
-        -- 4. Detecção de Raridade
+        -- Detecção de Raridade
         for rKey, score in pairs(RarityScoreMap) do
             if low:find(rKey:lower(), 1, true) then
                 if score > maxScore then
@@ -922,26 +977,18 @@ local function resolveEggDetails(instance, prompt)
         return false
     end
 
-    -- Método A: Mapeamento de MeshId Numérico
-    local function checkMeshes(root)
-        if not root then return false end
-        for _, d in ipairs(root:GetDescendants()) do
-            local mId = (d:IsA("MeshPart") and d.MeshId) or (d:IsA("SpecialMesh") and d.MeshId)
-            if mId and mId ~= "" then
-                local num = tostring(mId):match("(%d+)")
-                if num and NumericMeshToEggMap[num] and NumericMeshToEggMap[num] ~= "Model" then
-                    inspectStr(NumericMeshToEggMap[num])
-                    return true
-                end
-            end
+    -- MÉTODO 2: ProximityPrompt (ObjectText e ActionText)
+    if not foundName and prompt then
+        if prompt.ObjectText and prompt.ObjectText ~= "" then
+            local cleanObj = prompt.ObjectText:gsub("^[Tt]ake%s*", ""):gsub("^[Ss]teal%s*", ""):gsub("^[Rr]oubar%s*", ""):gsub("^[Pp]egar%s*", "")
+            inspectStr(cleanObj)
         end
-        return false
+        if not foundName and prompt.ActionText and prompt.ActionText ~= "" then
+            inspectStr(prompt.ActionText)
+        end
     end
 
-    checkMeshes(renderedModel)
-    if not foundName then checkMeshes(instance) end
-
-    -- Método B: Inspeção de Atributos
+    -- MÉTODO 3: Atributos do modelo e prompt
     local function checkAttrs(root)
         if not root then return end
         for k, v in pairs(root:GetAttributes()) do
@@ -949,11 +996,77 @@ local function resolveEggDetails(instance, prompt)
             inspectStr(v)
         end
     end
-    checkAttrs(renderedModel)
-    checkAttrs(instance)
-    if prompt then checkAttrs(prompt) end
 
-    -- Método C: Inspeção de TextLabels e Modelos
+    local renderedModel = findNearbyRenderedAsset(pos, 6.5)
+    if not foundName then
+        checkAttrs(renderedModel)
+        checkAttrs(instance)
+        if prompt then checkAttrs(prompt) end
+    end
+
+    -- MÉTODO 4: MeshId com desambiguação por ilha
+    local function checkMeshes(root)
+        if not root then return false end
+        for _, d in ipairs(root:GetDescendants()) do
+            local mId = (d:IsA("MeshPart") and d.MeshId) or (d:IsA("SpecialMesh") and d.MeshId)
+            if mId and mId ~= "" then
+                local numId = tostring(mId):match("(%d+)")
+                if numId and NumericMeshToEggMap[numId] then
+                    local candidates = NumericMeshToEggMap[numId]
+                    if type(candidates) == "table" then
+                        if #candidates == 1 then
+                            -- Sem ambiguidade — usar diretamente
+                            inspectStr(candidates[1])
+                            return true
+                        else
+                            -- Múltiplos nomes para o mesmo MeshId — desambiguar pela ilha
+                            -- Verificar qual candidato pertence à ilha atual
+                            local islPets = {}
+                            if isl.SlotPets then
+                                for _, pet in pairs(isl.SlotPets) do
+                                    islPets[pet.Name:lower()] = true
+                                    -- Também verificar nome parcial
+                                    local shortName = pet.Name:match("%((.-)%)") or pet.Name
+                                    islPets[shortName:lower()] = true
+                                end
+                            end
+                            for _, candName in ipairs(candidates) do
+                                local candLow = candName:lower()
+                                if islPets[candLow] then
+                                    inspectStr(candName)
+                                    return true
+                                end
+                                -- Verificar match parcial no catálogo
+                                local catalogEntry = KnownPetsCatalog[candLow]
+                                if catalogEntry then
+                                    local dispLow = catalogEntry.DisplayName:lower()
+                                    if islPets[dispLow] then
+                                        inspectStr(candName)
+                                        return true
+                                    end
+                                end
+                            end
+                            -- Fallback: usar o primeiro candidato (sem sobrescrita pelo último)
+                            inspectStr(candidates[1])
+                            return true
+                        end
+                    elseif type(candidates) == "string" then
+                        -- Compatibilidade: formato antigo (string)
+                        inspectStr(candidates)
+                        return true
+                    end
+                end
+            end
+        end
+        return false
+    end
+
+    if not foundName then
+        checkMeshes(renderedModel)
+        if not foundName then checkMeshes(instance) end
+    end
+
+    -- MÉTODO 5: Hierarquia — TextLabels e nomes de modelos
     local function checkHierarchy(root)
         if not root then return end
         for _, desc in ipairs(root:GetDescendants()) do
@@ -964,23 +1077,13 @@ local function resolveEggDetails(instance, prompt)
             end
         end
     end
-    checkHierarchy(renderedModel)
-    checkHierarchy(instance)
 
-    -- Método D: Inspeção do Prompt de Interação
-    if prompt then
-        if prompt.ObjectText and prompt.ObjectText ~= "" then
-            local cleanObj = prompt.ObjectText:gsub("^[Tt]ake%s*", ""):gsub("^[Ss]teal%s*", ""):gsub("^[Rr]oubar%s*", ""):gsub("^[Pp]egar%s*", "")
-            inspectStr(cleanObj)
-        end
-        if not foundName and prompt.ActionText and prompt.ActionText ~= "" then
-            inspectStr(prompt.ActionText)
-        end
+    if not foundName then
+        checkHierarchy(renderedModel)
+        checkHierarchy(instance)
     end
 
-    -- Método E: Resolução Diferenciada para Ovos de Ilha vs Pets de Base
-    local isl = getIslandByPos(pos)
-
+    -- RESOLUÇÃO FINAL: Gerar nome a partir da ilha se nenhum método achou
     -- Identificar se está em base de outro jogador
     local plots = Services.Workspace:FindFirstChild("Plots")
     local plotOwnerName = nil
@@ -995,7 +1098,6 @@ local function resolveEggDetails(instance, prompt)
     end
 
     if plotOwnerName then
-        -- Caso 1: Ovo / Pet colocado na Base de um Jogador
         if foundName and not foundName:find("ovo selvagem") then
             foundName = string.format("%s (Base de %s)", foundName, plotOwnerName)
         else
@@ -1003,28 +1105,13 @@ local function resolveEggDetails(instance, prompt)
         end
         if not detectedRarity then detectedRarity = "RARO" end
     elseif isl.Id ~= "Bases" then
-        -- Caso 2: Ovo Selvagem em um Ninho de Ilha
-        -- Extrair o número do Slot para garantir que NUNCA repita o mesmo nome no mesmo ninho!
-        local slotNum = instance and instance.Name:match("Slot_([%d]+)")
-        if slotNum then
-            slotNum = tonumber(slotNum)
-        else
-            -- Se não tiver no nome, calcular deterministicamente pelo eixo Z
-            slotNum = math.floor((math.abs(pos.Z) % 5)) + 1
-        end
-
-        local topPet = isl.SlotPets and isl.SlotPets[slotNum]
-        if topPet then
-            foundName = string.format("%s [Slot %d - %s]", isl.EggShell, slotNum, topPet.Name)
-            detectedRarity = topPet.Rarity or isl.Rarity
-            maxScore = math.max(maxScore, topPet.Score or isl.Score)
-        else
-            foundName = string.format("%s [Slot %d]", isl.EggShell, slotNum)
+        -- Já resolvido pelo slot acima, mas se não, fallback genérico
+        if not foundName then
+            foundName = string.format("%s [Ovo Selvagem]", isl.EggShell or "Ovo")
             detectedRarity = isl.Rarity or "COMUM"
             maxScore = math.max(maxScore, isl.Score or 300)
         end
     else
-        -- Caso 3: Área Geral do Lobby
         if not foundName then
             foundName = "Ovo do Lobby"
             detectedRarity = "COMUM"
@@ -1246,9 +1333,11 @@ local function movePlayerDirect(targetPos, speed, onStep)
         local elapsed = os.clock() - startTime
         local alpha = math.clamp(elapsed / math.max(totalTime, 0.001), 0, 1)
 
-        local curTarget = startPos:Lerp(targetPos + Vector3.new(0, 1.2, 0), alpha)
-        local lookTarget = targetPos + Vector3.new(0, 1.2, 0)
-        local lookDir = (lookTarget - curTarget)
+        -- Altitude segura: nunca arrastar no chão nem subir demais
+        local safeY = math.max(targetPos.Y, 68.0) + 1.5
+        local safeTarget = Vector3.new(targetPos.X, safeY, targetPos.Z)
+        local curTarget = startPos:Lerp(safeTarget, alpha)
+        local lookDir = (safeTarget - curTarget)
         if lookDir.Magnitude > 0.1 then
             hrp.CFrame = CFrame.new(curTarget, curTarget + lookDir)
         else
@@ -1264,12 +1353,14 @@ local function movePlayerDirect(targetPos, speed, onStep)
         Services.RunService.Heartbeat:Wait()
     end
 
-    hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 1.2, 0))
+    local finalY = math.max(targetPos.Y, 68.0) + 1.5
+    hrp.CFrame = CFrame.new(Vector3.new(targetPos.X, finalY, targetPos.Z))
     cleanup()
     return (targetPos - hrp.Position).Magnitude < 7
 end
 
--- B. Voo Alto Seguro (Volta à base com ovo por cima das paredes e void)
+-- B. Rota de Retorno Segura Rente ao Solo (Y=69.5, Noclip Contínuo)
+-- NÃO sobe mais a Y=92 (kill zones). Desliza horizontalmente com CanCollide=false.
 local function movePlayerOverhead(targetPos, speed, onStep)
     local hrp = getHRP()
     local char = LocalPlayer.Character
@@ -1280,8 +1371,16 @@ local function movePlayerOverhead(targetPos, speed, onStep)
     isMoving = true
     disableCharacterAntiCheats(char)
     speed = speed or Config.MoveSpeed or 350
+
+    -- Altitude segura: rente ao solo, acima de obstáculos baixos, abaixo de kill zones
+    local SAFE_Y = 69.5
     local startPos = hrp.Position
-    local cruiseAltitude = 92.0
+    -- Ponto final: altitude segura ou altitude do alvo (o que for maior)
+    local endY = math.max(targetPos.Y, 68.0) + 1.5
+    local endPos = Vector3.new(targetPos.X, math.max(endY, SAFE_Y), targetPos.Z)
+    -- Ponto de cruzeiro: manter Y=69.5 durante o percurso horizontal
+    local cruiseStart = Vector3.new(startPos.X, SAFE_Y, startPos.Z)
+    local cruiseEnd = Vector3.new(targetPos.X, SAFE_Y, targetPos.Z)
 
     local noclipConn = Services.RunService.Stepped:Connect(function()
         if char and char.Parent then
@@ -1318,36 +1417,38 @@ local function movePlayerOverhead(targetPos, speed, onStep)
         isMoving = false
     end
 
-    -- Ponto 1: Subida vertical para altitude de cruzeiro
-    local wayUp = Vector3.new(startPos.X, math.max(startPos.Y, cruiseAltitude), startPos.Z)
-    -- Ponto 2: Cruzeiro horizontal até acima da base
-    local wayCruised = Vector3.new(targetPos.X, math.max(startPos.Y, cruiseAltitude), targetPos.Z)
-    -- Ponto 3: Pouso suave no alvo
-    local wayDown = targetPos + Vector3.new(0, 1.2, 0)
-
-    local function lerpBetween(pA, pB, segmentSpeed)
+    -- Interpolação linear entre dois pontos (reutilizável)
+    local function lerpSegment(pA, pB, segSpeed)
         local sDist = (pB - pA).Magnitude
         if sDist < 1.0 then return end
-        local sTime = sDist / math.max(segmentSpeed, 100)
+        local sTime = sDist / math.max(segSpeed, 100)
         local sStart = os.clock()
-        while (os.clock() - sStart) < (sTime + 0.1) do
+        while (os.clock() - sStart) < (sTime + 0.15) do
             if State.IsUnloaded or not char or not char.Parent or not humanoid or humanoid.Health <= 0 then return end
             local alpha = math.clamp((os.clock() - sStart) / math.max(sTime, 0.001), 0, 1)
             local cur = pA:Lerp(pB, alpha)
-            hrp.CFrame = CFrame.new(cur)
+            local lookDir = (pB - cur)
+            if lookDir.Magnitude > 0.1 then
+                hrp.CFrame = CFrame.new(cur, cur + lookDir)
+            else
+                hrp.CFrame = CFrame.new(cur)
+            end
             hrp.AssemblyLinearVelocity = Vector3.zero
             hrp.AssemblyAngularVelocity = Vector3.zero
             if onStep then onStep((targetPos - hrp.Position).Magnitude) end
+            if (pB - hrp.Position).Magnitude < 3.0 then break end
             Services.RunService.Heartbeat:Wait()
         end
         hrp.CFrame = CFrame.new(pB)
     end
 
-    -- Executar as 3 etapas do voo seguro com checagem de interrupção
+    -- Execução: subir suavemente ao nível de cruzeiro → cruzar horizontalmente → descer ao alvo
     if State.IsUnloaded then cleanup() return false end
-    lerpBetween(startPos, wayUp, speed * 0.9)
+    lerpSegment(startPos, cruiseStart, speed)            -- Ajuste vertical suave
     if State.IsUnloaded then cleanup() return false end
-    lerpBetween(wayCruised, wayDown, speed * 0.8)
+    lerpSegment(cruiseStart, cruiseEnd, speed)            -- Cruzeiro horizontal
+    if State.IsUnloaded then cleanup() return false end
+    lerpSegment(cruiseEnd, endPos, speed * 0.9)           -- Descida suave ao alvo
 
     cleanup()
     return (targetPos - hrp.Position).Magnitude < 7
@@ -1561,7 +1662,7 @@ local function executeRagdollSteal(target)
     return true
 end
 
--- E. Execução de Roubo via Voo Direto / Solo
+-- E. Execução de Roubo via Voo Direto / Solo (LEGADO — usada como fallback pelo RagdollTP)
 executeDirectSteal = function(target)
     if not target or not target.Position then return false end
     local myHrp = getHRP()
@@ -1586,85 +1687,349 @@ executeDirectSteal = function(target)
     end
 end
 
--- F. Ciclo Completo de Auto-Roubo
-local function runStealCycle()
-    local myHrp = getHRP()
-    if not myHrp or State.IsUnloaded then return end
+--================================================================--
+-- F. MÁQUINA DE ESTADOS COMPLETA DE AUTO-ROUBO (v11.0)
+-- IDLE → SELECTING → MOVING_TO_EGG → INTERACTING → VERIFYING_CARRY
+-- → RETURNING → DEPOSITING → CONFIRMING → IDLE
+--================================================================--
 
-    -- 1. Se ainda não tem base fixada, detectar automaticamente
-    if not State.BaseCFrame then
-        local depCF = getMyDepositCFrame()
-        if depCF then
-            State.BaseCFrame = depCF
-            if BaseLabel then
-                local myPlot = findMyPlot()
-                BaseLabel.Text = string.format("Base: (%s) em (%.0f, %.0f, %.0f)", myPlot and myPlot.Name or "Detectada", depCF.Position.X, depCF.Position.Y, depCF.Position.Z)
-                BaseLabel.TextColor3 = C_GREEN
-            end
+-- Variáveis da Máquina de Estados
+local StealSM = {
+    Current = "IDLE",
+    Target = nil,              -- Alvo atual (tabela do scanAllEggs)
+    StateStart = 0,            -- os.clock() do início do estado atual
+    CycleStart = 0,            -- os.clock() do início do ciclo completo
+    ConsecutiveFails = 0,      -- Falhas consecutivas no mesmo alvo
+    Blacklist = {},            -- { [posKey] = expireTime } — alvos temporariamente ignorados
+    VerifyPolls = 0,           -- Contagem de polls em VERIFYING_CARRY
+    DepositRetries = 0,        -- Tentativas de re-depósito em CONFIRMING
+}
+
+-- Timeouts por estado (em segundos)
+local SM_TIMEOUTS = {
+    SELECTING = 2.0,
+    INTERACTING = 1.5,
+    VERIFYING_CARRY = 0.8,
+    CONFIRMING = 1.0,
+    GLOBAL_CYCLE = 30.0,
+}
+
+-- Gera chave de posição para o blacklist (arredonda para evitar flutuações)
+local function posKey(pos)
+    return string.format("%.0f_%.0f_%.0f", pos.X, pos.Y, pos.Z)
+end
+
+-- Limpa entradas expiradas do blacklist
+local function cleanBlacklist()
+    local now = os.clock()
+    for k, expire in pairs(StealSM.Blacklist) do
+        if now > expire then
+            StealSM.Blacklist[k] = nil
         end
     end
+end
 
-    -- 2. Verificar se o jogador já está carregando um ovo
-    local holding, heldName = isHoldingEgg()
-    if holding then
-        if StatusBadge then
-            StatusBadge.Text = "ENTREGANDO"
-            StatusBadge.TextColor3 = C_CYAN
+-- Transição de estado com log e atualização de UI
+local function setStealState(newState)
+    StealSM.Current = newState
+    StealSM.StateStart = os.clock()
+
+    if newState == "IDLE" then
+        StealSM.Target = nil
+        StealSM.CycleStart = 0
+        StealSM.VerifyPolls = 0
+        StealSM.DepositRetries = 0
+        State.IsExecutingSteal = false
+    elseif newState == "SELECTING" then
+        if StealSM.CycleStart == 0 then
+            StealSM.CycleStart = os.clock()
         end
-        if TargetInfoLabel then
-            TargetInfoLabel.Text = "Ovo em mãos! Entregando na base..."
-        end
-        local depCF = getMyDepositCFrame() or State.BaseCFrame
-        if depCF then
-            if Config.StealMethod == "RagdollTP" then
-                myHrp.CFrame = depCF
-            else
-                movePlayerOverhead(depCF.Position, Config.MoveSpeed)
-            end
-        end
-        task.wait(Config.AutoDepositWait or 1.0)
+        State.IsExecutingSteal = true
+    end
+
+    -- Atualizar badges da UI
+    local uiMap = {
+        IDLE = {"PARADO", C_MUTED},
+        SELECTING = {"BUSCANDO", C_CYAN},
+        MOVING_TO_EGG = {"INDO AO OVO", C_GREEN},
+        INTERACTING = {"INTERAGINDO", C_YELLOW},
+        VERIFYING_CARRY = {"VERIFICANDO", C_YELLOW},
+        RETURNING = {"RETORNANDO", C_CYAN},
+        DEPOSITING = {"DEPOSITANDO", C_GREEN},
+        CONFIRMING = {"CONFIRMANDO", C_YELLOW},
+    }
+    local info = uiMap[newState]
+    if info and StatusBadge then
+        StatusBadge.Text = info[1]
+        StatusBadge.TextColor3 = info[2]
+    end
+end
+
+-- Reset completo em caso de morte ou respawn
+registerConnection(LocalPlayer.CharacterAdded:Connect(function()
+    if State.IsUnloaded then return end
+    task.wait(0.3)
+    if StealSM.Current ~= "IDLE" then
+        addLog("ESTADO", "Personagem respawnou — resetando para IDLE")
+        setStealState("IDLE")
+    end
+end))
+
+-- Função principal: um tick da máquina de estados (chamada a cada ~0.15s pelo loop)
+local function runStateMachineTick()
+    if State.IsUnloaded then return end
+    local myHrp = getHRP()
+    local myHum = getHum()
+    if not myHrp or not myHum or myHum.Health <= 0 then
+        if StealSM.Current ~= "IDLE" then setStealState("IDLE") end
         return
     end
 
-    -- 3. Escanear todos os ovos do mapa
-    local eggs = scanAllEggs()
-    local valid = {}
-    for _, e in ipairs(eggs) do
-        if not (Config.ShowOnlyUnowned and e.IsMyPlot) then
-            if e.Distance <= Config.MaxStealDistance then
-                if isEggInMyIsland(e.Position) then
-                    table.insert(valid, e)
+    -- Timeout global do ciclo (30s)
+    if StealSM.CycleStart > 0 and (os.clock() - StealSM.CycleStart) > SM_TIMEOUTS.GLOBAL_CYCLE then
+        addLog("TIMEOUT", "Ciclo global excedeu 30s — resetando")
+        setStealState("IDLE")
+        return
+    end
+
+    local elapsed = os.clock() - StealSM.StateStart
+    local current = StealSM.Current
+
+    --=== IDLE ===--
+    if current == "IDLE" then
+        -- Detectar base se necessário
+        if not State.BaseCFrame then
+            local depCF = getMyDepositCFrame()
+            if depCF then
+                State.BaseCFrame = depCF
+                if BaseLabel then
+                    local myPlot = findMyPlot()
+                    BaseLabel.Text = string.format("Base: (%s) em (%.0f, %.0f, %.0f)",
+                        myPlot and myPlot.Name or "Detectada",
+                        depCF.Position.X, depCF.Position.Y, depCF.Position.Z)
+                    BaseLabel.TextColor3 = C_GREEN
                 end
             end
         end
-    end
 
-    if #valid == 0 then
-        if TargetInfoLabel then
-            TargetInfoLabel.Text = "Nenhum ovo elegível encontrado na ilha atual."
+        -- Verificar se já está segurando ovo (caso raro — jogador coletou manualmente)
+        local holding, heldName = isHoldingEgg()
+        if holding then
+            addLog("ESTADO", "Ovo detectado em mãos (" .. tostring(heldName) .. ") — indo entregar")
+            setStealState("RETURNING")
+            return
         end
-        if StatusBadge then
-            StatusBadge.Text = "AGUARDANDO"
-            StatusBadge.TextColor3 = C_MUTED
-        end
-        task.wait(0.8)
+
+        setStealState("SELECTING")
         return
-    end
 
-    -- 4. O primeiro ovo já é o de maior pontuação/raridade
-    local target = valid[1]
-    if TargetInfoLabel then
-        TargetInfoLabel.Text = string.format("[%s] %s (%dm)", target.Rarity, target.Name, math.floor(target.Distance))
-    end
-    if StatusBadge then
-        StatusBadge.Text = "ROUBANDO"
-        StatusBadge.TextColor3 = C_GREEN
-    end
+    --=== SELECTING ===--
+    elseif current == "SELECTING" then
+        if elapsed > SM_TIMEOUTS.SELECTING then
+            addLog("TIMEOUT", "SELECTING excedeu timeout — voltando a IDLE")
+            setStealState("IDLE")
+            return
+        end
 
-    if Config.StealMethod == "RagdollTP" then
-        executeRagdollSteal(target)
-    else
-        executeDirectSteal(target)
+        cleanBlacklist()
+        local eggs = scanAllEggs()
+        local valid = {}
+        for _, e in ipairs(eggs) do
+            if not (Config.ShowOnlyUnowned and e.IsMyPlot) then
+                if e.Distance <= Config.MaxStealDistance then
+                    if isEggInMyIsland(e.Position) then
+                        local key = posKey(e.Position)
+                        if not StealSM.Blacklist[key] then
+                            table.insert(valid, e)
+                        end
+                    end
+                end
+            end
+        end
+
+        if #valid == 0 then
+            if TargetInfoLabel then
+                TargetInfoLabel.Text = "Nenhum ovo elegível encontrado na ilha atual."
+            end
+            setStealState("IDLE")
+            task.wait(0.8) -- Aguarda antes de re-escanear
+            return
+        end
+
+        -- Selecionar o ovo de maior valor
+        StealSM.Target = valid[1]
+        StealSM.ConsecutiveFails = 0
+        if TargetInfoLabel then
+            TargetInfoLabel.Text = string.format("[%s] %s (%dm)",
+                StealSM.Target.Rarity, StealSM.Target.Name, math.floor(StealSM.Target.Distance))
+        end
+        addLog("ALVO", string.format("Selecionado: %s [%s] a %d studs",
+            StealSM.Target.Name, StealSM.Target.Rarity, math.floor(StealSM.Target.Distance)))
+
+        -- Se método é RagdollTP, usar fluxo legado direto
+        if Config.StealMethod == "RagdollTP" then
+            executeRagdollSteal(StealSM.Target)
+            setStealState("IDLE")
+            return
+        end
+
+        setStealState("MOVING_TO_EGG")
+        return
+
+    --=== MOVING_TO_EGG ===--
+    elseif current == "MOVING_TO_EGG" then
+        local target = StealSM.Target
+        if not target or not target.Position then
+            setStealState("IDLE")
+            return
+        end
+
+        -- Calcular timeout dinâmico: distância / velocidade + 3s margem
+        local dist = (target.Position - myHrp.Position).Magnitude
+        local dynamicTimeout = (dist / math.max(Config.MoveSpeed, 100)) + 3.0
+
+        if elapsed > dynamicTimeout then
+            addLog("TIMEOUT", "MOVING_TO_EGG excedeu timeout — resetando")
+            StealSM.Blacklist[posKey(target.Position)] = os.clock() + 10.0
+            setStealState("IDLE")
+            return
+        end
+
+        -- Executar movimentação (bloqueia até chegar ou falhar)
+        local arrived = movePlayerDirect(target.Position, Config.MoveSpeed)
+        if arrived then
+            setStealState("INTERACTING")
+        else
+            addLog("MOVER", "Falha ao chegar ao ovo — tentando próximo alvo")
+            StealSM.Blacklist[posKey(target.Position)] = os.clock() + 10.0
+            setStealState("SELECTING")
+        end
+        return
+
+    --=== INTERACTING ===--
+    elseif current == "INTERACTING" then
+        local target = StealSM.Target
+        if not target then
+            setStealState("IDLE")
+            return
+        end
+
+        -- Ancorar brevemente para interação estável
+        local oldAnchored = myHrp.Anchored
+        myHrp.Anchored = true
+
+        -- Disparar o ProximityPrompt do ovo
+        local pInst = target.Prompt or (target.Instance and target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true))
+        if pInst then
+            triggerPrompt(pInst)
+            addLog("INTERAÇÃO", "Prompt disparado para " .. target.Name)
+        else
+            addLog("INTERAÇÃO", "Sem ProximityPrompt — pulando alvo")
+            myHrp.Anchored = oldAnchored
+            StealSM.Blacklist[posKey(target.Position)] = os.clock() + 10.0
+            setStealState("SELECTING")
+            return
+        end
+
+        task.wait(0.08)
+        myHrp.Anchored = oldAnchored
+
+        StealSM.VerifyPolls = 0
+        setStealState("VERIFYING_CARRY")
+        return
+
+    --=== VERIFYING_CARRY ===--
+    elseif current == "VERIFYING_CARRY" then
+        StealSM.VerifyPolls = StealSM.VerifyPolls + 1
+
+        local holding, heldName = isHoldingEgg()
+        if holding then
+            addLog("VERIFICAR", "Ovo confirmado em mãos: " .. tostring(heldName))
+            setStealState("RETURNING")
+            return
+        end
+
+        -- 3 polls com intervalo de ~0.15s cada ≈ 0.45s total, + margem do timeout
+        if StealSM.VerifyPolls >= 5 or elapsed > SM_TIMEOUTS.VERIFYING_CARRY then
+            StealSM.ConsecutiveFails = StealSM.ConsecutiveFails + 1
+            addLog("VERIFICAR", string.format("Ovo NÃO detectado (tentativa %d/3)", StealSM.ConsecutiveFails))
+
+            if StealSM.ConsecutiveFails >= 3 then
+                -- Blacklistar alvo após 3 falhas consecutivas
+                if StealSM.Target then
+                    StealSM.Blacklist[posKey(StealSM.Target.Position)] = os.clock() + 10.0
+                    addLog("BLACKLIST", StealSM.Target.Name .. " ignorado por 10s")
+                end
+                StealSM.ConsecutiveFails = 0
+            end
+            setStealState("SELECTING")
+            return
+        end
+
+        -- Aguarda próximo poll (o loop chama novamente em ~0.15s)
+        return
+
+    --=== RETURNING ===--
+    elseif current == "RETURNING" then
+        local baseCF = getMyDepositCFrame() or State.BaseCFrame
+        if not baseCF then
+            addLog("ERRO", "Base não encontrada para depósito")
+            setStealState("IDLE")
+            return
+        end
+
+        local dist = (baseCF.Position - myHrp.Position).Magnitude
+        local dynamicTimeout = (dist / math.max(Config.MoveSpeed, 100)) + 3.0
+
+        if elapsed > dynamicTimeout then
+            addLog("TIMEOUT", "RETURNING excedeu timeout — resetando")
+            setStealState("IDLE")
+            return
+        end
+
+        addLog("RETORNO", "Voltando à base com ovo...")
+        if TargetInfoLabel then
+            TargetInfoLabel.Text = "Ovo em mãos! Voltando à base..."
+        end
+
+        local arrived = movePlayerOverhead(baseCF.Position, Config.MoveSpeed)
+        if arrived then
+            setStealState("DEPOSITING")
+        else
+            -- Se falhou ao mover, tentar teleporte direto (fallback)
+            myHrp.CFrame = baseCF
+            setStealState("DEPOSITING")
+        end
+        return
+
+    --=== DEPOSITING ===--
+    elseif current == "DEPOSITING" then
+        if elapsed > (Config.AutoDepositWait or 1.0) + 0.5 then
+            setStealState("CONFIRMING")
+            return
+        end
+        -- Aguarda o tempo de depósito na esteira
+        return
+
+    --=== CONFIRMING ===--
+    elseif current == "CONFIRMING" then
+        local holding, _ = isHoldingEgg()
+        if not holding then
+            addLog("CONFIRMAR", "Ovo depositado com sucesso!")
+            StealSM.DepositRetries = 0
+            setStealState("IDLE")
+            return
+        end
+
+        -- Ainda segurando — retry
+        StealSM.DepositRetries = StealSM.DepositRetries + 1
+        if StealSM.DepositRetries >= 3 or elapsed > SM_TIMEOUTS.CONFIRMING then
+            addLog("CONFIRMAR", "Ovo não depositou após 3 tentativas — retentando entrega")
+            StealSM.DepositRetries = 0
+            setStealState("RETURNING")
+            return
+        end
+        return
     end
 end
 
@@ -3184,19 +3549,20 @@ task.spawn(function()
 end)
 
 
--- Thread Contínua em Segundo Plano para o Auto-Roubo Master
+-- Thread Contínua em Segundo Plano — Driver da Máquina de Estados de Roubo
 task.spawn(function()
     while true do
         if State.IsUnloaded then break end
-        if Config.AutoStealEnabled and not State.IsExecutingSteal and not State.IsOnTreadmill then
-            State.IsExecutingSteal = true
-            local ok, err = pcall(runStealCycle)
+        if Config.AutoStealEnabled and not State.IsOnTreadmill then
+            local ok, err = pcall(runStateMachineTick)
             if not ok and err then
-                addLog("ERRO", "Falha no ciclo de roubo: " .. tostring(err))
+                addLog("ERRO", "Falha na máquina de estados: " .. tostring(err))
+                setStealState("IDLE")
             end
-            State.IsExecutingSteal = false
+        elseif not Config.AutoStealEnabled and StealSM.Current ~= "IDLE" then
+            setStealState("IDLE")
         end
-        task.wait(0.3)
+        task.wait(0.15)
     end
 end)
 
