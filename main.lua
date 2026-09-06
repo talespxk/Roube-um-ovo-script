@@ -646,6 +646,15 @@ local OfficialIslands = {
 
 local function getIslandByPos(pos)
     if not pos then return OfficialIslands[1] end
+    if pos.X < 510 then
+        return {
+            Id = "Bases",
+            Name = "Bases de Jogadores",
+            Rarity = "COMUM",
+            Score = 300,
+            EggShell = "Ovo de Base"
+        }
+    end
     for _, isl in ipairs(OfficialIslands) do
         if pos.X >= isl.MinX and pos.X <= isl.MaxX then
             return isl
@@ -666,6 +675,9 @@ local function isEggInMyIsland(eggPos)
     if not myHrp then return true end
     local myIsl = getIslandByPos(myHrp.Position)
     local eggIsl = getIslandByPos(eggPos)
+    if myIsl.Id == "Bases" then
+        return eggIsl.Id == "Bases" or eggIsl.Id == "Forest"
+    end
     return myIsl.Id == eggIsl.Id
 end
 
@@ -800,7 +812,7 @@ local function findNearbyRenderedAsset(pos, maxDist)
     return bestObj
 end
 
--- Identificação Completa de Nome Real, Raridade e Estatísticas do Ovo
+-- Identificação Completa de Nome Real, Raridade e Estatísticas do Ovo (v10.3 Sem Repetições)
 local function resolveEggDetails(instance, prompt)
     local pos = getPositionOf(prompt or instance)
     local foundName = nil
@@ -815,11 +827,12 @@ local function resolveEggDetails(instance, prompt)
         if not s or s == "" then return false end
         local low = tostring(s):lower()
         if isHexUUID(low) or low == "assets" or low == "model" or low == "part"
-            or low == "meshpart" or low == "union" or low == "touchinterest" then
+            or low == "meshpart" or low == "union" or low == "touchinterest"
+            or low == "hitbox" or low == "part_union" then
             return false
         end
 
-        -- 1. Casamento direto no catálogo de 118 Pets
+        -- 1. Casamento direto no catálogo oficial de 118 Pets
         for pKey, pData in pairs(KnownPetsCatalog) do
             if low == pKey or low:find(pKey, 1, true) then
                 if not foundName or #pData.DisplayName > #foundName then
@@ -853,7 +866,7 @@ local function resolveEggDetails(instance, prompt)
             detectedIncome = "$" .. num .. (suf or ""):upper() .. "/s"
         end
 
-        -- 4. Detecção de Raridade pura
+        -- 4. Detecção de Raridade
         for rKey, score in pairs(RarityScoreMap) do
             if low:find(rKey:lower(), 1, true) then
                 if score > maxScore then
@@ -865,14 +878,14 @@ local function resolveEggDetails(instance, prompt)
         return false
     end
 
-    -- Método A: Mapeamento de MeshId Numérico no modelo renderizado e no slot
+    -- Método A: Mapeamento de MeshId Numérico
     local function checkMeshes(root)
         if not root then return false end
         for _, d in ipairs(root:GetDescendants()) do
             local mId = (d:IsA("MeshPart") and d.MeshId) or (d:IsA("SpecialMesh") and d.MeshId)
             if mId and mId ~= "" then
                 local num = tostring(mId):match("(%d+)")
-                if num and NumericMeshToEggMap[num] then
+                if num and NumericMeshToEggMap[num] and NumericMeshToEggMap[num] ~= "Model" then
                     inspectStr(NumericMeshToEggMap[num])
                     return true
                 end
@@ -884,7 +897,7 @@ local function resolveEggDetails(instance, prompt)
     checkMeshes(renderedModel)
     if not foundName then checkMeshes(instance) end
 
-    -- Método B: Inspeção de Atributos do modelo renderizado, slot e prompt
+    -- Método B: Inspeção de Atributos
     local function checkAttrs(root)
         if not root then return end
         for k, v in pairs(root:GetAttributes()) do
@@ -896,7 +909,7 @@ local function resolveEggDetails(instance, prompt)
     checkAttrs(instance)
     if prompt then checkAttrs(prompt) end
 
-    -- Método C: Inspeção de Nomes de Filhos e TextLabels
+    -- Método C: Inspeção de TextLabels e Modelos
     local function checkHierarchy(root)
         if not root then return end
         for _, desc in ipairs(root:GetDescendants()) do
@@ -910,60 +923,72 @@ local function resolveEggDetails(instance, prompt)
     checkHierarchy(renderedModel)
     checkHierarchy(instance)
 
-    -- Método D: Inspeção do ProximityPrompt
+    -- Método D: Inspeção do Prompt de Interação
     if prompt then
-        inspectStr(prompt.ObjectText)
-        inspectStr(prompt.ActionText)
-        -- Limpar prefixos comuns em prompts para extrair o nome real do ovo
         if prompt.ObjectText and prompt.ObjectText ~= "" then
             local cleanObj = prompt.ObjectText:gsub("^[Tt]ake%s*", ""):gsub("^[Ss]teal%s*", ""):gsub("^[Rr]oubar%s*", ""):gsub("^[Pp]egar%s*", "")
             inspectStr(cleanObj)
         end
-    end
-
-    -- Método D2: Inspeção dos Atributos Diretos do Slot / Instância
-    if instance then
-        for _, attrKey in ipairs({"AssetId", "EggId", "EggType", "PetId", "PetName", "EggName", "Rarity"}) do
-            local val = instance:GetAttribute(attrKey)
-            if val then inspectStr(tostring(val)) end
+        if not foundName and prompt.ActionText and prompt.ActionText ~= "" then
+            inspectStr(prompt.ActionText)
         end
     end
 
-    -- Método E: Resolução Exata com Nome Único do Pet de cada Slot da Ilha
+    -- Método E: Resolução Diferenciada para Ovos de Ilha vs Pets de Base
     local isl = getIslandByPos(pos)
-    local slotIdx = instance and tonumber(instance.Name:match("Slot_([%d]+)"))
-    if not slotIdx and instance then
-        -- Se não tiver no nome, calcula pelo índice de proximidade
-        local parent = instance.Parent
-        if parent then
-            for idx, c in ipairs(parent:GetChildren()) do
-                if c == instance then slotIdx = ((idx - 1) % 5) + 1 break end
+
+    -- Identificar se está em base de outro jogador
+    local plots = Services.Workspace:FindFirstChild("Plots")
+    local plotOwnerName = nil
+    if plots and pos then
+        for _, pl in ipairs(plots:GetChildren()) do
+            local pP = getPositionOf(pl)
+            if pP and (Vector3.new(pP.X, 0, pP.Z) - Vector3.new(pos.X, 0, pos.Z)).Magnitude < 48 then
+                plotOwnerName = pl.Name
+                break
             end
         end
     end
-    slotIdx = slotIdx or 1
 
-    local petInfo = isl.SlotPets and isl.SlotPets[slotIdx]
-    if not foundName or isHexUUID(foundName) or foundName:find("pcube") or foundName:find("polysurface") or foundName:find("ovo") then
-        if petInfo then
-            foundName = string.format("Ovo de %s (%s)", petInfo.Name, isl.Name)
-            detectedRarity = petInfo.Rarity
-            maxScore = petInfo.Score
+    if plotOwnerName then
+        -- Caso 1: Ovo / Pet colocado na Base de um Jogador
+        if foundName and not foundName:find("ovo selvagem") then
+            foundName = string.format("%s (Base de %s)", foundName, plotOwnerName)
         else
-            foundName = string.format("Ovo de %s (%s - Slot %02d)", isl.TopDrop or isl.EggShell, isl.Name, slotIdx)
-            detectedRarity = isl.Rarity
-            maxScore = isl.Score
+            foundName = string.format("Ovo Protegido (Base de %s)", plotOwnerName)
+        end
+        if not detectedRarity then detectedRarity = "RARO" end
+    elseif isl.Id ~= "Bases" then
+        -- Caso 2: Ovo Selvagem em um Ninho de Ilha
+        -- Extrair o número do Slot para garantir que NUNCA repita o mesmo nome no mesmo ninho!
+        local slotNum = instance and instance.Name:match("Slot_([%d]+)")
+        if slotNum then
+            slotNum = tonumber(slotNum)
+        else
+            -- Se não tiver no nome, calcular deterministicamente pelo eixo Z
+            slotNum = math.floor((math.abs(pos.Z) % 5)) + 1
+        end
+
+        local topPet = isl.SlotPets and isl.SlotPets[slotNum]
+        if topPet then
+            foundName = string.format("%s [Slot %d - %s]", isl.EggShell, slotNum, topPet.Name)
+            detectedRarity = topPet.Rarity or isl.Rarity
+            maxScore = math.max(maxScore, topPet.Score or isl.Score)
+        else
+            foundName = string.format("%s [Slot %d]", isl.EggShell, slotNum)
+            detectedRarity = isl.Rarity or "COMUM"
+            maxScore = math.max(maxScore, isl.Score or 300)
+        end
+    else
+        -- Caso 3: Área Geral do Lobby
+        if not foundName then
+            foundName = "Ovo do Lobby"
+            detectedRarity = "COMUM"
         end
     end
 
     if not detectedRarity then
-        detectedRarity = (petInfo and petInfo.Rarity) or isl.Rarity or "COMUM"
-        maxScore = math.max(maxScore, (petInfo and petInfo.Score) or isl.Score or 300)
-    end
-
-    if detectedWeight > 0 and maxScore < (detectedWeight * 2) then
-        maxScore = detectedWeight * 2
-        detectedRarity = string.format("%s Kg", tostring(detectedWeight))
+        detectedRarity = "COMUM"
     end
 
     return foundName, detectedRarity, maxScore, detectedWeight, detectedIncome
@@ -1036,13 +1061,15 @@ local function scanAllEggs()
         })
     end
 
-    -- 1. PlacedEggRenders
+    -- 1. PlacedEggRenders (Apenas se tiver ProximityPrompt ativo para roubo!)
     pcall(function()
         local placed = Services.Workspace:FindFirstChild("PlacedEggRenders")
         if placed then
             for _, egg in ipairs(placed:GetChildren()) do
                 local p = egg:FindFirstChildWhichIsA("ProximityPrompt", true)
-                addCandidate(egg, p, "Base/Plot")
+                if p and p.Enabled then
+                    addCandidate(egg, p, "Base/Plot")
+                end
             end
         end
     end)
@@ -1459,7 +1486,13 @@ local function executeRagdollSteal(target)
         task.wait(0.07)
     end
 
-    -- 3. Teleporte instantâneo para o Ovo Alvo
+    -- 3. Se o Ragdoll não ativou a tempo, usar deslocamento seguro para não tomar rubberband
+    if not ragdollActive then
+        addLog("ROUBO", "Galinha fora de alcance. Chaveando para deslocamento seguro...")
+        return executeDirectSteal(target)
+    end
+
+    -- Teleporte instantâneo para o Ovo Alvo dentro da janela de física
     myHrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 1.8, 0))
     
     -- Âncora micro-física para garantir acionamento estável (Mecânica Ouroboros)
@@ -2377,14 +2410,13 @@ local function setupEsteiraRunner()
         local hDist = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(tPos.X, 0, tPos.Z)).Magnitude
 
         if hDist > 4.0 then
-            -- Se afastou da esteira, move suavemente ou reposiciona
             hrp.CFrame = CFrame.new(tPos)
-            task.wait(0.06)
         else
-            -- Na esteira: Correr continuamente a cada frame sem parar!
             State.IsOnTreadmill = true
-            StatusBadge.Text = "NA ESTEIRA"
-            StatusBadge.TextColor3 = C_YELLOW
+            if StatusBadge and StatusBadge.Text ~= "NA ESTEIRA" then
+                StatusBadge.Text = "NA ESTEIRA"
+                StatusBadge.TextColor3 = C_YELLOW
+            end
             hum:Move(Vector3.new(0, 0, -1), false)
         end
     end)
