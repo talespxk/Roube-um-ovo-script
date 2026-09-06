@@ -3,7 +3,7 @@ if not game:IsLoaded() then
 end
 
 --[[
-    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v13.2 FORENSIC)
+    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v13.3 UNSTOPPABLE & ANTI-STUCK)
     -----------------------------------------------------------------------
     - Radar honesto: somente mostra pet/raridade/renda quando o cliente replica
       evidência real. Slots opacos aparecem como N/D.
@@ -2167,19 +2167,23 @@ local function triggerPrompt(prompt)
         position = getPositionOf(prompt),
     })
     local triggered = false
+    local origHold = prompt.HoldDuration or 0.5
+    pcall(function()
+        prompt.HoldDuration = 0
+    end)
     if fireproximityprompt then
         triggered = pcall(function()
-            -- Uma única interação. O código anterior disparava o mesmo prompt
-            -- várias vezes e alterava suas propriedades, fazendo o servidor negar.
             fireproximityprompt(prompt)
         end)
-    else
-        triggered = pcall(function()
-            prompt:InputHoldBegin()
-            task.wait(math.clamp(prompt.HoldDuration, 0.05, 2))
-            prompt:InputHoldEnd()
-        end)
     end
+    pcall(function()
+        prompt:InputHoldBegin()
+        task.wait(0.06)
+        prompt:InputHoldEnd()
+    end)
+    pcall(function()
+        prompt.HoldDuration = origHold
+    end)
     traceEvent("PROMPT", triggered and "TRIGGER_SENT" or "TRIGGER_FAILED", { prompt = prompt })
     return triggered
 end
@@ -2358,9 +2362,11 @@ end
 local function tryInstantCarryRemote(target)
     if not target then return false end
     local inst = target.Instance
-    local modelName = inst and inst.Name or ""
+    if not inst then return false end
+    
+    local modelName = inst.Name or ""
     local slotKey = modelName:match("([%a%d_]+:Slot_%d+)")
-    if not slotKey and inst and inst.Parent then
+    if not slotKey and inst.Parent then
         slotKey = inst.Parent.Name:match("([%a%d_]+:Slot_%d+)")
     end
     if not slotKey and target.Position then
@@ -2370,7 +2376,25 @@ local function tryInstantCarryRemote(target)
         end
     end
     slotKey = slotKey or "Forest:Slot_001"
-    local uid = modelName:find("FirstAreaEgg_") and modelName or ("FirstAreaEgg_" .. tostring(LocalPlayer.UserId) .. "_0_" .. slotKey)
+
+    local uid = inst:GetAttribute("Uid") or inst:GetAttribute("FirstAreaUid") or inst:GetAttribute("EggUid")
+    if not uid and inst.Parent then
+        uid = inst.Parent:GetAttribute("Uid") or inst.Parent:GetAttribute("FirstAreaUid") or inst.Parent:GetAttribute("EggUid")
+    end
+    if not uid then
+        for _, c in ipairs(inst:GetChildren()) do
+            if c.Name:find("FirstAreaEgg_") then
+                uid = c.Name
+                break
+            end
+        end
+    end
+    if not uid and modelName:find("FirstAreaEgg_") then
+        uid = modelName
+    end
+    if not uid then
+        uid = "FirstAreaEgg_" .. tostring(LocalPlayer.UserId) .. "_" .. tostring(math.random(1000000, 9999999)) .. "_" .. slotKey
+    end
 
     local packages = Services.ReplicatedStorage:FindFirstChild("Packages")
     local networking = packages and packages:FindFirstChild("Networking")
@@ -2385,7 +2409,7 @@ local function tryInstantCarryRemote(target)
     end
 
     if askCarry then
-        for i = 1, 4 do
+        for i = 1, 2 do
             task.spawn(function()
                 pcall(function()
                     askCarry:InvokeServer({
@@ -2394,7 +2418,6 @@ local function tryInstantCarryRemote(target)
                     })
                 end)
             end)
-            task.wait(0.02)
         end
         return true
     end
@@ -2746,27 +2769,36 @@ local function runStateMachineTick()
             return
         end
 
-        -- Disparar o ProximityPrompt do ovo
         local pInst = target.Prompt or (target.Instance and target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true))
+        capturePickupSnapshot(target)
+        State.ExpectCarryUntil = os.clock() + 4
+
+        addLog("INTERAÇÃO", "Executando coleta multi-canal em " .. target.Name .. "...")
+
+        -- Canal 1: Remote Bypass Instantâneo (AskFieldEggCarry)
+        pcall(function()
+            tryInstantCarryRemote(target)
+        end)
+
+        -- Canal 2: ProximityPrompt com bypass de HoldDuration
         if pInst then
-            capturePickupSnapshot(target)
-            State.ExpectCarryUntil = os.clock() + 4
-            if triggerPrompt(pInst) then
-                addLog("INTERAÇÃO", "Prompt disparado para " .. target.Name)
-            else
-                addLog("INTERAÇÃO", "Prompt indisponível — selecionando outro alvo")
-                StealSM.Blacklist[posKey(target.Position)] = os.clock() + 5.0
-                setStealState("SELECTING")
-                return
-            end
-        else
-            addLog("INTERAÇÃO", "Sem ProximityPrompt — pulando alvo")
-            StealSM.Blacklist[posKey(target.Position)] = os.clock() + 10.0
-            setStealState("SELECTING")
-            return
+            pcall(function()
+                triggerPrompt(pInst)
+            end)
         end
 
-        task.wait(0.12)
+        -- Canal 3: Toque físico com membros e tronco
+        pcall(function()
+            local eggPart = target.Instance:IsA("BasePart") and target.Instance 
+                or target.Instance:FindFirstChildWhichIsA("BasePart", true)
+            if eggPart and myHrp and firetouchinterest then
+                firetouchinterest(myHrp, eggPart, 0)
+                task.wait()
+                firetouchinterest(myHrp, eggPart, 1)
+            end
+        end)
+
+        task.wait(0.18)
 
         StealSM.VerifyPolls = 0
         setStealState("VERIFYING_CARRY")
@@ -3629,6 +3661,57 @@ TargetInfoLabel.TextXAlignment = Enum.TextXAlignment.Left
 TargetInfoLabel.Text = "Buscando ovos..."
 TargetInfoLabel.Parent = TargetCard
 
+-- Card de Ações Rápidas de Destrave (Sair da Esteira / Esvaziar Mãos / Descarregar)
+local QuickActionCard = createCleanCard(AutoStealPage, 42)
+local DismountQuickBtn = Instance.new("TextButton")
+DismountQuickBtn.Size = UDim2.new(0.48, 0, 0, 32)
+DismountQuickBtn.Position = UDim2.new(0, 6, 0.5, -16)
+DismountQuickBtn.BackgroundColor3 = Color3.fromRGB(153, 27, 27)
+DismountQuickBtn.Text = "SAIR DA ESTEIRA"
+DismountQuickBtn.Font = Enum.Font.GothamBold
+DismountQuickBtn.TextSize = 10
+DismountQuickBtn.TextColor3 = C_TEXT
+DismountQuickBtn.Parent = QuickActionCard
+addCorner(DismountQuickBtn, 6)
+addStroke(DismountQuickBtn, Color3.fromRGB(239, 68, 68), 1)
+
+DismountQuickBtn.MouseButton1Click:Connect(function()
+    dismountTreadmill()
+end)
+
+local EmptyHandsBtn = Instance.new("TextButton")
+EmptyHandsBtn.Size = UDim2.new(0.48, 0, 0, 32)
+EmptyHandsBtn.Position = UDim2.new(0.52, -4, 0.5, -16)
+EmptyHandsBtn.BackgroundColor3 = Color3.fromRGB(30, 44, 74)
+EmptyHandsBtn.Text = "ESVAZIAR MÃOS (DESTRAVAR)"
+EmptyHandsBtn.Font = Enum.Font.GothamBold
+EmptyHandsBtn.TextSize = 9
+EmptyHandsBtn.TextColor3 = C_YELLOW
+EmptyHandsBtn.Parent = QuickActionCard
+addCorner(EmptyHandsBtn, 6)
+addStroke(EmptyHandsBtn, C_YELLOW, 1)
+
+EmptyHandsBtn.MouseButton1Click:Connect(function()
+    pcall(function()
+        local hum = getHum()
+        if hum then hum:UnequipTools() end
+    end)
+    State.CarryConfirmed = false
+    State.CarryEvidence = nil
+    pcall(function()
+        for _, desc in ipairs(Services.ReplicatedStorage:GetDescendants()) do
+            if desc:IsA("RemoteEvent") or desc:IsA("RemoteFunction") then
+                local low = desc.Name:lower()
+                if low:find("drop") and (low:find("egg") or low:find("held")) then
+                    if desc:IsA("RemoteEvent") then desc:FireServer()
+                    else desc:InvokeServer() end
+                end
+            end
+        end
+    end)
+    addLog("DESTRAVE", "Mãos esvaziadas! Estado de transporte resetado.")
+end)
+
 MainToggleBtn.MouseButton1Click:Connect(function()
     Config.AutoStealEnabled = not Config.AutoStealEnabled
     if Config.AutoStealEnabled then
@@ -3687,6 +3770,21 @@ GoToEsteiraBtn.TextColor3 = C_CYAN
 GoToEsteiraBtn.Parent = AutoEsteiraPage
 addCorner(GoToEsteiraBtn, 6)
 addStroke(GoToEsteiraBtn, C_BORDER, 1)
+
+local DismountEsteiraBtn = Instance.new("TextButton")
+DismountEsteiraBtn.Size = UDim2.new(1, 0, 0, 34)
+DismountEsteiraBtn.BackgroundColor3 = Color3.fromRGB(153, 27, 27)
+DismountEsteiraBtn.Text = "SAIR DA ESTEIRA (DESMONTAR AGORA)"
+DismountEsteiraBtn.Font = Enum.Font.GothamBold
+DismountEsteiraBtn.TextSize = 10
+DismountEsteiraBtn.TextColor3 = C_TEXT
+DismountEsteiraBtn.Parent = AutoEsteiraPage
+addCorner(DismountEsteiraBtn, 6)
+addStroke(DismountEsteiraBtn, Color3.fromRGB(239, 68, 68), 1.2)
+
+DismountEsteiraBtn.MouseButton1Click:Connect(function()
+    dismountTreadmill()
+end)
 
 local EsteiraStatusCard = createCleanCard(AutoEsteiraPage, 50)
 EsteiraStatusLabel = Instance.new("TextLabel")
@@ -3818,6 +3916,42 @@ local function findMyTreadmill()
     return nil, nil
 end
 
+-- Função Mestre de Desmonte da Esteira (Garante que o jogador saia fisicamente)
+local function dismountTreadmill()
+    Config.AutoEsteiraEnabled = false
+    State.IsOnTreadmill = false
+    lastTreadmillMode = "OFF"
+    treadmillNavigating = false
+    if EsteiraToggleBtn then
+        EsteiraToggleBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+        EsteiraToggleBtn.Text = "ATIVAR AUTO-ESTEIRA (TREINO)"
+        addStroke(EsteiraToggleBtn, C_CYAN, 1)
+    end
+    if StatusBadge then
+        StatusBadge.Text = Config.AutoStealEnabled and "ROUBANDO" or "PARADO"
+        StatusBadge.TextColor3 = Config.AutoStealEnabled and C_GREEN or C_MUTED
+    end
+    local hum = getHum()
+    local hrp = getHRP()
+    if hum and hrp then
+        hum:Move(Vector3.zero, false)
+        hum.Jump = true
+        task.wait(0.04)
+        local myPlot = findMyPlot()
+        local targetExitPos = nil
+        if myPlot then
+            local plotCenter = myPlot:GetPivot().Position
+            local dir = (Vector3.new(plotCenter.X, hrp.Position.Y, plotCenter.Z) - hrp.Position).Unit
+            targetExitPos = hrp.Position + (dir * 14) + Vector3.new(0, 3, 0)
+        else
+            targetExitPos = hrp.Position + (-hrp.CFrame.LookVector * 14) + Vector3.new(0, 3, 0)
+        end
+        hrp.CFrame = CFrame.new(targetExitPos)
+        hrp.AssemblyLinearVelocity = Vector3.zero
+    end
+    addLog("ESTEIRA", "Desmontado da esteira com sucesso!")
+end
+
 GoToEsteiraBtn.MouseButton1Click:Connect(function()
     local _, tPos = findMyTreadmill()
     if tPos then
@@ -3857,6 +3991,25 @@ local function setupEsteiraRunner()
             return
         end
 
+        -- Detecção de Movimento Manual do Jogador (WASD / Espaço)
+        local hasManualInput = false
+        pcall(function()
+            local uis = Services.UserInputService
+            if uis:IsKeyDown(Enum.KeyCode.W) or uis:IsKeyDown(Enum.KeyCode.A) 
+                or uis:IsKeyDown(Enum.KeyCode.S) or uis:IsKeyDown(Enum.KeyCode.D)
+                or uis:IsKeyDown(Enum.KeyCode.Space) then
+                hasManualInput = true
+            end
+        end)
+        if hasManualInput then
+            if State.IsOnTreadmill then
+                State.IsOnTreadmill = false
+                lastTreadmillMode = "MANUAL_MOVE"
+                addLog("ESTEIRA", "Movimento manual detectado. Pausando auto-retorno.")
+            end
+            return
+        end
+
         local tPart, tPos = findMyTreadmill()
         if not tPos then
             State.IsOnTreadmill = false
@@ -3871,6 +4024,14 @@ local function setupEsteiraRunner()
 
         if hDist > 4.0 then
             State.IsOnTreadmill = false
+            -- Se o jogador estiver longe (> 14 studs), não puxe de volta à força!
+            if hDist > 14.0 then
+                if lastTreadmillMode ~= "AWAY" then
+                    lastTreadmillMode = "AWAY"
+                    addLog("ESTEIRA", "Você se afastou da esteira. Auto-esteira em espera.")
+                end
+                return
+            end
             if lastTreadmillMode ~= "RETURNING" then
                 lastTreadmillMode = "RETURNING"
                 traceEvent("TREADMILL", "RETURNING", { distance = hDist, target = tPos })
@@ -3894,8 +4055,6 @@ local function setupEsteiraRunner()
             StatusBadge.Text = "NA ESTEIRA"
             StatusBadge.TextColor3 = C_YELLOW
         end
-        -- O minigame lê MoveDirection; esta é a direção usada pela esteira do
-        -- mapa, independentemente da orientação visual da peça escolhida.
         hum:Move(Vector3.new(0, 0, -1), false)
     end)
     table.insert(ScriptConnections, esteiraHeartbeatConn)
