@@ -147,13 +147,14 @@ local State = {
     CurrentTargetEgg = nil,
     LastPromptTriggered = nil,
     Logs = {}
-    IsUnloaded = false,
-    BaseCFrame = nil,
-    IsExecutingSteal = false,
-    CurrentTargetEgg = nil,
-    LastPromptTriggered = nil,
-    Logs = {}
 }
+
+-- Declarações antecipadas de componentes da UI para acesso global interno
+local StatusBadge = nil
+local TargetInfoLabel = nil
+local BaseLabel = nil
+local EsteiraStatusLabel = nil
+local MainToggleBtn = nil
 
 local function addLog(category, msg)
     local timestamp = os.date("%H:%M:%S")
@@ -163,9 +164,18 @@ local function addLog(category, msg)
     if _G.UpdateLogConsole then _G.UpdateLogConsole() end
 end
 
+local function getChar()
+    return LocalPlayer.Character
+end
+
 local function getHRP()
     local c = LocalPlayer.Character
     return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function getHum()
+    local c = LocalPlayer.Character
+    return c and c:FindFirstChildWhichIsA("Humanoid")
 end
 
 -- 6. Detecção de Posse de Ovo Ultra-Ampla
@@ -1253,6 +1263,293 @@ local function triggerPrompt(prompt)
     return true
 end
 
+--================================================================--
+-- 9.5. MOTOR MASTER DE AUTO-ROUBO (RAGDOLL TP & VOO DIRETO)
+--================================================================--
+
+-- A. Identificação do Plot do Jogador e Ponto de Depósito / Esteira
+local function findMyPlot()
+    local plots = Services.Workspace:FindFirstChild("Plots")
+    if not plots then return nil end
+
+    local myName = LocalPlayer.Name:lower()
+    local myDisplay = LocalPlayer.DisplayName:lower()
+    local myId = tostring(LocalPlayer.UserId)
+
+    for _, plot in ipairs(plots:GetChildren()) do
+        -- 1. Checagem por ObjectValue ou StringValue de proprietário
+        for _, tag in ipairs({"Owner", "Player", "OwnerName", "OwnerId", "UserId", "PlayerId"}) do
+            local valObj = plot:FindFirstChild(tag)
+            if valObj then
+                if valObj:IsA("ObjectValue") and (valObj.Value == LocalPlayer or valObj.Value == LocalPlayer.Character) then
+                    return plot
+                elseif valObj:IsA("StringValue") then
+                    local s = valObj.Value:lower()
+                    if s == myName or s == myDisplay then return plot end
+                elseif valObj:IsA("IntValue") or valObj:IsA("NumberValue") then
+                    if tostring(valObj.Value) == myId then return plot end
+                end
+            end
+        end
+
+        -- 2. Checagem de Atributos do Plot
+        for k, v in pairs(plot:GetAttributes()) do
+            local s = tostring(v):lower()
+            if s == myName or s == myDisplay or s == myId then
+                return plot
+            end
+        end
+
+        -- 3. Checagem de Placas e Nomes no Plot
+        for _, desc in ipairs(plot:GetDescendants()) do
+            if desc:IsA("TextLabel") or desc:IsA("TextButton") then
+                local txt = desc.Text:lower()
+                if txt:find(myName) or txt:find(myDisplay) then
+                    return plot
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function getMyDepositCFrame()
+    local myPlot = findMyPlot()
+    if myPlot then
+        for _, d in ipairs(myPlot:GetDescendants()) do
+            if d:IsA("BasePart") then
+                local low = d.Name:lower()
+                if low:find("deposit") or low:find("drop") or low:find("nest") or low:find("egg") or low:find("conveyor") then
+                    return d.CFrame + Vector3.new(0, 2.5, 0)
+                end
+            end
+        end
+        return myPlot:GetPivot() + Vector3.new(0, 2.5, 0)
+    end
+    return State.BaseCFrame or (getHRP() and getHRP().CFrame)
+end
+
+-- B. Localização do Guarda da Floresta (Ilha 1) para Ativação de Ragdoll
+local function findForestGuard()
+    for _, obj in ipairs(Services.Workspace:GetChildren()) do
+        if obj:IsA("Model") then
+            local low = obj.Name:lower()
+            if (low:find("guard") or low:find("chicken") or low:find("forest") or low:find("galinha"))
+                and obj ~= Services.Workspace:FindFirstChild("_Guards") then
+                local p = getPositionOf(obj)
+                if p and (p - Vector3.new(598, 68, -328)).Magnitude < 180 then
+                    return obj, p
+                end
+            end
+        end
+    end
+
+    local gFolder = Services.Workspace:FindFirstChild("_Guards")
+    if gFolder then
+        for _, g in ipairs(gFolder:GetChildren()) do
+            local low = g.Name:lower()
+            if low:find("forest") or low:find("chicken") or low:find("galinha") then
+                local p = getPositionOf(g)
+                if p then return g, p end
+            end
+        end
+    end
+
+    return nil, Vector3.new(598.0, 68.0, -328.0)
+end
+
+-- C. Detecção em Tempo Real de Ragdoll e Física Suspensa
+local function isPlayerInRagdoll()
+    local char = getChar()
+    if not char then return false end
+    local hum = getHum()
+    if hum then
+        local state = hum:GetState()
+        if state == Enum.HumanoidStateType.Ragdoll or state == Enum.HumanoidStateType.PlatformStanding or hum.PlatformStand then
+            return true
+        end
+    end
+    local lpRag = LocalPlayer:GetAttribute("RagdollEndTime") or LocalPlayer:GetAttribute("IsRagdoll") or LocalPlayer:GetAttribute("Ragdoll")
+    if lpRag and (type(lpRag) == "boolean" and lpRag or type(lpRag) == "number" and lpRag > 0) then
+        return true
+    end
+    local charRag = char:GetAttribute("RagdollEndTime") or char:GetAttribute("IsRagdoll") or char:GetAttribute("Ragdoll")
+    if charRag and (type(charRag) == "boolean" and charRag or type(charRag) == "number" and charRag > 0) then
+        return true
+    end
+    if char:FindFirstChildWhichIsA("BallSocketConstraint", true) then
+        return true
+    end
+    return false
+end
+
+-- D. Execução de Roubo via Ragdoll TP (Bypass de Anti-Cheat)
+local function executeRagdollSteal(target)
+    if not target or not target.Position then return false end
+    local myHrp = getHRP()
+    if not myHrp or State.IsUnloaded then return false end
+
+    local baseCF = getMyDepositCFrame() or State.BaseCFrame or myHrp.CFrame
+    local targetPos = target.Position
+
+    addLog("ROUBO", string.format("Iniciando Ragdoll TP para %s [%s]...", target.Name, target.Rarity))
+
+    -- 1. Teleporte ao Ninho da Galinha para provocar agro
+    local guardObj, guardPos = findForestGuard()
+    myHrp.CFrame = CFrame.new(guardPos + Vector3.new(0, 1.2, 0))
+    task.wait(0.1)
+
+    -- 2. Aguardar ativação de Ragdoll pelo golpe
+    local ragdollActive = false
+    local t0 = tick()
+    while (tick() - t0) < 1.4 do
+        if State.IsUnloaded then return false end
+        if isPlayerInRagdoll() then
+            ragdollActive = true
+            break
+        end
+        if guardObj then
+            local gP = getPositionOf(guardObj)
+            if gP then
+                myHrp.CFrame = CFrame.new(gP + Vector3.new(math.random(-1, 1) * 0.3, 0.4, math.random(-1, 1) * 0.3))
+            end
+        end
+        task.wait(0.07)
+    end
+
+    -- 3. Teleporte instantâneo para o Ovo Alvo
+    myHrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 1.8, 0))
+    
+    -- Âncora micro-física para garantir acionamento estável (Mecânica Ouroboros)
+    local oldAnchored = myHrp.Anchored
+    myHrp.Anchored = true
+    task.wait(0.04)
+
+    -- 4. Disparo do Prompt
+    local pInstance = target.Prompt or (target.Instance and target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true))
+    if pInstance then
+        triggerPrompt(pInstance)
+    end
+    task.wait(0.06)
+    myHrp.Anchored = oldAnchored
+
+    -- 5. Teleporte instantâneo de volta à Esteira da Base
+    myHrp.CFrame = baseCF
+    addLog("ROUBO", "Retornou à base! Entregando ovo na esteira...")
+
+    -- 6. Espera de depósito
+    task.wait(Config.AutoDepositWait or 1.0)
+    return true
+end
+
+-- E. Execução de Roubo via Voo Direto / Solo
+local function executeDirectSteal(target)
+    if not target or not target.Position then return false end
+    local myHrp = getHRP()
+    if not myHrp or State.IsUnloaded then return false end
+
+    local baseCF = getMyDepositCFrame() or State.BaseCFrame or myHrp.CFrame
+    local targetPos = target.Position
+
+    addLog("ROUBO", string.format("Voo direto em andamento para %s [%s]...", target.Name, target.Rarity))
+
+    local arrived = movePlayerDirect(targetPos, Config.MoveSpeed)
+    if arrived then
+        local oldAnchored = myHrp.Anchored
+        myHrp.Anchored = true
+        local pInst = target.Prompt or (target.Instance and target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true))
+        if pInst then triggerPrompt(pInst) end
+        task.wait(0.08)
+        myHrp.Anchored = oldAnchored
+
+        movePlayerOverhead(baseCF.Position, Config.MoveSpeed)
+        task.wait(Config.AutoDepositWait or 1.0)
+    end
+end
+
+-- F. Ciclo Completo de Auto-Roubo
+local function runStealCycle()
+    local myHrp = getHRP()
+    if not myHrp or State.IsUnloaded then return end
+
+    -- 1. Se ainda não tem base fixada, detectar automaticamente
+    if not State.BaseCFrame then
+        local depCF = getMyDepositCFrame()
+        if depCF then
+            State.BaseCFrame = depCF
+            if BaseLabel then
+                local myPlot = findMyPlot()
+                BaseLabel.Text = string.format("Base: (%s) em (%.0f, %.0f, %.0f)", myPlot and myPlot.Name or "Detectada", depCF.Position.X, depCF.Position.Y, depCF.Position.Z)
+                BaseLabel.TextColor3 = C_GREEN
+            end
+        end
+    end
+
+    -- 2. Verificar se o jogador já está carregando um ovo
+    local holding, heldName = isHoldingEgg()
+    if holding then
+        if StatusBadge then
+            StatusBadge.Text = "ENTREGANDO"
+            StatusBadge.TextColor3 = C_CYAN
+        end
+        if TargetInfoLabel then
+            TargetInfoLabel.Text = "Ovo em mãos! Entregando na base..."
+        end
+        local depCF = getMyDepositCFrame() or State.BaseCFrame
+        if depCF then
+            if Config.StealMethod == "RagdollTP" then
+                myHrp.CFrame = depCF
+            else
+                movePlayerOverhead(depCF.Position, Config.MoveSpeed)
+            end
+        end
+        task.wait(Config.AutoDepositWait or 1.0)
+        return
+    end
+
+    -- 3. Escanear todos os ovos do mapa
+    local eggs = scanAllEggs()
+    local valid = {}
+    for _, e in ipairs(eggs) do
+        if not (Config.ShowOnlyUnowned and e.IsMyPlot) then
+            if e.Distance <= Config.MaxStealDistance then
+                if isEggInMyIsland(e.Position) then
+                    table.insert(valid, e)
+                end
+            end
+        end
+    end
+
+    if #valid == 0 then
+        if TargetInfoLabel then
+            TargetInfoLabel.Text = "Nenhum ovo elegível encontrado na ilha atual."
+        end
+        if StatusBadge then
+            StatusBadge.Text = "AGUARDANDO"
+            StatusBadge.TextColor3 = C_MUTED
+        end
+        task.wait(0.8)
+        return
+    end
+
+    -- 4. O primeiro ovo já é o de maior pontuação/raridade
+    local target = valid[1]
+    if TargetInfoLabel then
+        TargetInfoLabel.Text = string.format("[%s] %s (%dm)", target.Rarity, target.Name, math.floor(target.Distance))
+    end
+    if StatusBadge then
+        StatusBadge.Text = "ROUBANDO"
+        StatusBadge.TextColor3 = C_GREEN
+    end
+
+    if Config.StealMethod == "RagdollTP" then
+        executeRagdollSteal(target)
+    else
+        executeDirectSteal(target)
+    end
+end
+
+
 -- 10. EXPORTADOR DE TELEMETRIA E DADOS INTERNOS (INSPETOR v7.0 COMPLETO)
 local function dumpGameData()
     local lines = {}
@@ -1729,7 +2026,7 @@ Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Text = "ROUBE UM OVO  v10.0"
 Title.Parent = Topbar
 
-local StatusBadge = Instance.new("TextLabel")
+StatusBadge = Instance.new("TextLabel")
 StatusBadge.Size = UDim2.new(0, 95, 0, 20)
 StatusBadge.Position = UDim2.new(0, 195, 0.5, -10)
 StatusBadge.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
@@ -1844,7 +2141,7 @@ end
 --================================================================--
 local AutoStealPage = TabPages["Auto-Roubo"]
 
-local MainToggleBtn = Instance.new("TextButton")
+MainToggleBtn = Instance.new("TextButton")
 MainToggleBtn.Size = UDim2.new(1, 0, 0, 42)
 MainToggleBtn.BackgroundColor3 = Config.AutoStealEnabled and C_GREEN or Color3.fromRGB(30, 41, 59)
 MainToggleBtn.Text = Config.AutoStealEnabled and "AUTO-ROUBO ATIVADO (EM EXECUCAO)" or "ATIVAR AUTO-ROUBO"
@@ -1880,7 +2177,7 @@ end)
 
 -- Card da Base
 local BaseCard = createCleanCard(AutoStealPage, 50)
-local BaseLabel = Instance.new("TextLabel")
+BaseLabel = Instance.new("TextLabel")
 BaseLabel.Size = UDim2.new(0.68, -10, 1, 0)
 BaseLabel.Position = UDim2.new(0, 12, 0, 0)
 BaseLabel.BackgroundTransparency = 1
@@ -1926,7 +2223,7 @@ TargetTitle.TextXAlignment = Enum.TextXAlignment.Left
 TargetTitle.Text = "ALVO PRIORITARIO (MAIOR VALOR NO MAPA):"
 TargetTitle.Parent = TargetCard
 
-local TargetInfoLabel = Instance.new("TextLabel")
+TargetInfoLabel = Instance.new("TextLabel")
 TargetInfoLabel.Size = UDim2.new(1, -20, 0, 24)
 TargetInfoLabel.Position = UDim2.new(0, 12, 0, 26)
 TargetInfoLabel.BackgroundTransparency = 1
@@ -1988,7 +2285,7 @@ addCorner(GoToEsteiraBtn, 6)
 addStroke(GoToEsteiraBtn, C_BORDER, 1)
 
 local EsteiraStatusCard = createCleanCard(AutoEsteiraPage, 50)
-local EsteiraStatusLabel = Instance.new("TextLabel")
+EsteiraStatusLabel = Instance.new("TextLabel")
 EsteiraStatusLabel.Size = UDim2.new(1, -20, 1, 0)
 EsteiraStatusLabel.Position = UDim2.new(0, 12, 0, 0)
 EsteiraStatusLabel.BackgroundTransparency = 1
@@ -2713,6 +3010,23 @@ task.spawn(function()
         if activeTab == "Radar de Ovos" then
             executeCleanRadarScan()
         end
+    end
+end)
+
+
+-- Thread Contínua em Segundo Plano para o Auto-Roubo Master
+task.spawn(function()
+    while true do
+        if State.IsUnloaded then break end
+        if Config.AutoStealEnabled and not State.IsExecutingSteal and not State.IsOnTreadmill then
+            State.IsExecutingSteal = true
+            local ok, err = pcall(runStealCycle)
+            if not ok and err then
+                addLog("ERRO", "Falha no ciclo de roubo: " .. tostring(err))
+            end
+            State.IsExecutingSteal = false
+        end
+        task.wait(0.3)
     end
 end)
 
