@@ -1,6 +1,8 @@
 --[[
-    ROUBE UM OVO - HUB DE TELEMETRIA & AUTOMAÇÃO (v8.0 RAGDOLL TP & UNLOAD)
+    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v9.5 NOMES ÚNICOS & CLEAN UI)
     -----------------------------------------------------------------------
+    - Nomes Únicos de Ovos: Cada um dos 5 slots de cada ilha possui o nome
+      real do pet do drop (Godzilla, King Kong, Kitsune, Oni Tiger, etc.).
     - Sistema de Unload Completo: Botão no topo e configurações para encerrar
       100% das threads, limpar conexões, remover ESP e fechar interface.
     - Catálogo Oficial dos 11 Biomas (Ilhas 1 a 11): Coordenadas exatas, nomes
