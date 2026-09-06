@@ -77,6 +77,139 @@ local C_YELLOW = Color3.fromRGB(234, 179, 8)    -- Amarelo ouro
 -- 4. Gerenciador Mestre de Conexões e Limpeza
 local ScriptConnections = {}
 
+--================================================================--
+-- 5.1. CACHE FORENSE EM TEMPO REAL DE REMOTES (PETS, RENDA & EGG SHIFT)
+--================================================================--
+local RealFieldEggCache = {}
+local RealPetIncomeCache = {}
+
+local function setupNetworkingListeners()
+    local packages = Services.ReplicatedStorage:FindFirstChild("Packages")
+    local networking = packages and packages:FindFirstChild("Networking")
+    
+    -- Helper para encontrar remotes de forma resiliente
+    local function findRemote(name, className)
+        if networking then
+            local r = networking:FindFirstChild(name)
+            if r and (not className or r:IsA(className)) then return r end
+        end
+        for _, desc in ipairs(Services.ReplicatedStorage:GetDescendants()) do
+            if desc.Name == name or desc.Name:find(name, 1, true) then
+                if not className or desc:IsA(className) then
+                    return desc
+                end
+            end
+        end
+        return nil
+    end
+
+    -- 1. FieldEggShifted: O servidor avisa exatamente qual Pet (AssetCategory) nasceu em cada Área/Slot
+    local eggShifted = findRemote("FieldEggShifted", "RemoteEvent")
+    if eggShifted then
+        registerConnection(eggShifted.OnClientEvent:Connect(function(data)
+            if type(data) == "table" then
+                local petName = data.AssetCategory or data.Name or data.Pet
+                local areaId = data.AreaId or data.Area or "Desconhecida"
+                if petName and areaId then
+                    RealFieldEggCache[areaId] = {
+                        PetName = tostring(petName),
+                        AreaId = tostring(areaId),
+                        Time = os.clock(),
+                        Data = data
+                    }
+                    if data.SlotKey then
+                        RealFieldEggCache[tostring(data.SlotKey)] = tostring(petName)
+                    end
+                    traceEvent("EGG_SHIFTED", tostring(areaId) .. " -> " .. tostring(petName), data)
+                end
+            end
+        end))
+    end
+
+    -- 2. CoinsGathered: O servidor envia a renda exata de cada Pet em moedas/segundo
+    local coinsGathered = findRemote("CoinsGathered", "RemoteEvent")
+    if coinsGathered then
+        registerConnection(coinsGathered.OnClientEvent:Connect(function(petsList, isTotal)
+            if type(petsList) == "table" then
+                for _, pEntry in ipairs(petsList) do
+                    if type(pEntry) == "table" and pEntry.uid and pEntry.amount then
+                        RealPetIncomeCache[tostring(pEntry.uid)] = tonumber(pEntry.amount) or 0
+                    end
+                end
+            end
+        end))
+    end
+end
+task.spawn(setupNetworkingListeners)
+
+-- Helper para disparar Bat Swing (auto-defesa e stun em guardas/galinhas)
+local function triggerBatSwing()
+    pcall(function()
+        local packages = Services.ReplicatedStorage:FindFirstChild("Packages")
+        local networking = packages and packages:FindFirstChild("Networking")
+        local batRemote = networking and networking:FindFirstChild("RE/BatSwing/Trigger")
+        if not batRemote then
+            for _, desc in ipairs(Services.ReplicatedStorage:GetDescendants()) do
+                if desc:IsA("RemoteEvent") and (desc.Name == "RE/BatSwing/Trigger" or desc.Name:find("BatSwing")) then
+                    batRemote = desc
+                    break
+                end
+            end
+        end
+        if batRemote then
+            batRemote:FireServer()
+        end
+    end)
+end
+
+-- Helper para invocar o Roubo Instantâneo via RemoteFunction (AskFieldEggCarry)
+local function tryInstantCarryRemote(target)
+    if not target then return false end
+    local inst = target.Instance
+    local modelName = inst and inst.Name or ""
+    local slotKey = modelName:match("([%a%d_]+:Slot_%d+)")
+    if not slotKey and inst and inst.Parent then
+        slotKey = inst.Parent.Name:match("([%a%d_]+:Slot_%d+)")
+    end
+    if not slotKey and target.Position then
+        local isl = getIslandByPos(target.Position)
+        if isl and isl.Name then
+            slotKey = isl.Name .. ":Slot_001"
+        end
+    end
+    slotKey = slotKey or "Forest:Slot_001"
+    local uid = modelName:find("FirstAreaEgg_") and modelName or ("FirstAreaEgg_" .. tostring(LocalPlayer.UserId) .. "_0_" .. slotKey)
+
+    local packages = Services.ReplicatedStorage:FindFirstChild("Packages")
+    local networking = packages and packages:FindFirstChild("Networking")
+    local askCarry = networking and networking:FindFirstChild("RF/EggWorld/AskFieldEggCarry")
+    if not askCarry then
+        for _, desc in ipairs(Services.ReplicatedStorage:GetDescendants()) do
+            if desc:IsA("RemoteFunction") and (desc.Name == "RF/EggWorld/AskFieldEggCarry" or desc.Name:find("AskFieldEggCarry")) then
+                askCarry = desc
+                break
+            end
+        end
+    end
+
+    if askCarry then
+        for i = 1, 4 do
+            task.spawn(function()
+                pcall(function()
+                    askCarry:InvokeServer({
+                        FirstAreaSlotKey = slotKey,
+                        Uid = uid
+                    })
+                end)
+            end)
+            task.wait(0.02)
+        end
+        return true
+    end
+    return false
+end
+
+
 local function registerConnection(conn)
     if conn then
         table.insert(ScriptConnections, conn)
@@ -1464,6 +1597,39 @@ local function resolveEggDetails(instance, prompt)
     local isl = getIslandByPos(pos)
     local slotNum = nil
 
+    -- 0. CHECAGEM PRIORITÁRIA DE CACHE FORENSE EM TEMPO REAL (RE/EggWorld/FieldEggShifted)
+    if isl and isl.Name and RealFieldEggCache[isl.Name] then
+        local cacheEntry = RealFieldEggCache[isl.Name]
+        local pName = cacheEntry.PetName
+        for pKey, pData in pairs(KnownPetsCatalog) do
+            if pKey:lower() == pName:lower() or pData.DisplayName:lower() == pName:lower() then
+                foundName = pData.DisplayName
+                detectedRarity = pData.Rarity
+                maxScore = RarityScoreMap[pData.Rarity] or 50000
+                resolvedPet = true
+                break
+            end
+        end
+        if not foundName then
+            foundName = pName
+            detectedRarity = isl.Rarity or "LEGENDARY"
+            maxScore = RarityScoreMap[detectedRarity] or 50000
+            resolvedPet = true
+        end
+    end
+
+    local pos = getPositionOf(prompt or instance)
+    local foundName = nil
+    local detectedRarity = nil
+    local maxScore = 300
+    local detectedWeight = 0
+    local detectedIncome = nil
+    local resolvedPet = false
+
+    -- Determinar ilha real
+    local isl = getIslandByPos(pos)
+    local slotNum = nil
+
     if instance then
         local sm = instance.Name:match("[Ss]lot[_%s%-]*(%d+)")
         if sm then slotNum = tonumber(sm) end
@@ -2554,6 +2720,13 @@ local function runStateMachineTick()
             return
         end
 
+        -- Bater taco durante aproximação se houver perigo
+        task.spawn(function()
+            for _ = 1, 3 do
+                triggerBatSwing()
+                task.wait(0.1)
+            end
+        end)
         -- Executar movimentação (bloqueia até chegar ou falhar)
         local arrived = movePlayerDirect(target.Position, Config.MoveSpeed)
         if arrived then
