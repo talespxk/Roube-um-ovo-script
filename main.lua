@@ -3,7 +3,7 @@ if not game:IsLoaded() then
 end
 
 --[[
-    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v13.1 STABILITY)
+    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v13.2 FORENSIC)
     -----------------------------------------------------------------------
     - Radar honesto: somente mostra pet/raridade/renda quando o cliente replica
       evidência real. Slots opacos aparecem como N/D.
@@ -76,138 +76,9 @@ local C_YELLOW = Color3.fromRGB(234, 179, 8)    -- Amarelo ouro
 
 -- 4. Gerenciador Mestre de Conexões e Limpeza
 local ScriptConnections = {}
-
---================================================================--
--- 5.1. CACHE FORENSE EM TEMPO REAL DE REMOTES (PETS, RENDA & EGG SHIFT)
---================================================================--
+-- Cache Forense em Tempo Real de Remotes
 local RealFieldEggCache = {}
 local RealPetIncomeCache = {}
-
-local function setupNetworkingListeners()
-    local packages = Services.ReplicatedStorage:FindFirstChild("Packages")
-    local networking = packages and packages:FindFirstChild("Networking")
-    
-    -- Helper para encontrar remotes de forma resiliente
-    local function findRemote(name, className)
-        if networking then
-            local r = networking:FindFirstChild(name)
-            if r and (not className or r:IsA(className)) then return r end
-        end
-        for _, desc in ipairs(Services.ReplicatedStorage:GetDescendants()) do
-            if desc.Name == name or desc.Name:find(name, 1, true) then
-                if not className or desc:IsA(className) then
-                    return desc
-                end
-            end
-        end
-        return nil
-    end
-
-    -- 1. FieldEggShifted: O servidor avisa exatamente qual Pet (AssetCategory) nasceu em cada Área/Slot
-    local eggShifted = findRemote("FieldEggShifted", "RemoteEvent")
-    if eggShifted then
-        registerConnection(eggShifted.OnClientEvent:Connect(function(data)
-            if type(data) == "table" then
-                local petName = data.AssetCategory or data.Name or data.Pet
-                local areaId = data.AreaId or data.Area or "Desconhecida"
-                if petName and areaId then
-                    RealFieldEggCache[areaId] = {
-                        PetName = tostring(petName),
-                        AreaId = tostring(areaId),
-                        Time = os.clock(),
-                        Data = data
-                    }
-                    if data.SlotKey then
-                        RealFieldEggCache[tostring(data.SlotKey)] = tostring(petName)
-                    end
-                    traceEvent("EGG_SHIFTED", tostring(areaId) .. " -> " .. tostring(petName), data)
-                end
-            end
-        end))
-    end
-
-    -- 2. CoinsGathered: O servidor envia a renda exata de cada Pet em moedas/segundo
-    local coinsGathered = findRemote("CoinsGathered", "RemoteEvent")
-    if coinsGathered then
-        registerConnection(coinsGathered.OnClientEvent:Connect(function(petsList, isTotal)
-            if type(petsList) == "table" then
-                for _, pEntry in ipairs(petsList) do
-                    if type(pEntry) == "table" and pEntry.uid and pEntry.amount then
-                        RealPetIncomeCache[tostring(pEntry.uid)] = tonumber(pEntry.amount) or 0
-                    end
-                end
-            end
-        end))
-    end
-end
-task.spawn(setupNetworkingListeners)
-
--- Helper para disparar Bat Swing (auto-defesa e stun em guardas/galinhas)
-local function triggerBatSwing()
-    pcall(function()
-        local packages = Services.ReplicatedStorage:FindFirstChild("Packages")
-        local networking = packages and packages:FindFirstChild("Networking")
-        local batRemote = networking and networking:FindFirstChild("RE/BatSwing/Trigger")
-        if not batRemote then
-            for _, desc in ipairs(Services.ReplicatedStorage:GetDescendants()) do
-                if desc:IsA("RemoteEvent") and (desc.Name == "RE/BatSwing/Trigger" or desc.Name:find("BatSwing")) then
-                    batRemote = desc
-                    break
-                end
-            end
-        end
-        if batRemote then
-            batRemote:FireServer()
-        end
-    end)
-end
-
--- Helper para invocar o Roubo Instantâneo via RemoteFunction (AskFieldEggCarry)
-local function tryInstantCarryRemote(target)
-    if not target then return false end
-    local inst = target.Instance
-    local modelName = inst and inst.Name or ""
-    local slotKey = modelName:match("([%a%d_]+:Slot_%d+)")
-    if not slotKey and inst and inst.Parent then
-        slotKey = inst.Parent.Name:match("([%a%d_]+:Slot_%d+)")
-    end
-    if not slotKey and target.Position then
-        local isl = getIslandByPos(target.Position)
-        if isl and isl.Name then
-            slotKey = isl.Name .. ":Slot_001"
-        end
-    end
-    slotKey = slotKey or "Forest:Slot_001"
-    local uid = modelName:find("FirstAreaEgg_") and modelName or ("FirstAreaEgg_" .. tostring(LocalPlayer.UserId) .. "_0_" .. slotKey)
-
-    local packages = Services.ReplicatedStorage:FindFirstChild("Packages")
-    local networking = packages and packages:FindFirstChild("Networking")
-    local askCarry = networking and networking:FindFirstChild("RF/EggWorld/AskFieldEggCarry")
-    if not askCarry then
-        for _, desc in ipairs(Services.ReplicatedStorage:GetDescendants()) do
-            if desc:IsA("RemoteFunction") and (desc.Name == "RF/EggWorld/AskFieldEggCarry" or desc.Name:find("AskFieldEggCarry")) then
-                askCarry = desc
-                break
-            end
-        end
-    end
-
-    if askCarry then
-        for i = 1, 4 do
-            task.spawn(function()
-                pcall(function()
-                    askCarry:InvokeServer({
-                        FirstAreaSlotKey = slotKey,
-                        Uid = uid
-                    })
-                end)
-            end)
-            task.wait(0.02)
-        end
-        return true
-    end
-    return false
-end
 
 
 local function registerConnection(conn)
@@ -448,7 +319,7 @@ pcall(function()
             jobId = game.JobId,
             player = LocalPlayer.Name,
             userId = LocalPlayer.UserId,
-            version = "13.1",
+            version = "13.2",
         }) .. "\n")
     end
 end)
@@ -787,6 +658,66 @@ registerConnection(Services.ReplicatedStorage.DescendantAdded:Connect(function(d
         observeRemoteEvent(desc)
     end
 end))
+
+--================================================================--
+-- 5.1. ESCUTA FORENSE EM TEMPO REAL (EGG SHIFT & COINS GATHERED)
+--================================================================--
+local function setupNetworkingListeners()
+    local packages = Services.ReplicatedStorage:FindFirstChild("Packages")
+    local networking = packages and packages:FindFirstChild("Networking")
+    
+    local function findRemote(name, className)
+        if networking then
+            local r = networking:FindFirstChild(name)
+            if r and (not className or r:IsA(className)) then return r end
+        end
+        for _, desc in ipairs(Services.ReplicatedStorage:GetDescendants()) do
+            if desc.Name == name or desc.Name:find(name, 1, true) then
+                if not className or desc:IsA(className) then
+                    return desc
+                end
+            end
+        end
+        return nil
+    end
+
+    local eggShifted = findRemote("FieldEggShifted", "RemoteEvent")
+    if eggShifted then
+        registerConnection(eggShifted.OnClientEvent:Connect(function(data)
+            if type(data) == "table" then
+                local petName = data.AssetCategory or data.Name or data.Pet
+                local areaId = data.AreaId or data.Area or "Desconhecida"
+                if petName and areaId then
+                    RealFieldEggCache[areaId] = {
+                        PetName = tostring(petName),
+                        AreaId = tostring(areaId),
+                        Time = os.clock(),
+                        Data = data
+                    }
+                    if data.SlotKey then
+                        RealFieldEggCache[tostring(data.SlotKey)] = tostring(petName)
+                    end
+                    traceEvent("EGG_SHIFTED", tostring(areaId) .. " -> " .. tostring(petName), data)
+                end
+            end
+        end))
+    end
+
+    local coinsGathered = findRemote("CoinsGathered", "RemoteEvent")
+    if coinsGathered then
+        registerConnection(coinsGathered.OnClientEvent:Connect(function(petsList, isTotal)
+            if type(petsList) == "table" then
+                for _, pEntry in ipairs(petsList) do
+                    if type(pEntry) == "table" and pEntry.uid and pEntry.amount then
+                        RealPetIncomeCache[tostring(pEntry.uid)] = tonumber(pEntry.amount) or 0
+                    end
+                end
+            end
+        end))
+    end
+end
+task.spawn(setupNetworkingListeners)
+
 
 -- Não instalar hook em __namecall. Além do custo alto, alguns clientes tratam
 -- essa alteração como corrupção da sessão e acionam rejoin. As respostas dos
@@ -2401,6 +2332,75 @@ local function executeRagdollSteal(target)
 end
 
 -- E. Execução legada redirecionada para a mesma caminhada segura.
+
+--================================================================--
+-- HELPERS FORENSES DE ROUBO: AUTO BAT SWING & REMOTE CARRY BYPASS
+--================================================================--
+local function triggerBatSwing()
+    pcall(function()
+        local packages = Services.ReplicatedStorage:FindFirstChild("Packages")
+        local networking = packages and packages:FindFirstChild("Networking")
+        local batRemote = networking and networking:FindFirstChild("RE/BatSwing/Trigger")
+        if not batRemote then
+            for _, desc in ipairs(Services.ReplicatedStorage:GetDescendants()) do
+                if desc:IsA("RemoteEvent") and (desc.Name == "RE/BatSwing/Trigger" or desc.Name:find("BatSwing")) then
+                    batRemote = desc
+                    break
+                end
+            end
+        end
+        if batRemote then
+            batRemote:FireServer()
+        end
+    end)
+end
+
+local function tryInstantCarryRemote(target)
+    if not target then return false end
+    local inst = target.Instance
+    local modelName = inst and inst.Name or ""
+    local slotKey = modelName:match("([%a%d_]+:Slot_%d+)")
+    if not slotKey and inst and inst.Parent then
+        slotKey = inst.Parent.Name:match("([%a%d_]+:Slot_%d+)")
+    end
+    if not slotKey and target.Position then
+        local isl = getIslandByPos(target.Position)
+        if isl and isl.Name then
+            slotKey = isl.Name .. ":Slot_001"
+        end
+    end
+    slotKey = slotKey or "Forest:Slot_001"
+    local uid = modelName:find("FirstAreaEgg_") and modelName or ("FirstAreaEgg_" .. tostring(LocalPlayer.UserId) .. "_0_" .. slotKey)
+
+    local packages = Services.ReplicatedStorage:FindFirstChild("Packages")
+    local networking = packages and packages:FindFirstChild("Networking")
+    local askCarry = networking and networking:FindFirstChild("RF/EggWorld/AskFieldEggCarry")
+    if not askCarry then
+        for _, desc in ipairs(Services.ReplicatedStorage:GetDescendants()) do
+            if desc:IsA("RemoteFunction") and (desc.Name == "RF/EggWorld/AskFieldEggCarry" or desc.Name:find("AskFieldEggCarry")) then
+                askCarry = desc
+                break
+            end
+        end
+    end
+
+    if askCarry then
+        for i = 1, 4 do
+            task.spawn(function()
+                pcall(function()
+                    askCarry:InvokeServer({
+                        FirstAreaSlotKey = slotKey,
+                        Uid = uid
+                    })
+                end)
+            end)
+            task.wait(0.02)
+        end
+        return true
+    end
+    return false
+end
+
 executeDirectSteal = function(target)
     if not target or not target.Position then return false end
     local myHrp = getHRP()
@@ -2891,13 +2891,13 @@ local function runStateMachineTick()
 end
 
 
--- 10. EXPORTADOR DE TELEMETRIA E DADOS INTERNOS (OBSERVATORY v13.1)
+-- 10. EXPORTADOR DE TELEMETRIA E DADOS INTERNOS (OBSERVATORY v13.2)
 local function dumpGameData()
     local lines = {}
     local function logL(s) table.insert(lines, s or "") end
 
     logL("================================================================================")
-    logL("ROUBE UM OVO - DUMP E TELEMETRIA OBSERVATORY v13.1")
+    logL("ROUBE UM OVO - DUMP E TELEMETRIA OBSERVATORY v13.2")
     logL("Data: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | PlaceId: " .. tostring(game.PlaceId))
     logL("================================================================================\n")
 
@@ -3356,7 +3356,7 @@ end)
 
 
 --================================================================--
--- 12. INTERFACE OBSERVATORY v13.1 (4 ÁREAS ESSENCIAIS)
+-- 12. INTERFACE OBSERVATORY v13.2 (4 ÁREAS ESSENCIAIS)
 --================================================================--
 
 ScreenGui = Instance.new("ScreenGui")
@@ -3430,7 +3430,7 @@ Title.Font = Enum.Font.GothamBold
 Title.TextSize = 13
 Title.TextColor3 = C_CYAN
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "ROUBE UM OVO  •  STABILITY v13.1"
+Title.Text = "ROUBE UM OVO  •  STABILITY v13.2 (FORENSIC UPGRADE)"
 Title.Parent = Topbar
 
 StatusBadge = Instance.new("TextLabel")
@@ -4562,7 +4562,7 @@ end)
 task.delay(0.8, function()
     if State.IsUnloaded then return end
     executeCleanRadarScan()
-    addLog("SISTEMA", "Roube um Ovo Stability v13.1 carregado com sucesso!")
+    addLog("SISTEMA", "Roube um Ovo Stability v13.2 (FORENSIC UPGRADE) carregado com sucesso!")
     addLog("TRACE", "Gravação ativa em " .. Telemetry.FileName)
     pcall(function()
         Services.StarterGui:SetCore("SendNotification", {
