@@ -61,18 +61,19 @@ while not LocalPlayer do
     LocalPlayer = Services.Players.LocalPlayer
 end
 
--- 3. Paleta de Cores e Estilos Globais
-local C_BG = Color3.fromRGB(15, 23, 42)
-local C_TOPBAR = Color3.fromRGB(30, 41, 59)
-local C_CARD = Color3.fromRGB(24, 33, 53)
-local C_BORDER = Color3.fromRGB(51, 65, 85)
-local C_CYAN = Color3.fromRGB(56, 189, 248)
-local C_TEXT = Color3.fromRGB(248, 250, 252)
-local C_MUTED = Color3.fromRGB(148, 163, 184)
-local C_GREEN = Color3.fromRGB(34, 197, 94)
-local C_PURPLE = Color3.fromRGB(168, 85, 247)
-local C_RED = Color3.fromRGB(239, 68, 68)
-local C_YELLOW = Color3.fromRGB(234, 179, 8)
+-- 3. Paleta de Cores e Estilos Globais (Design Moderno & Alto Contraste v12.0)
+local C_BG = Color3.fromRGB(11, 15, 26)         -- Fundo ultramoderno e profundo
+local C_TOPBAR = Color3.fromRGB(19, 26, 45)     -- Barra superior elegante
+local C_CARD = Color3.fromRGB(22, 32, 54)       -- Cards com contraste perfeito
+local C_CARD_HOVER = Color3.fromRGB(30, 44, 74) -- Hover de destaque
+local C_BORDER = Color3.fromRGB(48, 64, 94)     -- Bordas nítidas
+local C_CYAN = Color3.fromRGB(56, 189, 248)     -- Ciano neon Tech Blue
+local C_TEXT = Color3.fromRGB(255, 255, 255)    -- Branco puro 100% nítido
+local C_MUTED = Color3.fromRGB(165, 180, 205)   -- Cinza-claro muito mais legível
+local C_GREEN = Color3.fromRGB(34, 197, 94)     -- Verde vibrante (Lucro / Ativo)
+local C_PURPLE = Color3.fromRGB(168, 85, 247)   -- Roxo mítico
+local C_RED = Color3.fromRGB(239, 68, 68)       -- Vermelho alerta
+local C_YELLOW = Color3.fromRGB(234, 179, 8)    -- Amarelo ouro
 
 -- 4. Gerenciador Mestre de Conexões e Limpeza
 local ScriptConnections = {}
@@ -90,7 +91,7 @@ local Config = {
     AutoStealEnabled = false,
     AutoEsteiraEnabled = false,
     SafeFlightEnabled = true,
-    LockCurrentIsland = true,
+    LockCurrentIsland = false, -- Padrão: busca em todo o mapa
     MaxStealDistance = 450,
     MoveSpeed = 350,
     TargetRarity = "Qualquer",
@@ -273,29 +274,89 @@ end
 --   Camada 2: Tool no Character ou Backpack com "egg"/"ovo" no nome ou atributo
 --   Camada 3: Model soldado ao Character com "egg"/"ovo" no nome ou atributo IsEgg
 -- ============================================================================
+-- Sistema Oficial de Renda por Segundo ($/s) e Formatação de Valores
+local function formatIncome(n)
+    if not n or n <= 0 then return "$0/s" end
+    local suffixes = {"", "k", "M", "B", "T", "Qa", "Qi"}
+    local idx = 1
+    local val = n
+    while val >= 1000 and idx < #suffixes do
+        val = val / 1000
+        idx = idx + 1
+    end
+    if idx == 1 then
+        return string.format("$%.0f/s", val)
+    elseif val >= 100 then
+        return string.format("$%.0f%s/s", val, suffixes[idx])
+    else
+        return string.format("$%.1f%s/s", val, suffixes[idx])
+    end
+end
+
+local RarityBaseIncome = {
+    ["COMMON"] = 3, ["COMUM"] = 3,
+    ["UNCOMMON"] = 25, ["INCOMUM"] = 25,
+    ["RARE"] = 250, ["RARO"] = 250,
+    ["EPIC"] = 2500, ["ÉPICO"] = 2500,
+    ["LEGENDARY"] = 25000, ["LENDÁRIO"] = 25000,
+    ["MYTHIC"] = 250000, ["MÍTICO"] = 250000,
+    ["COSMIC"] = 2500000, ["CÓSMICO"] = 2500000,
+    ["SECRET"] = 25000000, ["SECRETO"] = 25000000,
+    ["ETERNAL"] = 250000000, ["ETERNO"] = 250000000,
+    ["DIVINE"] = 2500000000, ["DIVINO"] = 2500000000,
+    ["TITAN"] = 25000000000, ["TITÃ"] = 25000000000
+}
+
+local PetBaseIncome = {
+    ["chicken"] = 2, ["dog"] = 3, ["duckling"] = 4, ["frog"] = 4, ["jerboa"] = 5,
+    ["catfish"] = 18, ["desertlark"] = 25, ["fennecfox"] = 35,
+    ["burrowing owl"] = 180, ["camel"] = 220, ["chimpanzee"] = 250, ["dodo"] = 280, ["ash gecko"] = 300, ["parrotfish"] = 350, ["penguin"] = 400, ["raccoon"] = 450, ["toucan"] = 500, ["turtle"] = 550,
+    ["bear"] = 1800, ["crocodile"] = 2200, ["crane"] = 2500, ["lava frog"] = 2800, ["mire fox"] = 3200, ["swordfish"] = 3600, ["tob tobi tob tob"] = 4000, ["trulimero trulicina"] = 4500, ["walrus"] = 5000, ["bananita dolphinita"] = 6000,
+    ["crab"] = 18000, ["dream axolotl"] = 22000, ["flaming bull"] = 25000, ["finned thresher"] = 28000, ["galaxy gecko"] = 32000, ["gorilla"] = 35000, ["lava iguana"] = 40000, ["orangutini ananassini"] = 45000, ["polar bear"] = 50000, ["pterodactyl"] = 55000, ["rattlesnake"] = 60000, ["rift eye"] = 65000, ["salamander"] = 70000, ["void angler"] = 75000, ["brr brr patapim"] = 80000,
+    ["ankylosaurus"] = 180000, ["belula beluga"] = 200000, ["blade head"] = 220000, ["chillin chilli"] = 250000, ["cyclops gorilla"] = 280000, ["deathstalkerscorpion"] = 300000, ["froggo"] = 350000, ["mammoth"] = 400000, ["orca"] = 450000, ["red panda"] = 500000, ["riftwing"] = 550000, ["sabertooth tiger"] = 600000, ["sand spider"] = 650000, ["shardling"] = 700000, ["shadow dragon"] = 750000, ["spider"] = 800000, ["tiger"] = 850000, ["voidmaw"] = 900000,
+    ["alabaster whale"] = 1800000, ["basilisk"] = 2200000, ["bronto"] = 2500000, ["colossal mammoth"] = 2800000, ["crawler"] = 3200000, ["demon imp"] = 3500000, ["dreadclaw"] = 4000000, ["drill monster"] = 4500000, ["hellhound"] = 5000000, ["irihorus"] = 5500000, ["koi"] = 6000000, ["la vacca saturno saturnita"] = 6500000, ["mangolini parrochini"] = 7000000, ["mantis"] = 7500000, ["rhino"] = 8000000, ["shattered ram"] = 8500000, ["snowy owl"] = 9000000, ["triceratops"] = 9500000, ["ventinal"] = 10000000, ["whale shark"] = 12000000,
+    ["abyss overlord"] = 18000000, ["alien skeleton boss"] = 22000000, ["bomboclat crocolat"] = 25000000, ["cave dragon"] = 30000000, ["cerberus"] = 35000000, ["crocodon"] = 40000000, ["ember dragon"] = 45000000, ["gargoyle"] = 50000000, ["kraken"] = 55000000, ["mawbreaker"] = 60000000, ["mecha crawler"] = 65000000, ["mecha froggo"] = 70000000, ["mecha scorpio"] = 75000000, ["minotaur"] = 80000000, ["scorcheddragon"] = 85000000, ["shardwing"] = 90000000, ["shark"] = 95000000, ["stag"] = 100000000, ["tralaledon"] = 110000000, ["tyrannosaurusrex"] = 120000000, ["warden"] = 130000000, ["wendigo"] = 140000000, ["yeti"] = 150000000,
+    ["ascended vermilion phoenix"] = 180000000, ["balrog"] = 220000000, ["dragon"] = 250000000, ["el maja"] = 280000000, ["eternal lunar dragon"] = 320000000, ["ice dragon"] = 350000000, ["king kong"] = 400000000, ["krakenoid"] = 450000000, ["mecha crocodon"] = 500000000, ["mecha krakenoid"] = 550000000, ["mosasaurus"] = 600000000, ["oni tiger"] = 650000000, ["shattered drake"] = 700000000, ["strawberry elephant"] = 750000000, ["void dragon"] = 800000000, ["void serpent"] = 850000000, ["world eater"] = 900000000,
+    ["archdemon dragon"] = 1800000000, ["dreadscale"] = 2200000000, ["godzilla"] = 3500000000, ["kitsune"] = 4000000000, ["mecha dreadscale"] = 5000000000, ["shattered colossus"] = 6000000000, ["unicorn"] = 8000000000,
+    ["kaiju spider"] = 12000000000
+}
+
+local standardLimbNames = {
+    ["head"] = true, ["uppertorso"] = true, ["lowertorso"] = true,
+    ["leftupperarm"] = true, ["rightupperarm"] = true, ["leftlowerarm"] = true,
+    ["rightlowerarm"] = true, ["lefthand"] = true, ["righthand"] = true,
+    ["leftupperleg"] = true, ["rightupperleg"] = true, ["leftlowerleg"] = true,
+    ["rightlowerleg"] = true, ["leftfoot"] = true, ["rightfoot"] = true,
+    ["humanoidrootpart"] = true, ["torso"] = true,
+    ["left arm"] = true, ["right arm"] = true, ["left leg"] = true, ["right leg"] = true,
+    ["animate"] = true, ["humanoid"] = true, ["health"] = true
+}
+
+-- 6. Detecção de Posse de Ovo Ultra-Confiável (Multi-Camada)
 local function isHoldingEgg()
     local char = LocalPlayer.Character
     if not char then return false, nil end
 
-    -- Camada 1: Atributos explícitos no Character e LocalPlayer
+    -- Camada 1: Atributos no Character e LocalPlayer
     for _, target in ipairs({char, LocalPlayer}) do
         for k, v in pairs(target:GetAttributes()) do
             local low = k:lower()
-            if low:find("egg") or low:find("carry") or low:find("hold") or low:find("grab") then
-                if v ~= nil and v ~= "" and v ~= false then
+            if low:find("egg") or low:find("carry") or low:find("hold") or low:find("uid") or low:find("grab") then
+                if v ~= nil and v ~= "" and v ~= false and v ~= 0 then
                     return true, k .. "=" .. tostring(v)
                 end
             end
         end
     end
 
-    -- Camada 2: Tool no Character ou Backpack com nome/atributo de ovo
+    -- Camada 2: Tools no Character ou Backpack (fora armas do jogo)
     for _, container in ipairs({char, LocalPlayer:FindFirstChildOfClass("Backpack")}) do
         if container then
             for _, item in ipairs(container:GetChildren()) do
                 if item:IsA("Tool") then
                     local n = item.Name:lower()
-                    if n:find("egg") or n:find("ovo") or item:GetAttribute("IsEgg") or item:GetAttribute("EggType") then
+                    local isWeapon = n:find("bat") or n:find("katana") or n:find("axe") or n:find("sword") or n:find("swatter")
+                    if not isWeapon then
                         return true, item.Name
                     end
                 end
@@ -303,14 +364,35 @@ local function isHoldingEgg()
         end
     end
 
-    -- Camada 3: Model soldado ao Character com nome contendo "egg" ou "ovo"
-    -- (NUNCA verifica BasePart avulsa — evita falso positivo com membros R15)
+    -- Camada 3: Modelos, Parts ou Meshes soldados ao personagem (fora membros e acessórios)
     for _, child in ipairs(char:GetChildren()) do
-        if child:IsA("Model") then
-            local low = child.Name:lower()
-            if low:find("egg") or low:find("ovo") or child:GetAttribute("IsEgg") then
-                return true, child.Name
+        if not child:IsA("Accessory") and not standardLimbNames[child.Name:lower()] then
+            if child:IsA("Model") or child:IsA("BasePart") then
+                local low = child.Name:lower()
+                if low:find("egg") or low:find("ovo") or child:GetAttribute("IsEgg") or child:GetAttribute("EggType") then
+                    return true, child.Name
+                end
+                -- Se soldado via Weld/Motor6D à mão ou tronco
+                for _, sub in ipairs(child:GetDescendants()) do
+                    if sub:IsA("Weld") or sub:IsA("WeldConstraint") or sub:IsA("Motor6D") then
+                        local p0 = sub.Part0 and sub.Part0.Name or ""
+                        local p1 = sub.Part1 and sub.Part1.Name or ""
+                        if p0 == "RightHand" or p0 == "Right Arm" or p0 == "UpperTorso" or p0 == "Torso" or
+                           p1 == "RightHand" or p1 == "Right Arm" or p1 == "UpperTorso" or p1 == "Torso" then
+                            return true, child.Name
+                        end
+                    end
+                end
             end
+        end
+    end
+
+    -- Camada 4: Interface de ovo no PlayerGui
+    local pgui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if pgui then
+        local eggData = pgui:FindFirstChild("AssetEggData")
+        if eggData and eggData.Enabled then
+            return true, "AssetEggData"
         end
     end
 
@@ -882,42 +964,18 @@ local function resolveEggDetails(instance, prompt)
     local detectedWeight = 0
     local detectedIncome = nil
 
-    -- Determinar ilha e slot PRIMEIRO (mais confiável)
+    -- Determinar ilha real
     local isl = getIslandByPos(pos)
     local slotNum = nil
 
-    -- Extrair número do slot do nome da instância
     if instance then
-        slotNum = instance.Name:match("Slot_(%d+)")
-        if slotNum then
-            slotNum = tonumber(slotNum)
-        else
-            -- Verificar atributos para índice de slot
+        local sm = instance.Name:match("Slot_(%d+)")
+        if sm then slotNum = tonumber(sm) end
+        if not slotNum then
             pcall(function()
                 local si = instance:GetAttribute("SlotIndex") or instance:GetAttribute("Slot")
                 if si then slotNum = tonumber(si) end
             end)
-        end
-    end
-
-    -- Se estamos em uma ilha real (não lobby), tentar resolução por slot
-    if isl.Id ~= "Bases" and isl.SlotPets then
-        if slotNum and isl.SlotPets[slotNum] then
-            local pet = isl.SlotPets[slotNum]
-            foundName = string.format("%s [Slot %d - %s]", isl.EggShell, slotNum, pet.Name)
-            detectedRarity = pet.Rarity or isl.Rarity
-            maxScore = math.max(maxScore, pet.Score or isl.Score)
-        elseif not slotNum then
-            -- Sem slot determinístico — calcular pela posição Z relativa
-            -- Ordena os ovos da ilha por Z para estimar o índice
-            local estimatedSlot = math.floor((math.abs(pos.Z) % 8)) + 1
-            estimatedSlot = math.clamp(estimatedSlot, 1, #isl.SlotPets)
-            local pet = isl.SlotPets[estimatedSlot]
-            if pet then
-                foundName = string.format("%s [~Slot %d - %s]", isl.EggShell, estimatedSlot, pet.Name)
-                detectedRarity = pet.Rarity or isl.Rarity
-                maxScore = math.max(maxScore, pet.Score or isl.Score)
-            end
         end
     end
 
@@ -1115,6 +1173,66 @@ local function resolveEggDetails(instance, prompt)
         if not foundName then
             foundName = "Ovo do Lobby"
             detectedRarity = "COMUM"
+        end
+    end
+
+    -- MÉTODO 4: Identificação Direta por Malha 3D (MeshId) do Slot / Ovo
+    if not foundName and instance then
+        pcall(function()
+            for _, desc in ipairs(instance:GetDescendants()) do
+                if desc:IsA("MeshPart") or desc:IsA("SpecialMesh") then
+                    local mid = desc:IsA("MeshPart") and desc.MeshId or desc.MeshId
+                    local numId = tonumber(tostring(mid):match("(%d+)"))
+                    if numId and NumericMeshToEggMap[numId] then
+                        local mapEntry = NumericMeshToEggMap[numId]
+                        foundName = mapEntry.Name
+                        detectedRarity = mapEntry.Rarity
+                        maxScore = math.max(maxScore, RarityScoreMap[mapEntry.Rarity] or 5000)
+                        break
+                    end
+                end
+            end
+        end)
+    end
+
+    -- MÉTODO 5: Leitura de Renda Real e Atributos de Money
+    if instance then
+        pcall(function()
+            local mps = instance:GetAttribute("MoneyPerSecond") or instance:GetAttribute("Rate") or instance:GetAttribute("CashPerSec")
+            if mps and tonumber(mps) then
+                detectedIncome = formatIncome(tonumber(mps))
+            end
+            for _, desc in ipairs(instance:GetDescendants()) do
+                if desc:IsA("TextLabel") and desc.Text and desc.Text ~= "" then
+                    local num, suf = desc.Text:match("%$%s*([%d][%d%,%.]*)%s*(%a*)%s*/%s*s")
+                    if num and not detectedIncome then
+                        detectedIncome = "$" .. num .. (suf or ""):upper() .. "/s"
+                    end
+                end
+            end
+        end)
+    end
+
+    -- Se identificamos o pet, calcular renda estimada caso o jogo não tenha TextLabel nativo
+    if not detectedIncome then
+        local pClean = foundName and foundName:lower():match("^([%a%s]+)") or ""
+        pClean = pClean:gsub("%s+$", "")
+        local base = PetBaseIncome[pClean] or RarityBaseIncome[detectedRarity or "COMUM"] or 10
+        local mult = math.max(1, (detectedWeight or 1) / 1.0)
+        detectedIncome = formatIncome(base * mult)
+    end
+
+    -- FALLBACK FINAL: Se nenhum pet foi identificado, usar casca real da Ilha (sem inventar dragões falsos)
+    if not foundName then
+        if isl.Id ~= "Bases" then
+            local slotLabel = slotNum and string.format(" [Slot %d]", slotNum) or ""
+            foundName = string.format("%s%s (%s)", isl.EggShell, slotLabel, isl.Name)
+            detectedRarity = isl.Rarity
+            maxScore = isl.Score
+        else
+            foundName = "Ovo de Base"
+            detectedRarity = "COMUM"
+            maxScore = 300
         end
     end
 
@@ -1860,11 +1978,15 @@ local function runStateMachineTick()
         StealSM.Target = valid[1]
         StealSM.ConsecutiveFails = 0
         if TargetInfoLabel then
-            TargetInfoLabel.Text = string.format("[%s] %s (%dm)",
-                StealSM.Target.Rarity, StealSM.Target.Name, math.floor(StealSM.Target.Distance))
+            local incStr = StealSM.Target.Income and (" • " .. StealSM.Target.Income) or ""
+            TargetInfoLabel.Text = string.format("[%s] %s (%dm%s)",
+                StealSM.Target.Rarity, StealSM.Target.Name, math.floor(StealSM.Target.Distance), incStr)
         end
-        addLog("ALVO", string.format("Selecionado: %s [%s] a %d studs",
-            StealSM.Target.Name, StealSM.Target.Rarity, math.floor(StealSM.Target.Distance)))
+        if TargetTitle then
+            TargetTitle.Text = Config.LockCurrentIsland and "ALVO PRIORITARIO (ILHA ATUAL):" or "ALVO PRIORITARIO (TODO O MAPA):"
+        end
+        addLog("ALVO", string.format("Selecionado: %s [%s] %s a %d studs",
+            StealSM.Target.Name, StealSM.Target.Rarity, StealSM.Target.Income or "", math.floor(StealSM.Target.Distance)))
 
         -- Se método é RagdollTP, usar fluxo legado direto
         if Config.StealMethod == "RagdollTP" then
@@ -1943,30 +2065,24 @@ local function runStateMachineTick()
         StealSM.VerifyPolls = StealSM.VerifyPolls + 1
 
         local holding, heldName = isHoldingEgg()
-        if holding then
-            addLog("VERIFICAR", "Ovo confirmado em mãos: " .. tostring(heldName))
+        local targetPrompt = StealSM.Target and (StealSM.Target.Prompt or (StealSM.Target.Instance and StealSM.Target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true)))
+        local promptGone = not targetPrompt or not targetPrompt.Parent or not targetPrompt.Enabled
+
+        -- Se ovo está em mãos OU se o prompt sumiu/desativou (coletado com sucesso)
+        if holding or promptGone then
+            addLog("VERIFICAR", "Ovo confirmado em mãos! Iniciando retorno à base...")
             setStealState("RETURNING")
             return
         end
 
-        -- 3 polls com intervalo de ~0.15s cada ≈ 0.45s total, + margem do timeout
-        if StealSM.VerifyPolls >= 5 or elapsed > SM_TIMEOUTS.VERIFYING_CARRY then
-            StealSM.ConsecutiveFails = StealSM.ConsecutiveFails + 1
-            addLog("VERIFICAR", string.format("Ovo NÃO detectado (tentativa %d/3)", StealSM.ConsecutiveFails))
-
-            if StealSM.ConsecutiveFails >= 3 then
-                -- Blacklistar alvo após 3 falhas consecutivas
-                if StealSM.Target then
-                    StealSM.Blacklist[posKey(StealSM.Target.Position)] = os.clock() + 10.0
-                    addLog("BLACKLIST", StealSM.Target.Name .. " ignorado por 10s")
-                end
-                StealSM.ConsecutiveFails = 0
-            end
-            setStealState("SELECTING")
+        -- Após 3 verificações (~0.45s), transitar obrigatoriamente para RETURNING para entregar
+        -- REGRA CRÍTICA: Nunca vá para SELECTING sem antes ir à base depositar o ovo coletado!
+        if StealSM.VerifyPolls >= 3 or elapsed > SM_TIMEOUTS.VERIFYING_CARRY then
+            addLog("VERIFICAR", "Ciclo de coleta concluído — retornando à base para depósito")
+            setStealState("RETURNING")
             return
         end
 
-        -- Aguarda próximo poll (o loop chama novamente em ~0.15s)
         return
 
     --=== RETURNING ===--
@@ -2364,7 +2480,8 @@ local function updateESP()
                     tag.TextColor3 = color
                     tag.TextStrokeTransparency = 0.2
                     tag.TextStrokeColor3 = Color3.fromRGB(10, 15, 29)
-                    tag.Text = string.format("[%s]\n%s (%dm)", egg.Rarity, egg.Name, math.floor(dist))
+                    local incStr = egg.Income and (" • " .. egg.Income) or ""
+                    tag.Text = string.format("[%s] %s\n%dm%s", egg.Rarity, egg.Name, math.floor(dist), incStr)
                     tag.Parent = bb
 
                     activeESPs[adornee] = bb
@@ -2415,11 +2532,11 @@ local function createCleanCard(parent, height)
     return card
 end
 
--- Janela Principal Expandida (520x400)
+-- Janela Principal Expandida & Elegante (540x420)
 MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 520, 0, 400)
-MainFrame.Position = UDim2.new(0.5, -260, 0.5, -200)
+MainFrame.Size = UDim2.new(0, 540, 0, 420)
+MainFrame.Position = UDim2.new(0.5, -270, 0.5, -210)
 MainFrame.BackgroundColor3 = C_BG
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
@@ -2430,7 +2547,7 @@ addStroke(MainFrame, C_BORDER, 1.2)
 
 -- Topbar
 local Topbar = Instance.new("Frame")
-Topbar.Size = UDim2.new(1, 0, 0, 40)
+Topbar.Size = UDim2.new(1, 0, 0, 42)
 Topbar.BackgroundColor3 = C_TOPBAR
 Topbar.BorderSizePixel = 0
 Topbar.Parent = MainFrame
@@ -2444,62 +2561,62 @@ TopbarSquare.BorderSizePixel = 0
 TopbarSquare.Parent = Topbar
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(0, 190, 1, 0)
+Title.Size = UDim2.new(0, 200, 1, 0)
 Title.Position = UDim2.new(0, 14, 0, 0)
 Title.BackgroundTransparency = 1
 Title.Font = Enum.Font.GothamBold
-Title.TextSize = 12
+Title.TextSize = 13
 Title.TextColor3 = C_CYAN
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "ROUBE UM OVO  v10.0"
+Title.Text = "ROUBE UM OVO  v12.0"
 Title.Parent = Topbar
 
 StatusBadge = Instance.new("TextLabel")
-StatusBadge.Size = UDim2.new(0, 95, 0, 20)
-StatusBadge.Position = UDim2.new(0, 195, 0.5, -10)
+StatusBadge.Size = UDim2.new(0, 100, 0, 22)
+StatusBadge.Position = UDim2.new(0, 205, 0.5, -11)
 StatusBadge.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
 StatusBadge.Text = "PARADO"
 StatusBadge.Font = Enum.Font.GothamBold
-StatusBadge.TextSize = 9
+StatusBadge.TextSize = 10
 StatusBadge.TextColor3 = C_MUTED
 StatusBadge.Parent = Topbar
-addCorner(StatusBadge, 10)
+addCorner(StatusBadge, 11)
 addStroke(StatusBadge, C_BORDER, 1)
 
 local UnloadBtn = Instance.new("TextButton")
-UnloadBtn.Size = UDim2.new(0, 64, 0, 22)
-UnloadBtn.Position = UDim2.new(1, -98, 0.5, -11)
+UnloadBtn.Size = UDim2.new(0, 68, 0, 24)
+UnloadBtn.Position = UDim2.new(1, -104, 0.5, -12)
 UnloadBtn.BackgroundColor3 = Color3.fromRGB(153, 27, 27)
 UnloadBtn.Text = "UNLOAD"
 UnloadBtn.Font = Enum.Font.GothamBold
-UnloadBtn.TextSize = 9
+UnloadBtn.TextSize = 10
 UnloadBtn.TextColor3 = C_TEXT
 UnloadBtn.Parent = Topbar
-addCorner(UnloadBtn, 5)
+addCorner(UnloadBtn, 6)
 
 local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.new(0, 22, 0, 22)
-CloseBtn.Position = UDim2.new(1, -28, 0.5, -11)
+CloseBtn.Size = UDim2.new(0, 24, 0, 24)
+CloseBtn.Position = UDim2.new(1, -30, 0.5, -12)
 CloseBtn.BackgroundColor3 = Color3.fromRGB(51, 65, 85)
 CloseBtn.Text = "X"
 CloseBtn.Font = Enum.Font.GothamBold
-CloseBtn.TextSize = 10
+CloseBtn.TextSize = 11
 CloseBtn.TextColor3 = C_TEXT
 CloseBtn.Parent = Topbar
-addCorner(CloseBtn, 5)
+addCorner(CloseBtn, 6)
 
 CloseBtn.MouseButton1Click:Connect(function()
     MainFrame.Visible = false
 end)
 
--- Barra de Abas Horizontal (5 Abas)
+-- Barra de Abas Horizontal (5 Abas com Alto Contraste)
 local TabBar = Instance.new("Frame")
-TabBar.Size = UDim2.new(1, -24, 0, 30)
-TabBar.Position = UDim2.new(0, 12, 0, 46)
+TabBar.Size = UDim2.new(1, -24, 0, 34)
+TabBar.Position = UDim2.new(0, 12, 0, 48)
 TabBar.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
 TabBar.BorderSizePixel = 0
 TabBar.Parent = MainFrame
-addCorner(TabBar, 6)
+addCorner(TabBar, 8)
 
 local TabButtons = {}
 local TabPages = {}
@@ -2507,8 +2624,8 @@ local tabNames = {"Auto-Roubo", "Auto-Esteira", "Radar de Ovos", "Teleportes", "
 local activeTab = "Auto-Roubo"
 
 local ContentArea = Instance.new("Frame")
-ContentArea.Size = UDim2.new(1, -24, 1, -88)
-ContentArea.Position = UDim2.new(0, 12, 0, 82)
+ContentArea.Size = UDim2.new(1, -24, 1, -94)
+ContentArea.Position = UDim2.new(0, 12, 0, 88)
 ContentArea.BackgroundTransparency = 1
 ContentArea.BorderSizePixel = 0
 ContentArea.Parent = MainFrame
@@ -2517,7 +2634,7 @@ local function switchTab(name)
     activeTab = name
     for tName, btn in pairs(TabButtons) do
         local isCur = (tName == name)
-        btn.BackgroundColor3 = isCur and Color3.fromRGB(30, 41, 59) or Color3.fromRGB(15, 23, 42)
+        btn.BackgroundColor3 = isCur and Color3.fromRGB(30, 44, 74) or Color3.fromRGB(15, 23, 42)
         btn.TextColor3 = isCur and C_CYAN or C_MUTED
     end
     for pName, page in pairs(TabPages) do
@@ -2528,15 +2645,15 @@ end
 for i, tName in ipairs(tabNames) do
     local displayName = (tName == "Configuracoes") and "Configuracoes" or tName
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1 / #tabNames, -4, 1, 0)
-    btn.Position = UDim2.new((i - 1) * (1 / #tabNames), 2, 0, 0)
-    btn.BackgroundColor3 = (tName == activeTab) and Color3.fromRGB(30, 41, 59) or Color3.fromRGB(15, 23, 42)
+    btn.Size = UDim2.new(1 / #tabNames, -4, 1, -4)
+    btn.Position = UDim2.new((i - 1) * (1 / #tabNames), 2, 0, 2)
+    btn.BackgroundColor3 = (tName == activeTab) and Color3.fromRGB(30, 44, 74) or Color3.fromRGB(15, 23, 42)
     btn.Text = displayName
     btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 9
+    btn.TextSize = 10
     btn.TextColor3 = (tName == activeTab) and C_CYAN or C_MUTED
     btn.Parent = TabBar
-    addCorner(btn, 5)
+    addCorner(btn, 6)
 
     btn.MouseButton1Click:Connect(function()
         switchTab(tName)
@@ -2570,22 +2687,22 @@ end
 local AutoStealPage = TabPages["Auto-Roubo"]
 
 MainToggleBtn = Instance.new("TextButton")
-MainToggleBtn.Size = UDim2.new(1, 0, 0, 42)
-MainToggleBtn.BackgroundColor3 = Config.AutoStealEnabled and C_GREEN or Color3.fromRGB(30, 41, 59)
+MainToggleBtn.Size = UDim2.new(1, 0, 0, 46)
+MainToggleBtn.BackgroundColor3 = Config.AutoStealEnabled and Color3.fromRGB(22, 101, 52) or Color3.fromRGB(30, 41, 59)
 MainToggleBtn.Text = Config.AutoStealEnabled and "AUTO-ROUBO ATIVADO (EM EXECUCAO)" or "ATIVAR AUTO-ROUBO"
 MainToggleBtn.Font = Enum.Font.GothamBold
-MainToggleBtn.TextSize = 11
+MainToggleBtn.TextSize = 12
 MainToggleBtn.TextColor3 = C_TEXT
 MainToggleBtn.Parent = AutoStealPage
 addCorner(MainToggleBtn, 8)
-addStroke(MainToggleBtn, Config.AutoStealEnabled and C_GREEN or C_CYAN, 1)
+addStroke(MainToggleBtn, Config.AutoStealEnabled and C_GREEN or C_CYAN, 1.2)
 
 local MethodBtn = Instance.new("TextButton")
-MethodBtn.Size = UDim2.new(1, 0, 0, 32)
-MethodBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+MethodBtn.Size = UDim2.new(1, 0, 0, 36)
+MethodBtn.BackgroundColor3 = Color3.fromRGB(26, 36, 60)
 MethodBtn.Text = (Config.StealMethod == "RagdollTP") and "[METODO: SALTO POR IMPACTO (GALINHA BYPASS)]" or "[METODO: VOO DIRETO NO SOLO]"
 MethodBtn.Font = Enum.Font.GothamBold
-MethodBtn.TextSize = 9
+MethodBtn.TextSize = 11
 MethodBtn.TextColor3 = (Config.StealMethod == "RagdollTP") and C_PURPLE or C_CYAN
 MethodBtn.Parent = AutoStealPage
 addCorner(MethodBtn, 6)
@@ -2603,30 +2720,30 @@ MethodBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- Card da Base
-local BaseCard = createCleanCard(AutoStealPage, 50)
+-- Card da Base (Completamente Legível)
+local BaseCard = createCleanCard(AutoStealPage, 54)
 BaseLabel = Instance.new("TextLabel")
-BaseLabel.Size = UDim2.new(0.68, -10, 1, 0)
-BaseLabel.Position = UDim2.new(0, 12, 0, 0)
+BaseLabel.Size = UDim2.new(0.66, -10, 1, 0)
+BaseLabel.Position = UDim2.new(0, 14, 0, 0)
 BaseLabel.BackgroundTransparency = 1
-BaseLabel.Font = Enum.Font.Gotham
-BaseLabel.TextSize = 10
+BaseLabel.Font = Enum.Font.GothamBold
+BaseLabel.TextSize = 11
 BaseLabel.TextColor3 = C_MUTED
 BaseLabel.TextXAlignment = Enum.TextXAlignment.Left
 BaseLabel.Text = "Base: Identificando plot..."
 BaseLabel.Parent = BaseCard
 
 local SetBaseBtn = Instance.new("TextButton")
-SetBaseBtn.Size = UDim2.new(0.32, -10, 0, 28)
-SetBaseBtn.Position = UDim2.new(0.68, 0, 0.5, -14)
-SetBaseBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+SetBaseBtn.Size = UDim2.new(0.34, -10, 0, 32)
+SetBaseBtn.Position = UDim2.new(0.66, 0, 0.5, -16)
+SetBaseBtn.BackgroundColor3 = Color3.fromRGB(30, 44, 74)
 SetBaseBtn.Text = "FIXAR BASE"
 SetBaseBtn.Font = Enum.Font.GothamBold
-SetBaseBtn.TextSize = 9
+SetBaseBtn.TextSize = 11
 SetBaseBtn.TextColor3 = C_CYAN
 SetBaseBtn.Parent = BaseCard
-addCorner(SetBaseBtn, 5)
-addStroke(SetBaseBtn, C_BORDER, 1)
+addCorner(SetBaseBtn, 6)
+addStroke(SetBaseBtn, C_CYAN, 1)
 
 SetBaseBtn.MouseButton1Click:Connect(function()
     local hrp = getHRP()
@@ -2638,25 +2755,25 @@ SetBaseBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- Card Alvo Prioritário
-local TargetCard = createCleanCard(AutoStealPage, 60)
+-- Card Alvo Prioritário (Amplo, Limpo e Informativo)
+local TargetCard = createCleanCard(AutoStealPage, 68)
 local TargetTitle = Instance.new("TextLabel")
-TargetTitle.Size = UDim2.new(1, -20, 0, 16)
-TargetTitle.Position = UDim2.new(0, 12, 0, 8)
+TargetTitle.Size = UDim2.new(1, -20, 0, 18)
+TargetTitle.Position = UDim2.new(0, 14, 0, 10)
 TargetTitle.BackgroundTransparency = 1
 TargetTitle.Font = Enum.Font.GothamBold
-TargetTitle.TextSize = 9
+TargetTitle.TextSize = 11
 TargetTitle.TextColor3 = C_CYAN
 TargetTitle.TextXAlignment = Enum.TextXAlignment.Left
-TargetTitle.Text = "ALVO PRIORITARIO (MAIOR VALOR NO MAPA):"
+TargetTitle.Text = Config.LockCurrentIsland and "ALVO PRIORITARIO (ILHA ATUAL):" or "ALVO PRIORITARIO (TODO O MAPA):"
 TargetTitle.Parent = TargetCard
 
 TargetInfoLabel = Instance.new("TextLabel")
-TargetInfoLabel.Size = UDim2.new(1, -20, 0, 24)
-TargetInfoLabel.Position = UDim2.new(0, 12, 0, 26)
+TargetInfoLabel.Size = UDim2.new(1, -20, 0, 26)
+TargetInfoLabel.Position = UDim2.new(0, 14, 0, 32)
 TargetInfoLabel.BackgroundTransparency = 1
-TargetInfoLabel.Font = Enum.Font.Gotham
-TargetInfoLabel.TextSize = 10
+TargetInfoLabel.Font = Enum.Font.GothamBold
+TargetInfoLabel.TextSize = 12
 TargetInfoLabel.TextColor3 = C_TEXT
 TargetInfoLabel.TextXAlignment = Enum.TextXAlignment.Left
 TargetInfoLabel.Text = "Buscando ovos..."
@@ -2837,29 +2954,29 @@ end)
 --================================================================--
 local RadarPage = TabPages["Radar de Ovos"]
 
-local RadarControlsCard = createCleanCard(RadarPage, 45)
+local RadarControlsCard = createCleanCard(RadarPage, 48)
 local SearchInput = Instance.new("TextBox")
-SearchInput.Size = UDim2.new(0.68, -10, 0, 28)
-SearchInput.Position = UDim2.new(0, 10, 0.5, -14)
+SearchInput.Size = UDim2.new(0.66, -10, 0, 34)
+SearchInput.Position = UDim2.new(0, 10, 0.5, -17)
 SearchInput.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
 SearchInput.PlaceholderText = "Buscar ovo (Godzilla, Kitsune, T-Rex...)"
 SearchInput.PlaceholderColor3 = C_MUTED
 SearchInput.Text = ""
 SearchInput.Font = Enum.Font.Gotham
-SearchInput.TextSize = 10
+SearchInput.TextSize = 11
 SearchInput.TextColor3 = C_TEXT
 SearchInput.Parent = RadarControlsCard
 addCorner(SearchInput, 6)
 addStroke(SearchInput, C_BORDER, 1)
 
 local EspToggleBtn = Instance.new("TextButton")
-EspToggleBtn.Size = UDim2.new(0.32, -10, 0, 28)
-EspToggleBtn.Position = UDim2.new(0.68, 0, 0.5, -14)
-EspToggleBtn.BackgroundColor3 = Config.ESPEnabled and C_GREEN or Color3.fromRGB(30, 41, 59)
-EspToggleBtn.Text = Config.ESPEnabled and "[ESP: ON]" or "[ESP: OFF]"
+EspToggleBtn.Size = UDim2.new(0.34, -10, 0, 34)
+EspToggleBtn.Position = UDim2.new(0.66, 0, 0.5, -17)
+EspToggleBtn.BackgroundColor3 = Config.ESPEnabled and Color3.fromRGB(22, 101, 52) or Color3.fromRGB(30, 44, 74)
+EspToggleBtn.Text = Config.ESPEnabled and "[ESP: ATIVO]" or "[ESP: DESATIVADO]"
 EspToggleBtn.Font = Enum.Font.GothamBold
-EspToggleBtn.TextSize = 9
-EspToggleBtn.TextColor3 = Config.ESPEnabled and C_TEXT or C_CYAN
+EspToggleBtn.TextSize = 11
+EspToggleBtn.TextColor3 = Config.ESPEnabled and Color3.fromRGB(74, 222, 128) or C_MUTED
 EspToggleBtn.Parent = RadarControlsCard
 addCorner(EspToggleBtn, 6)
 addStroke(EspToggleBtn, Config.ESPEnabled and C_GREEN or C_BORDER, 1)
@@ -2871,7 +2988,7 @@ EggListFrame.BackgroundTransparency = 1
 EggListFrame.Parent = RadarPage
 
 local eggListLayout = Instance.new("UIListLayout")
-eggListLayout.Padding = UDim.new(0, 5)
+eggListLayout.Padding = UDim.new(0, 6)
 eggListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 eggListLayout.Parent = EggListFrame
 
@@ -2888,14 +3005,14 @@ local function executeCleanRadarScan()
     for _, egg in ipairs(eggs) do
         if query == "" or egg.Name:lower():find(query) or egg.Rarity:lower():find(query) then
             count = count + 1
-            if count > 20 then break end
+            if count > 25 then break end
 
             local card = Instance.new("Frame")
-            card.Size = UDim2.new(1, 0, 0, 44)
+            card.Size = UDim2.new(1, 0, 0, 54)
             card.BackgroundColor3 = C_CARD
             card.BorderSizePixel = 0
             card.Parent = EggListFrame
-            addCorner(card, 6)
+            addCorner(card, 8)
             addStroke(card, C_BORDER, 1)
 
             local rColor = C_CYAN
@@ -2907,50 +3024,51 @@ local function executeCleanRadarScan()
             elseif egg.Rarity:find("M") then rColor = Color3.fromRGB(249, 115, 22) end
 
             local RarityTag = Instance.new("TextLabel")
-            RarityTag.Size = UDim2.new(0, 60, 0, 18)
-            RarityTag.Position = UDim2.new(0, 8, 0.5, -9)
+            RarityTag.Size = UDim2.new(0, 68, 0, 22)
+            RarityTag.Position = UDim2.new(0, 10, 0.5, -11)
             RarityTag.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
             RarityTag.Text = egg.Rarity
             RarityTag.Font = Enum.Font.GothamBold
-            RarityTag.TextSize = 8
+            RarityTag.TextSize = 9
             RarityTag.TextColor3 = rColor
             RarityTag.Parent = card
-            addCorner(RarityTag, 4)
-            addStroke(RarityTag, rColor, 1)
+            addCorner(RarityTag, 5)
+            addStroke(RarityTag, rColor, 1.2)
 
             local NameLabel = Instance.new("TextLabel")
-            NameLabel.Size = UDim2.new(1, -125, 0, 16)
-            NameLabel.Position = UDim2.new(0, 74, 0, 6)
+            NameLabel.Size = UDim2.new(1, -145, 0, 18)
+            NameLabel.Position = UDim2.new(0, 86, 0, 8)
             NameLabel.BackgroundTransparency = 1
             NameLabel.Font = Enum.Font.GothamBold
-            NameLabel.TextSize = 9
+            NameLabel.TextSize = 12
             NameLabel.TextColor3 = C_TEXT
             NameLabel.TextXAlignment = Enum.TextXAlignment.Left
             NameLabel.Text = egg.Name
             NameLabel.Parent = card
 
+            local incBadge = egg.Income and (" • " .. egg.Income) or ""
             local InfoLabel = Instance.new("TextLabel")
-            InfoLabel.Size = UDim2.new(1, -125, 0, 14)
-            InfoLabel.Position = UDim2.new(0, 74, 0, 24)
+            InfoLabel.Size = UDim2.new(1, -145, 0, 16)
+            InfoLabel.Position = UDim2.new(0, 86, 0, 28)
             InfoLabel.BackgroundTransparency = 1
             InfoLabel.Font = Enum.Font.Gotham
-            InfoLabel.TextSize = 8
+            InfoLabel.TextSize = 10
             InfoLabel.TextColor3 = C_MUTED
             InfoLabel.TextXAlignment = Enum.TextXAlignment.Left
-            InfoLabel.Text = string.format("Dist: %d studs | %s", math.floor(egg.Distance), egg.Zone or "Selvagem")
+            InfoLabel.Text = string.format("Dist: %dm%s • %s", math.floor(egg.Distance), incBadge, egg.Zone or "Selvagem")
             InfoLabel.Parent = card
 
             local GoBtn = Instance.new("TextButton")
-            GoBtn.Size = UDim2.new(0, 36, 0, 26)
-            GoBtn.Position = UDim2.new(1, -44, 0.5, -13)
-            GoBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+            GoBtn.Size = UDim2.new(0, 44, 0, 30)
+            GoBtn.Position = UDim2.new(1, -54, 0.5, -15)
+            GoBtn.BackgroundColor3 = Color3.fromRGB(30, 44, 74)
             GoBtn.Text = "IR"
             GoBtn.Font = Enum.Font.GothamBold
-            GoBtn.TextSize = 9
+            GoBtn.TextSize = 11
             GoBtn.TextColor3 = C_CYAN
             GoBtn.Parent = card
-            addCorner(GoBtn, 4)
-            addStroke(GoBtn, C_BORDER, 1)
+            addCorner(GoBtn, 6)
+            addStroke(GoBtn, C_CYAN, 1)
 
             local eggPos = egg.Position
             GoBtn.MouseButton1Click:Connect(function()
@@ -2970,9 +3088,9 @@ end)
 
 EspToggleBtn.MouseButton1Click:Connect(function()
     Config.ESPEnabled = not Config.ESPEnabled
-    EspToggleBtn.BackgroundColor3 = Config.ESPEnabled and C_GREEN or Color3.fromRGB(30, 41, 59)
-    EspToggleBtn.Text = Config.ESPEnabled and "[ESP: ON]" or "[ESP: OFF]"
-    EspToggleBtn.TextColor3 = Config.ESPEnabled and C_TEXT or C_CYAN
+    EspToggleBtn.BackgroundColor3 = Config.ESPEnabled and Color3.fromRGB(22, 101, 52) or Color3.fromRGB(30, 44, 74)
+    EspToggleBtn.Text = Config.ESPEnabled and "[ESP: ATIVO]" or "[ESP: DESATIVADO]"
+    EspToggleBtn.TextColor3 = Config.ESPEnabled and Color3.fromRGB(74, 222, 128) or C_MUTED
     addStroke(EspToggleBtn, Config.ESPEnabled and C_GREEN or C_BORDER, 1)
     if not Config.ESPEnabled then clearAllESP() end
     addLog("ESP", Config.ESPEnabled and "ESP Ativado." or "ESP Desativado.")
@@ -2983,18 +3101,18 @@ end)
 --================================================================--
 local TeleportsPage = TabPages["Teleportes"]
 
-local QuickTpCard = createCleanCard(TeleportsPage, 45)
+local QuickTpCard = createCleanCard(TeleportsPage, 50)
 local TpBaseBtn = Instance.new("TextButton")
-TpBaseBtn.Size = UDim2.new(0.5, -6, 0, 30)
-TpBaseBtn.Position = UDim2.new(0, 4, 0.5, -15)
-TpBaseBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+TpBaseBtn.Size = UDim2.new(0.5, -6, 0, 34)
+TpBaseBtn.Position = UDim2.new(0, 4, 0.5, -17)
+TpBaseBtn.BackgroundColor3 = Color3.fromRGB(20, 83, 45)
 TpBaseBtn.Text = "MINHA BASE"
 TpBaseBtn.Font = Enum.Font.GothamBold
-TpBaseBtn.TextSize = 9
-TpBaseBtn.TextColor3 = C_GREEN
+TpBaseBtn.TextSize = 11
+TpBaseBtn.TextColor3 = Color3.fromRGB(74, 222, 128)
 TpBaseBtn.Parent = QuickTpCard
-addCorner(TpBaseBtn, 5)
-addStroke(TpBaseBtn, C_GREEN, 1)
+addCorner(TpBaseBtn, 6)
+addStroke(TpBaseBtn, C_GREEN, 1.2)
 
 TpBaseBtn.MouseButton1Click:Connect(function()
     local hrp = getHRP()
@@ -3006,16 +3124,16 @@ TpBaseBtn.MouseButton1Click:Connect(function()
 end)
 
 local TpEsteiraBtn = Instance.new("TextButton")
-TpEsteiraBtn.Size = UDim2.new(0.5, -6, 0, 30)
-TpEsteiraBtn.Position = UDim2.new(0.5, 2, 0.5, -15)
-TpEsteiraBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+TpEsteiraBtn.Size = UDim2.new(0.5, -6, 0, 34)
+TpEsteiraBtn.Position = UDim2.new(0.5, 2, 0.5, -17)
+TpEsteiraBtn.BackgroundColor3 = Color3.fromRGB(30, 44, 74)
 TpEsteiraBtn.Text = "MINHA ESTEIRA"
 TpEsteiraBtn.Font = Enum.Font.GothamBold
-TpEsteiraBtn.TextSize = 9
+TpEsteiraBtn.TextSize = 11
 TpEsteiraBtn.TextColor3 = C_YELLOW
 TpEsteiraBtn.Parent = QuickTpCard
-addCorner(TpEsteiraBtn, 5)
-addStroke(TpEsteiraBtn, C_YELLOW, 1)
+addCorner(TpEsteiraBtn, 6)
+addStroke(TpEsteiraBtn, C_YELLOW, 1.2)
 
 TpEsteiraBtn.MouseButton1Click:Connect(function()
     local hrp = getHRP()
@@ -3027,10 +3145,10 @@ TpEsteiraBtn.MouseButton1Click:Connect(function()
 end)
 
 local IslandsTitle = Instance.new("TextLabel")
-IslandsTitle.Size = UDim2.new(1, 0, 0, 18)
+IslandsTitle.Size = UDim2.new(1, 0, 0, 20)
 IslandsTitle.BackgroundTransparency = 1
 IslandsTitle.Font = Enum.Font.GothamBold
-IslandsTitle.TextSize = 9
+IslandsTitle.TextSize = 11
 IslandsTitle.TextColor3 = C_CYAN
 IslandsTitle.TextXAlignment = Enum.TextXAlignment.Left
 IslandsTitle.Text = "ILHAS OFICIAIS DO JOGO (1 A 11):"
@@ -3043,7 +3161,7 @@ IslandsGrid.BackgroundTransparency = 1
 IslandsGrid.Parent = TeleportsPage
 
 local gridLayout = Instance.new("UIGridLayout")
-gridLayout.CellSize = UDim2.new(0.5, -4, 0, 32)
+gridLayout.CellSize = UDim2.new(0.5, -4, 0, 36)
 gridLayout.CellPadding = UDim2.new(0, 8, 0, 6)
 gridLayout.Parent = IslandsGrid
 
@@ -3051,11 +3169,11 @@ for idx, isl in ipairs(OfficialIslands) do
     local islBtn = Instance.new("TextButton")
     islBtn.BackgroundColor3 = C_CARD
     islBtn.Text = string.format("%d. %s [%s]", idx, isl.Id, isl.TopDrop or isl.Rarity)
-    islBtn.Font = Enum.Font.Gotham
-    islBtn.TextSize = 8
+    islBtn.Font = Enum.Font.GothamBold
+    islBtn.TextSize = 10
     islBtn.TextColor3 = C_TEXT
     islBtn.Parent = IslandsGrid
-    addCorner(islBtn, 5)
+    addCorner(islBtn, 6)
     addStroke(islBtn, C_BORDER, 1)
 
     local targetX = (isl.MinX + math.min(isl.MaxX, isl.MinX + 120)) / 2
@@ -3075,7 +3193,7 @@ end
 local ConfigsPage = TabPages["Configuracoes"]
 
 -- Card de Toggles de Proteção e Modificadores
-local ModifiersCard = createCleanCard(ConfigsPage, 75)
+local ModifiersCard = createCleanCard(ConfigsPage, 82)
 local ModGrid = Instance.new("Frame")
 ModGrid.Size = UDim2.new(1, -20, 1, -12)
 ModGrid.Position = UDim2.new(0, 10, 0, 6)
@@ -3083,33 +3201,38 @@ ModGrid.BackgroundTransparency = 1
 ModGrid.Parent = ModifiersCard
 
 local modLayout = Instance.new("UIGridLayout")
-modLayout.CellSize = UDim2.new(0.5, -4, 0, 26)
+modLayout.CellSize = UDim2.new(0.5, -4, 0, 30)
 modLayout.CellPadding = UDim2.new(0, 8, 0, 6)
 modLayout.Parent = ModGrid
 
 local IslandLockBtn = Instance.new("TextButton")
-IslandLockBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+IslandLockBtn.BackgroundColor3 = Color3.fromRGB(26, 36, 60)
 IslandLockBtn.Text = Config.LockCurrentIsland and "TRAVAR ILHA: ON" or "TRAVAR ILHA: OFF"
 IslandLockBtn.Font = Enum.Font.GothamBold
-IslandLockBtn.TextSize = 8
+IslandLockBtn.TextSize = 10
 IslandLockBtn.TextColor3 = Config.LockCurrentIsland and C_GREEN or C_MUTED
 IslandLockBtn.Parent = ModGrid
-addCorner(IslandLockBtn, 4)
+addCorner(IslandLockBtn, 6)
+addStroke(IslandLockBtn, C_BORDER, 1)
 
 IslandLockBtn.MouseButton1Click:Connect(function()
     Config.LockCurrentIsland = not Config.LockCurrentIsland
     IslandLockBtn.Text = Config.LockCurrentIsland and "TRAVAR ILHA: ON" or "TRAVAR ILHA: OFF"
     IslandLockBtn.TextColor3 = Config.LockCurrentIsland and C_GREEN or C_MUTED
+    if TargetTitle then
+        TargetTitle.Text = Config.LockCurrentIsland and "ALVO PRIORITARIO (ILHA ATUAL):" or "ALVO PRIORITARIO (TODO O MAPA):"
+    end
 end)
 
 local NoclipBtn = Instance.new("TextButton")
-NoclipBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+NoclipBtn.BackgroundColor3 = Color3.fromRGB(26, 36, 60)
 NoclipBtn.Text = Config.NoclipEnabled and "NOCLIP: ON" or "NOCLIP: OFF"
 NoclipBtn.Font = Enum.Font.GothamBold
-NoclipBtn.TextSize = 8
+NoclipBtn.TextSize = 10
 NoclipBtn.TextColor3 = Config.NoclipEnabled and C_GREEN or C_MUTED
 NoclipBtn.Parent = ModGrid
-addCorner(NoclipBtn, 4)
+addCorner(NoclipBtn, 6)
+addStroke(NoclipBtn, C_BORDER, 1)
 
 NoclipBtn.MouseButton1Click:Connect(function()
     Config.NoclipEnabled = not Config.NoclipEnabled
@@ -3118,13 +3241,14 @@ NoclipBtn.MouseButton1Click:Connect(function()
 end)
 
 local InfJumpBtn = Instance.new("TextButton")
-InfJumpBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+InfJumpBtn.BackgroundColor3 = Color3.fromRGB(26, 36, 60)
 InfJumpBtn.Text = Config.InfJumpEnabled and "PULO INFINITO: ON" or "PULO INFINITO: OFF"
 InfJumpBtn.Font = Enum.Font.GothamBold
-InfJumpBtn.TextSize = 8
+InfJumpBtn.TextSize = 10
 InfJumpBtn.TextColor3 = Config.InfJumpEnabled and C_GREEN or C_MUTED
 InfJumpBtn.Parent = ModGrid
-addCorner(InfJumpBtn, 4)
+addCorner(InfJumpBtn, 6)
+addStroke(InfJumpBtn, C_BORDER, 1)
 
 InfJumpBtn.MouseButton1Click:Connect(function()
     Config.InfJumpEnabled = not Config.InfJumpEnabled
@@ -3133,13 +3257,14 @@ InfJumpBtn.MouseButton1Click:Connect(function()
 end)
 
 local UnownedBtn = Instance.new("TextButton")
-UnownedBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+UnownedBtn.BackgroundColor3 = Color3.fromRGB(26, 36, 60)
 UnownedBtn.Text = Config.ShowOnlyUnowned and "IGNORAR MEUS OVOS: ON" or "IGNORAR MEUS OVOS: OFF"
 UnownedBtn.Font = Enum.Font.GothamBold
-UnownedBtn.TextSize = 8
+UnownedBtn.TextSize = 10
 UnownedBtn.TextColor3 = Config.ShowOnlyUnowned and C_GREEN or C_MUTED
 UnownedBtn.Parent = ModGrid
-addCorner(UnownedBtn, 4)
+addCorner(UnownedBtn, 6)
+addStroke(UnownedBtn, C_BORDER, 1)
 
 UnownedBtn.MouseButton1Click:Connect(function()
     Config.ShowOnlyUnowned = not Config.ShowOnlyUnowned
@@ -3167,13 +3292,13 @@ table.insert(ScriptConnections, Services.UserInputService.JumpRequest:Connect(fu
 end))
 
 -- Card de Sliders
-local SlidersCard = createCleanCard(ConfigsPage, 80)
+local SlidersCard = createCleanCard(ConfigsPage, 88)
 local SpeedLabel = Instance.new("TextLabel")
-SpeedLabel.Size = UDim2.new(1, -20, 0, 16)
+SpeedLabel.Size = UDim2.new(1, -20, 0, 18)
 SpeedLabel.Position = UDim2.new(0, 10, 0, 8)
 SpeedLabel.BackgroundTransparency = 1
-SpeedLabel.Font = Enum.Font.Gotham
-SpeedLabel.TextSize = 9
+SpeedLabel.Font = Enum.Font.GothamBold
+SpeedLabel.TextSize = 11
 SpeedLabel.TextColor3 = C_TEXT
 SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
 SpeedLabel.Text = string.format("Velocidade de Deslocamento: %d studs/s", Config.MoveSpeed)
@@ -3221,11 +3346,11 @@ table.insert(ScriptConnections, Services.RunService.RenderStepped:Connect(functi
 end))
 
 local DistLabel = Instance.new("TextLabel")
-DistLabel.Size = UDim2.new(1, -20, 0, 16)
-DistLabel.Position = UDim2.new(0, 10, 0, 42)
+DistLabel.Size = UDim2.new(1, -20, 0, 18)
+DistLabel.Position = UDim2.new(0, 10, 0, 44)
 DistLabel.BackgroundTransparency = 1
-DistLabel.Font = Enum.Font.Gotham
-DistLabel.TextSize = 9
+DistLabel.Font = Enum.Font.GothamBold
+DistLabel.TextSize = 11
 DistLabel.TextColor3 = C_TEXT
 DistLabel.TextXAlignment = Enum.TextXAlignment.Left
 DistLabel.Text = string.format("Alcance Maximo: %d studs", Config.MaxStealDistance)
@@ -3275,11 +3400,11 @@ end))
 -- Card de Log Console
 local LogCard = createCleanCard(ConfigsPage, 90)
 local LogTitle = Instance.new("TextLabel")
-LogTitle.Size = UDim2.new(1, -20, 0, 16)
+LogTitle.Size = UDim2.new(1, -20, 0, 18)
 LogTitle.Position = UDim2.new(0, 10, 0, 6)
 LogTitle.BackgroundTransparency = 1
 LogTitle.Font = Enum.Font.GothamBold
-LogTitle.TextSize = 8
+LogTitle.TextSize = 10
 LogTitle.TextColor3 = C_MUTED
 LogTitle.TextXAlignment = Enum.TextXAlignment.Left
 LogTitle.Text = "REGISTROS DO SISTEMA (LOGS):"
@@ -3292,7 +3417,7 @@ LogScroll.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
 LogScroll.BorderSizePixel = 0
 LogScroll.ScrollBarThickness = 3
 LogScroll.Parent = LogCard
-addCorner(LogScroll, 4)
+addCorner(LogScroll, 6)
 
 local LogTextLabel = Instance.new("TextLabel")
 LogTextLabel.Size = UDim2.new(1, -8, 0, 0)
@@ -3300,7 +3425,7 @@ LogTextLabel.AutomaticSize = Enum.AutomaticSize.Y
 LogTextLabel.Position = UDim2.new(0, 4, 0, 4)
 LogTextLabel.BackgroundTransparency = 1
 LogTextLabel.Font = Enum.Font.Code
-LogTextLabel.TextSize = 8
+LogTextLabel.TextSize = 10
 LogTextLabel.TextColor3 = Color3.fromRGB(226, 232, 240)
 LogTextLabel.TextXAlignment = Enum.TextXAlignment.Left
 LogTextLabel.TextYAlignment = Enum.TextYAlignment.Top
@@ -3316,13 +3441,15 @@ end
 
 -- Botão Dump Completo
 local DumpBtn = Instance.new("TextButton")
-DumpBtn.Size = UDim2.new(1, 0, 0, 28)
-DumpBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+DumpBtn.Size = UDim2.new(1, 0, 0, 34)
+DumpBtn.BackgroundColor3 = Color3.fromRGB(26, 36, 60)
 DumpBtn.Text = "GERAR DUMP COMPLETO DO JOGO"
 DumpBtn.Font = Enum.Font.GothamBold
-DumpBtn.TextSize = 9
+DumpBtn.TextSize = 11
 DumpBtn.TextColor3 = C_CYAN
 DumpBtn.Parent = ConfigsPage
+addCorner(DumpBtn, 6)
+addStroke(DumpBtn, C_BORDER, 1)
 addCorner(DumpBtn, 5)
 addStroke(DumpBtn, C_BORDER, 1)
 
