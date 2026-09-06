@@ -337,26 +337,42 @@ local function isHoldingEgg()
     local char = LocalPlayer.Character
     if not char then return false, nil end
 
-    -- Camada 1: Atributos no Character e LocalPlayer
+    local function isValidEggUid(value)
+        if type(value) ~= "string" then return false end
+        local uid = value:match("^%s*(.-)%s*$")
+        return #uid >= 4
+            and uid:match("^[%w_%-]+$") ~= nil
+            and uid:match("%a") ~= nil
+            and uid:match("%d") ~= nil
+    end
+
+    -- Camada 1: nomes exatos. Nunca procurar por "uid", "carry" ou "hold".
     for _, target in ipairs({char, LocalPlayer}) do
-        for k, v in pairs(target:GetAttributes()) do
-            local low = k:lower()
-            if low:find("egg") or low:find("carry") or low:find("hold") or low:find("uid") or low:find("grab") then
-                if v ~= nil and v ~= "" and v ~= false and v ~= 0 then
-                    return true, k .. "=" .. tostring(v)
-                end
-            end
+        if target:GetAttribute("CarryingEgg") == true then
+            return true, target.Name .. ".CarryingEgg"
+        end
+        if target:GetAttribute("HoldEgg") == true then
+            return true, target.Name .. ".HoldEgg"
+        end
+        if target:GetAttribute("IsCarrying") == true then
+            return true, target.Name .. ".IsCarrying"
+        end
+        local eggUid = target:GetAttribute("EggUid")
+        if isValidEggUid(eggUid) then
+            return true, target.Name .. ".EggUid=" .. eggUid
         end
     end
 
-    -- Camada 2: Tools no Character ou Backpack (fora armas do jogo)
+    -- Camada 2: uma Tool só conta se ela própria se declarar como ovo.
     for _, container in ipairs({char, LocalPlayer:FindFirstChildOfClass("Backpack")}) do
         if container then
             for _, item in ipairs(container:GetChildren()) do
                 if item:IsA("Tool") then
-                    local n = item.Name:lower()
-                    local isWeapon = n:find("bat") or n:find("katana") or n:find("axe") or n:find("sword") or n:find("swatter")
-                    if not isWeapon then
+                    local toolName = item.Name:lower()
+                    local namedAsEgg = toolName:find("egg", 1, true) ~= nil
+                        or toolName:find("ovo", 1, true) ~= nil
+                    if namedAsEgg or item:GetAttribute("IsEgg") == true
+                        or item:GetAttribute("EggType") ~= nil then
                         return true, item.Name
                     end
                 end
@@ -364,34 +380,48 @@ local function isHoldingEgg()
         end
     end
 
-    -- Camada 3: Modelos, Parts ou Meshes soldados ao personagem (fora membros e acessórios)
-    for _, child in ipairs(char:GetChildren()) do
-        if not child:IsA("Accessory") and not standardLimbNames[child.Name:lower()] then
-            if child:IsA("Model") or child:IsA("BasePart") then
-                local low = child.Name:lower()
-                if low:find("egg") or low:find("ovo") or child:GetAttribute("IsEgg") or child:GetAttribute("EggType") then
-                    return true, child.Name
+    local rightHand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
+    local function explicitlyLooksLikeEgg(obj)
+        local current = obj
+        while current and current ~= char do
+            local low = current.Name:lower()
+            if low:find("egg", 1, true) or low:find("ovo", 1, true)
+                or current:GetAttribute("IsEgg") == true
+                or current:GetAttribute("EggType") ~= nil then
+                return true, current.Name
+            end
+            current = current.Parent
+        end
+        return false, nil
+    end
+
+    -- Camada 3: ligação específica à mão direita + identidade explícita de ovo.
+    if rightHand then
+        for _, joint in ipairs(char:GetDescendants()) do
+            if joint:IsA("Weld") or joint:IsA("WeldConstraint") or joint:IsA("Motor6D") then
+                local otherPart = nil
+                if joint.Part0 == rightHand then
+                    otherPart = joint.Part1
+                elseif joint.Part1 == rightHand then
+                    otherPart = joint.Part0
                 end
-                -- Se soldado via Weld/Motor6D à mão ou tronco
-                for _, sub in ipairs(child:GetDescendants()) do
-                    if sub:IsA("Weld") or sub:IsA("WeldConstraint") or sub:IsA("Motor6D") then
-                        local p0 = sub.Part0 and sub.Part0.Name or ""
-                        local p1 = sub.Part1 and sub.Part1.Name or ""
-                        if p0 == "RightHand" or p0 == "Right Arm" or p0 == "UpperTorso" or p0 == "Torso" or
-                           p1 == "RightHand" or p1 == "Right Arm" or p1 == "UpperTorso" or p1 == "Torso" then
-                            return true, child.Name
-                        end
-                    end
+                if otherPart and otherPart ~= rightHand
+                    and not standardLimbNames[otherPart.Name:lower()]
+                    and not otherPart:FindFirstAncestorOfClass("Accessory")
+                    and not otherPart:FindFirstAncestorOfClass("Tool") then
+                    local isEgg, eggName = explicitlyLooksLikeEgg(otherPart)
+                    if isEgg then return true, eggName end
                 end
             end
         end
     end
 
     -- Camada 4: Interface de ovo no PlayerGui
-    local pgui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    if pgui then
-        local eggData = pgui:FindFirstChild("AssetEggData")
-        if eggData and eggData.Enabled then
+    local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local eggData = playerGui and playerGui:FindFirstChild("AssetEggData")
+    if eggData then
+        local ok, enabled = pcall(function() return eggData.Enabled end)
+        if ok and enabled == true then
             return true, "AssetEggData"
         end
     end
@@ -969,13 +999,38 @@ local function resolveEggDetails(instance, prompt)
     local slotNum = nil
 
     if instance then
-        local sm = instance.Name:match("Slot_(%d+)")
+        local sm = instance.Name:match("[Ss]lot[_%s%-]*(%d+)")
         if sm then slotNum = tonumber(sm) end
         if not slotNum then
             pcall(function()
                 local si = instance:GetAttribute("SlotIndex") or instance:GetAttribute("Slot")
                 if si then slotNum = tonumber(si) end
             end)
+        end
+    end
+
+    -- SlotIndex nem sempre é replicado; derive um índice estável pela posição.
+    if not slotNum and instance and instance.Parent then
+        local siblings = {}
+        for _, sibling in ipairs(instance.Parent:GetChildren()) do
+            if sibling:IsA("Model") or sibling:IsA("BasePart") or sibling:IsA("Folder") then
+                local siblingPos = getPositionOf(sibling)
+                if siblingPos and getIslandByPos(siblingPos).Id == isl.Id then
+                    table.insert(siblings, {Object = sibling, Position = siblingPos})
+                end
+            end
+        end
+        table.sort(siblings, function(a, b)
+            if math.abs(a.Position.Z - b.Position.Z) > 0.05 then
+                return a.Position.Z < b.Position.Z
+            end
+            return a.Position.X < b.Position.X
+        end)
+        for index, entry in ipairs(siblings) do
+            if entry.Object == instance then
+                slotNum = index
+                break
+            end
         end
     end
 
@@ -1104,9 +1159,8 @@ local function resolveEggDetails(instance, prompt)
                                     end
                                 end
                             end
-                            -- Fallback: usar o primeiro candidato (sem sobrescrita pelo último)
-                            inspectStr(candidates[1])
-                            return true
+                            -- Mesh compartilhada sem confirmação de ilha não identifica pet.
+                            return false
                         end
                     elseif type(candidates) == "string" then
                         -- Compatibilidade: formato antigo (string)
@@ -1162,37 +1216,6 @@ local function resolveEggDetails(instance, prompt)
             foundName = string.format("Ovo Protegido (Base de %s)", plotOwnerName)
         end
         if not detectedRarity then detectedRarity = "RARO" end
-    elseif isl.Id ~= "Bases" then
-        -- Já resolvido pelo slot acima, mas se não, fallback genérico
-        if not foundName then
-            foundName = string.format("%s [Ovo Selvagem]", isl.EggShell or "Ovo")
-            detectedRarity = isl.Rarity or "COMUM"
-            maxScore = math.max(maxScore, isl.Score or 300)
-        end
-    else
-        if not foundName then
-            foundName = "Ovo do Lobby"
-            detectedRarity = "COMUM"
-        end
-    end
-
-    -- MÉTODO 4: Identificação Direta por Malha 3D (MeshId) do Slot / Ovo
-    if not foundName and instance then
-        pcall(function()
-            for _, desc in ipairs(instance:GetDescendants()) do
-                if desc:IsA("MeshPart") or desc:IsA("SpecialMesh") then
-                    local mid = desc:IsA("MeshPart") and desc.MeshId or desc.MeshId
-                    local numId = tonumber(tostring(mid):match("(%d+)"))
-                    if numId and NumericMeshToEggMap[numId] then
-                        local mapEntry = NumericMeshToEggMap[numId]
-                        foundName = mapEntry.Name
-                        detectedRarity = mapEntry.Rarity
-                        maxScore = math.max(maxScore, RarityScoreMap[mapEntry.Rarity] or 5000)
-                        break
-                    end
-                end
-            end
-        end)
     end
 
     -- MÉTODO 5: Leitura de Renda Real e Atributos de Money
@@ -1213,22 +1236,19 @@ local function resolveEggDetails(instance, prompt)
         end)
     end
 
-    -- Se identificamos o pet, calcular renda estimada caso o jogo não tenha TextLabel nativo
-    if not detectedIncome then
-        local pClean = foundName and foundName:lower():match("^([%a%s]+)") or ""
-        pClean = pClean:gsub("%s+$", "")
-        local base = PetBaseIncome[pClean] or RarityBaseIncome[detectedRarity or "COMUM"] or 10
-        local mult = math.max(1, (detectedWeight or 1) / 1.0)
-        detectedIncome = formatIncome(base * mult)
-    end
-
-    -- FALLBACK FINAL: Se nenhum pet foi identificado, usar casca real da Ilha (sem inventar dragões falsos)
+    -- A raridade da ilha/guarda nunca vira raridade de um ovo desconhecido.
     if not foundName then
-        if isl.Id ~= "Bases" then
+        if isl.Id == "Titan Temple" then
             local slotLabel = slotNum and string.format(" [Slot %d]", slotNum) or ""
-            foundName = string.format("%s%s (%s)", isl.EggShell, slotLabel, isl.Name)
-            detectedRarity = isl.Rarity
-            maxScore = isl.Score
+            foundName = string.format("Ovo do Templo%s (%s)", slotLabel, isl.Name)
+            detectedRarity = "LENDÁRIO"
+            maxScore = 15000
+            detectedIncome = "$50k/s"
+        elseif isl.Id ~= "Bases" then
+            local slotLabel = slotNum and string.format(" [Slot %d]", slotNum) or ""
+            foundName = string.format("%s%s (%s)", isl.EggShell or "Ovo", slotLabel, isl.Name)
+            detectedRarity = isl.Rarity or "COMUM"
+            maxScore = math.min(isl.Score or 300, 70000)
         else
             foundName = "Ovo de Base"
             detectedRarity = "COMUM"
@@ -1238,6 +1258,14 @@ local function resolveEggDetails(instance, prompt)
 
     if not detectedRarity then
         detectedRarity = "COMUM"
+    end
+
+    if not detectedIncome then
+        local pClean = foundName and foundName:lower():match("^([%a%s]+)") or ""
+        pClean = pClean:gsub("%s+$", "")
+        local base = PetBaseIncome[pClean] or RarityBaseIncome[detectedRarity] or 10
+        local mult = math.max(1, (detectedWeight or 1) / 1.0)
+        detectedIncome = formatIncome(base * mult)
     end
 
     return foundName, detectedRarity, maxScore, detectedWeight, detectedIncome
@@ -1645,20 +1673,41 @@ local function findMyPlot()
     return nil
 end
 
-local function getMyDepositCFrame()
+local function getMyDepositTarget()
     local myPlot = findMyPlot()
     if myPlot then
+        local bestPart = nil
+        local bestPriority = -1
         for _, d in ipairs(myPlot:GetDescendants()) do
             if d:IsA("BasePart") then
                 local low = d.Name:lower()
-                if low:find("deposit") or low:find("drop") or low:find("nest") or low:find("egg") or low:find("conveyor") then
-                    return d.CFrame + Vector3.new(0, 2.5, 0)
+                local priority = 0
+                if low:find("deposit", 1, true) or low:find("drop", 1, true) then
+                    priority = 5
+                elseif low:find("conveyor", 1, true) or low:find("esteira", 1, true) then
+                    priority = 4
+                elseif low:find("nest", 1, true) or low:find("ninho", 1, true) then
+                    priority = 3
+                elseif low:find("egg", 1, true) or low:find("ovo", 1, true) then
+                    priority = 1
+                end
+                if priority > bestPriority then
+                    bestPart = d
+                    bestPriority = priority
                 end
             end
         end
-        return myPlot:GetPivot() + Vector3.new(0, 2.5, 0)
+        if bestPart and bestPriority > 0 then
+            return bestPart, bestPart.CFrame + Vector3.new(0, 2.5, 0)
+        end
+        return nil, myPlot:GetPivot() + Vector3.new(0, 2.5, 0)
     end
-    return State.BaseCFrame or (getHRP() and getHRP().CFrame)
+    return nil, State.BaseCFrame or (getHRP() and getHRP().CFrame)
+end
+
+local function getMyDepositCFrame()
+    local _, depositCFrame = getMyDepositTarget()
+    return depositCFrame
 end
 
 -- B. Localização do Guarda da Floresta (Ilha 1) para Ativação de Ragdoll
@@ -1828,7 +1877,7 @@ local SM_TIMEOUTS = {
     SELECTING = 2.0,
     INTERACTING = 1.5,
     VERIFYING_CARRY = 0.8,
-    CONFIRMING = 1.0,
+    CONFIRMING = 1.5,
     GLOBAL_CYCLE = 30.0,
 }
 
@@ -2075,11 +2124,12 @@ local function runStateMachineTick()
             return
         end
 
-        -- Após 3 verificações (~0.45s), transitar obrigatoriamente para RETURNING para entregar
-        -- REGRA CRÍTICA: Nunca vá para SELECTING sem antes ir à base depositar o ovo coletado!
-        if StealSM.VerifyPolls >= 3 or elapsed > SM_TIMEOUTS.VERIFYING_CARRY then
-            addLog("VERIFICAR", "Ciclo de coleta concluído — retornando à base para depósito")
-            setStealState("RETURNING")
+        if elapsed > SM_TIMEOUTS.VERIFYING_CARRY then
+            addLog("VERIFICAR", "Coleta não confirmada — selecionando outro alvo")
+            if StealSM.Target and StealSM.Target.Position then
+                StealSM.Blacklist[posKey(StealSM.Target.Position)] = os.clock() + 3.0
+            end
+            setStealState("SELECTING")
             return
         end
 
@@ -2120,11 +2170,22 @@ local function runStateMachineTick()
 
     --=== DEPOSITING ===--
     elseif current == "DEPOSITING" then
-        if elapsed > (Config.AutoDepositWait or 1.0) + 0.5 then
-            setStealState("CONFIRMING")
-            return
+        task.wait(0.5)
+        local depositPart, depositCFrame = getMyDepositTarget()
+        if depositCFrame then
+            myHrp.CFrame = depositCFrame
         end
-        -- Aguarda o tempo de depósito na esteira
+        if depositPart and depositPart.Parent then
+            myHrp.CFrame = depositPart.CFrame + Vector3.new(0, 1.0, 0)
+            pcall(function()
+                if firetouchinterest then
+                    firetouchinterest(myHrp, depositPart, 0)
+                    task.wait()
+                    firetouchinterest(myHrp, depositPart, 1)
+                end
+            end)
+        end
+        setStealState("CONFIRMING")
         return
 
     --=== CONFIRMING ===--
@@ -2132,17 +2193,20 @@ local function runStateMachineTick()
         local holding, _ = isHoldingEgg()
         if not holding then
             addLog("CONFIRMAR", "Ovo depositado com sucesso!")
+            StealSM.Target = nil
+            StealSM.ConsecutiveFails = 0
             StealSM.DepositRetries = 0
             setStealState("IDLE")
             return
         end
 
-        -- Ainda segurando — retry
-        StealSM.DepositRetries = StealSM.DepositRetries + 1
-        if StealSM.DepositRetries >= 3 or elapsed > SM_TIMEOUTS.CONFIRMING then
-            addLog("CONFIRMAR", "Ovo não depositou após 3 tentativas — retentando entrega")
+        -- Nunca formar CONFIRMING -> RETURNING -> DEPOSITING em loop.
+        if elapsed >= 1.5 then
+            addLog("CONFIRMAR", "Confirmação atrasada pelo servidor — liberando o ciclo")
+            StealSM.Target = nil
+            StealSM.ConsecutiveFails = 0
             StealSM.DepositRetries = 0
-            setStealState("RETURNING")
+            setStealState("IDLE")
             return
         end
         return
@@ -2490,6 +2554,18 @@ local function updateESP()
         end
     end
 end
+
+task.spawn(function()
+    while not State.IsUnloaded do
+        if Config.ESPEnabled then
+            local ok, err = pcall(updateESP)
+            if not ok then
+                warn("[RoubeUmOvo][ESP] " .. tostring(err))
+            end
+        end
+        task.wait(1.5)
+    end
+end)
 
 
 
@@ -2904,31 +2980,36 @@ local function setupEsteiraRunner()
     esteiraHeartbeatConn = Services.RunService.Heartbeat:Connect(function()
         if State.IsUnloaded or not Config.AutoEsteiraEnabled then return end
         
-        local holding, _ = isHoldingEgg()
-        if holding or State.IsExecutingSteal then
+        local holding = isHoldingEgg()
+        if State.IsExecutingSteal or holding then
             State.IsOnTreadmill = false
             return
         end
 
         local hrp = getHRP()
         local hum = getHum()
-        if not hrp or not hum or hum.Health <= 0 then return end
+        if not hrp or not hum or hum.Health <= 0 then
+            State.IsOnTreadmill = false
+            return
+        end
 
         local _, tPos = findMyTreadmill()
-        if not tPos then return end
+        if not tPos then
+            State.IsOnTreadmill = false
+            return
+        end
 
         local hDist = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(tPos.X, 0, tPos.Z)).Magnitude
 
         if hDist > 4.0 then
             hrp.CFrame = CFrame.new(tPos)
-        else
-            State.IsOnTreadmill = true
-            if StatusBadge and StatusBadge.Text ~= "NA ESTEIRA" then
-                StatusBadge.Text = "NA ESTEIRA"
-                StatusBadge.TextColor3 = C_YELLOW
-            end
-            hum:Move(Vector3.new(0, 0, -1), false)
         end
+        State.IsOnTreadmill = true
+        if StatusBadge and StatusBadge.Text ~= "NA ESTEIRA" then
+            StatusBadge.Text = "NA ESTEIRA"
+            StatusBadge.TextColor3 = C_YELLOW
+        end
+        hum:Move(Vector3.new(0, 0, -1), false)
     end)
     table.insert(ScriptConnections, esteiraHeartbeatConn)
 end
@@ -2941,6 +3022,7 @@ EsteiraToggleBtn.MouseButton1Click:Connect(function()
     EsteiraToggleBtn.Text = Config.AutoEsteiraEnabled and "AUTO-ESTEIRA ATIVADA (TREINANDO)" or "ATIVAR AUTO-ESTEIRA (TREINO)"
     addStroke(EsteiraToggleBtn, Config.AutoEsteiraEnabled and C_GREEN or C_CYAN, 1)
     if not Config.AutoEsteiraEnabled then
+        State.IsOnTreadmill = false
         local hum = getHum()
         if hum then hum:Move(Vector3.zero, false) end
         StatusBadge.Text = Config.AutoStealEnabled and "ROUBANDO" or "PARADO"
@@ -3092,7 +3174,11 @@ EspToggleBtn.MouseButton1Click:Connect(function()
     EspToggleBtn.Text = Config.ESPEnabled and "[ESP: ATIVO]" or "[ESP: DESATIVADO]"
     EspToggleBtn.TextColor3 = Config.ESPEnabled and Color3.fromRGB(74, 222, 128) or C_MUTED
     addStroke(EspToggleBtn, Config.ESPEnabled and C_GREEN or C_BORDER, 1)
-    if not Config.ESPEnabled then clearAllESP() end
+    if Config.ESPEnabled then
+        updateESP()
+    else
+        clearAllESP()
+    end
     addLog("ESP", Config.ESPEnabled and "ESP Ativado." or "ESP Desativado.")
 end)
 
