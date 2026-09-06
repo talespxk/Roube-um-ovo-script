@@ -3,7 +3,7 @@ if not game:IsLoaded() then
 end
 
 --[[
-    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v13.0 OBSERVATORY)
+    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v13.1 STABILITY)
     -----------------------------------------------------------------------
     - Radar honesto: somente mostra pet/raridade/renda quando o cliente replica
       evidência real. Slots opacos aparecem como N/D.
@@ -13,7 +13,7 @@ end
       reais e raridades legítimas (Comum a Titã - Godzilla/Kitsune).
     - Navegação por Humanoid/Pathfinding sem alterar CFrame do personagem.
     - Suporte a Ovos Especiais: Demonic Egg, Dragon Egg, Limited e Brainrot.
-    - Neutralização Ativa Anti-Cheat e Movimento Seguro.
+    - Movimento conservador sem alterar ou remover scripts do jogo.
 ]]
 
 -- 1. Limpeza Preventiva de Globais
@@ -91,7 +91,7 @@ local Config = {
     AutoEsteiraEnabled = false,
     LockCurrentIsland = false, -- Padrão: busca em todo o mapa
     MaxStealDistance = 450,
-    MoveSpeed = 60,
+    MoveSpeed = 30,
     TargetRarity = "Qualquer",
     MinRarityScore = 0,
     ESPEnabled = false,
@@ -315,7 +315,7 @@ pcall(function()
             jobId = game.JobId,
             player = LocalPlayer.Name,
             userId = LocalPlayer.UserId,
-            version = "13.0",
+            version = "13.1",
         }) .. "\n")
     end
 end)
@@ -326,51 +326,14 @@ task.spawn(function()
     end
 end)
 
--- 6. NEUTRALIZAÇÃO ATIVA DE ANTI-CHEAT LOCAL DO CHARACTER (SEM DESATIVAR RAGDOLL)
-local function disableCharacterAntiCheats(char)
-    if not char then return end
-    pcall(function()
-        for _, child in ipairs(char:GetChildren()) do
-            if child:IsA("LocalScript") then
-                local low = child.Name:lower()
-                if low:find("anticollision") or low:find("highseed") or low:find("highspeed")
-                    or low:find("pushback") or low:find("fixcollision") then
-                    child.Disabled = true
-                    child:Destroy()
-                end
-            end
-        end
-        -- Manter Ragdoll HABILITADO para permitir o bypass do golpe da Galinha
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, true)
-            hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, true)
-        end
-    end)
-end
-
-if LocalPlayer.Character then
-    disableCharacterAntiCheats(LocalPlayer.Character)
-end
-
+-- Não desabilitar, destruir ou modificar scripts internos do personagem. Isso
+-- causava dessincronização e podia acionar a recuperação/rejoin do próprio jogo.
 registerConnection(LocalPlayer.CharacterAdded:Connect(function(newChar)
     if State.IsUnloaded then return end
     State.CarryConfirmed = false
     State.CarryEvidence = nil
     State.LastCarryChange = os.clock()
-    task.wait(0.1)
-    disableCharacterAntiCheats(newChar)
-    registerConnection(newChar.ChildAdded:Connect(function(child)
-        if child:IsA("LocalScript") then
-            local low = child.Name:lower()
-            if low:find("anticollision") or low:find("highseed") or low:find("highspeed")
-                or low:find("pushback") or low:find("fixcollision") then
-                task.wait()
-                child.Disabled = true
-                pcall(function() child:Destroy() end)
-            end
-        end
-    end))
+    traceEvent("CHARACTER", "CARRY_RESET_ON_RESPAWN", { character = newChar })
 end))
 
 local function addLog(category, msg)
@@ -577,7 +540,12 @@ local function isHoldingEggRaw()
     end
 
     if State.CarryConfirmed == true then
-        return true, State.CarryEvidence or "AreaEggCarryStateChanged"
+        if os.clock() - (State.LastCarryChange or 0) <= 12 then
+            return true, State.CarryEvidence or "AreaEggCarryStateChanged"
+        end
+        traceEvent("CARRY_STATE", "STALE_CLEARED", { evidence = State.CarryEvidence })
+        State.CarryConfirmed = false
+        State.CarryEvidence = nil
     end
 
     -- Backpack é inventário, não mãos. Somente Tool equipada conta.
@@ -641,12 +609,35 @@ end
 
 -- Instrumentação passiva: remotes, inventário, personagem, prompts e slots.
 -- Nenhum desses listeners altera o estado do jogo.
+local TRACE_REMOTE_KEYWORDS = {
+    "egg", "ovo", "carry", "place", "drop", "hatch", "pet", "fuse",
+    "fusion", "sell", "trade", "inventory", "treadmill", "steal", "take",
+}
+local function isRelevantRemote(remote, args)
+    local haystack = instancePath(remote):lower()
+    for _, keyword in ipairs(TRACE_REMOTE_KEYWORDS) do
+        if haystack:find(keyword, 1, true) then return true end
+    end
+    if type(args) == "table" then
+        for index = 1, math.min(args.n or #args, 4) do
+            if type(args[index]) == "string" then
+                local value = args[index]:lower()
+                for _, keyword in ipairs(TRACE_REMOTE_KEYWORDS) do
+                    if value:find(keyword, 1, true) then return true end
+                end
+            end
+        end
+    end
+    return false
+end
+
 local observedRemoteEvents = {}
 local function observeRemoteEvent(remote)
     if not remote:IsA("RemoteEvent") or observedRemoteEvents[remote] then return end
     observedRemoteEvents[remote] = true
     registerConnection(remote.OnClientEvent:Connect(function(...)
         local args = table.pack(...)
+        if not isRelevantRemote(remote, args) then return end
         task.defer(function()
             learnEggMetadataFromArgs(instancePath(remote), args)
             traceEvent("REMOTE_IN", instancePath(remote), { args = args })
@@ -664,37 +655,9 @@ registerConnection(Services.ReplicatedStorage.DescendantAdded:Connect(function(d
     end
 end))
 
-pcall(function()
-    if not getgenv or not hookmetamethod or not getnamecallmethod or not newcclosure then return end
-    local globalEnv = getgenv()
-    local hookState = globalEnv.RoubeUmOvoTraceHookState
-    if type(hookState) ~= "table" then
-        hookState = { Installed = false, Enabled = false }
-        globalEnv.RoubeUmOvoTraceHookState = hookState
-    end
-    hookState.Enabled = true
-    hookState.Emit = function(remote, method, args)
-        learnEggMetadataFromArgs(instancePath(remote), args)
-        traceEvent("REMOTE_OUT", instancePath(remote), { method = method, args = args })
-    end
-    if not hookState.Installed then
-        hookState.Installed = true
-        local oldNamecall
-        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            if hookState.Enabled and (method == "FireServer" or method == "InvokeServer")
-                and typeof(self) == "Instance"
-                and (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) then
-                local packedArgs = table.pack(...)
-                task.defer(function()
-                    local emit = hookState.Emit
-                    if emit then pcall(emit, self, method, packedArgs) end
-                end)
-            end
-            return oldNamecall(self, ...)
-        end))
-    end
-end)
+-- Não instalar hook em __namecall. Além do custo alto, alguns clientes tratam
+-- essa alteração como corrupção da sessão e acionam rejoin. As respostas dos
+-- remotes relevantes continuam sendo observadas por OnClientEvent.
 
 local function observeContainer(container, category)
     if not container then return end
@@ -715,12 +678,6 @@ local function observeCharacter(char)
             value = char:GetAttribute(attribute),
         })
     end))
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum then
-        registerConnection(hum.StateChanged:Connect(function(oldState, newState)
-            traceEvent("HUMANOID", "STATE_CHANGED", { from = oldState, to = newState, health = hum.Health })
-        end))
-    end
 end
 
 observeCharacter(LocalPlayer.Character)
@@ -771,7 +728,7 @@ end
 
 task.spawn(function()
     while not State.IsUnloaded do
-        task.wait(5)
+        task.wait(10)
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -1989,7 +1946,7 @@ local function movePlayerSafe(targetPos, speed, onStep)
 
     isMoving = true
     local oldWalkSpeed = humanoid.WalkSpeed
-    local requestedSpeed = math.clamp(tonumber(speed) or Config.MoveSpeed or 60, 20, 100)
+    local requestedSpeed = math.clamp(tonumber(speed) or Config.MoveSpeed or 30, 16, 36)
     humanoid.WalkSpeed = requestedSpeed
     humanoid.PlatformStand = false
     traceEvent("MOVEMENT", "START", {
@@ -2104,7 +2061,7 @@ end
 
 -- Acionamento Rápido de ProximityPrompt
 local function triggerPrompt(prompt)
-    if not prompt or not prompt.Parent then return false end
+    if not prompt or not prompt.Parent or not prompt.Enabled then return false end
     traceEvent("PROMPT", "TRIGGER", {
         prompt = prompt,
         actionText = prompt.ActionText,
@@ -2112,24 +2069,22 @@ local function triggerPrompt(prompt)
         enabled = prompt.Enabled,
         position = getPositionOf(prompt),
     })
-    pcall(function()
-        prompt.HoldDuration = 0
-        prompt.RequiresLineOfSight = false
-        prompt.MaxActivationDistance = 9999
-        prompt.Enabled = true
-    end)
-    pcall(function()
-        if fireproximityprompt then
-            fireproximityprompt(prompt, 0)
+    local triggered = false
+    if fireproximityprompt then
+        triggered = pcall(function()
+            -- Uma única interação. O código anterior disparava o mesmo prompt
+            -- várias vezes e alterava suas propriedades, fazendo o servidor negar.
             fireproximityprompt(prompt)
-        end
-    end)
-    pcall(function()
-        prompt:InputHoldBegin()
-        task.wait(0.06)
-        prompt:InputHoldEnd()
-    end)
-    return true
+        end)
+    else
+        triggered = pcall(function()
+            prompt:InputHoldBegin()
+            task.wait(math.clamp(prompt.HoldDuration, 0.05, 2))
+            prompt:InputHoldEnd()
+        end)
+    end
+    traceEvent("PROMPT", triggered and "TRIGGER_SENT" or "TRIGGER_FAILED", { prompt = prompt })
+    return triggered
 end
 
 --================================================================--
@@ -2623,8 +2578,14 @@ local function runStateMachineTick()
         if pInst then
             capturePickupSnapshot(target)
             State.ExpectCarryUntil = os.clock() + 4
-            triggerPrompt(pInst)
-            addLog("INTERAÇÃO", "Prompt disparado para " .. target.Name)
+            if triggerPrompt(pInst) then
+                addLog("INTERAÇÃO", "Prompt disparado para " .. target.Name)
+            else
+                addLog("INTERAÇÃO", "Prompt indisponível — selecionando outro alvo")
+                StealSM.Blacklist[posKey(target.Position)] = os.clock() + 5.0
+                setStealState("SELECTING")
+                return
+            end
         else
             addLog("INTERAÇÃO", "Sem ProximityPrompt — pulando alvo")
             StealSM.Blacklist[posKey(target.Position)] = os.clock() + 10.0
@@ -2757,13 +2718,13 @@ local function runStateMachineTick()
 end
 
 
--- 10. EXPORTADOR DE TELEMETRIA E DADOS INTERNOS (OBSERVATORY v13.0)
+-- 10. EXPORTADOR DE TELEMETRIA E DADOS INTERNOS (OBSERVATORY v13.1)
 local function dumpGameData()
     local lines = {}
     local function logL(s) table.insert(lines, s or "") end
 
     logL("================================================================================")
-    logL("ROUBE UM OVO - DUMP E TELEMETRIA OBSERVATORY v13.0")
+    logL("ROUBE UM OVO - DUMP E TELEMETRIA OBSERVATORY v13.1")
     logL("Data: " .. os.date("%Y-%m-%d %H:%M:%S") .. " | PlaceId: " .. tostring(game.PlaceId))
     logL("================================================================================\n")
 
@@ -3087,6 +3048,25 @@ local function dumpGameData()
     for category, count in pairs(Telemetry.Counts) do
         logL(string.format("    > %s = %d", category, count))
     end
+    logL("  Candidatos de esteira replicados:")
+    local treadmillRenders = Services.Workspace:FindFirstChild("__ClientTreadmillRenders")
+    if treadmillRenders then
+        for _, render in ipairs(treadmillRenders:GetChildren()) do
+            local renderPos = getPositionOf(render)
+            local parts = {}
+            for _, desc in ipairs(render:GetDescendants()) do
+                if desc:IsA("BasePart") then
+                    table.insert(parts, string.format("%s(%.1fx%.1fx%.1f)", desc.Name,
+                        desc.Size.X, desc.Size.Y, desc.Size.Z))
+                end
+            end
+            logL(string.format("    > %s [%s] Pos=%s Parts=%s", render.Name, render.ClassName,
+                renderPos and string.format("(%.1f, %.1f, %.1f)", renderPos.X, renderPos.Y, renderPos.Z) or "N/D",
+                #parts > 0 and table.concat(parts, ", ") or "nenhuma"))
+        end
+    else
+        logL("    > Pasta __ClientTreadmillRenders não existe neste cliente.")
+    end
     logL("  Últimos eventos JSONL (máximo 400):")
     local firstRecent = math.max(1, #Telemetry.Recent - 399)
     for index = firstRecent, #Telemetry.Recent do
@@ -3203,7 +3183,7 @@ end)
 
 
 --================================================================--
--- 12. INTERFACE OBSERVATORY v13.0 (4 ÁREAS ESSENCIAIS)
+-- 12. INTERFACE OBSERVATORY v13.1 (4 ÁREAS ESSENCIAIS)
 --================================================================--
 
 ScreenGui = Instance.new("ScreenGui")
@@ -3277,7 +3257,7 @@ Title.Font = Enum.Font.GothamBold
 Title.TextSize = 13
 Title.TextColor3 = C_CYAN
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "ROUBE UM OVO  •  OBSERVATORY v13"
+Title.Text = "ROUBE UM OVO  •  STABILITY v13.1"
 Title.Parent = Topbar
 
 StatusBadge = Instance.new("TextLabel")
@@ -3548,10 +3528,27 @@ EsteiraStatusLabel.Text = "Esteira: Detectando..."
 EsteiraStatusLabel.Parent = EsteiraStatusCard
 
 -- Funcao para achar esteira da propria base
+local treadmillCache = { At = 0, Part = nil }
 local function findMyTreadmill()
+    if os.clock() - treadmillCache.At < 2 then
+        local cachedPart = treadmillCache.Part
+        if cachedPart and cachedPart.Parent then
+            return cachedPart, cachedPart.Position + Vector3.new(0, 1.5, 0)
+        end
+        return nil, nil
+    end
+    treadmillCache.At = os.clock()
+    treadmillCache.Part = nil
+
+    local function cachePart(part)
+        treadmillCache.Part = part
+        return part, part.Position + Vector3.new(0, 1.5, 0)
+    end
+
     local myPlot = findMyPlot()
-    if not myPlot then return nil, nil end
-    local plotCenter = myPlot:GetPivot().Position
+    local plotCenter = myPlot and myPlot:GetPivot().Position
+        or (State.BaseCFrame and State.BaseCFrame.Position)
+    if not plotCenter then return nil, nil end
 
     local function getTreadmillPart(root)
         if root:IsA("BasePart") then return root end
@@ -3575,12 +3572,12 @@ local function findMyTreadmill()
     end
 
     -- Primeiro use uma peça real que pertença ao próprio plot.
-    for _, desc in ipairs(myPlot:GetDescendants()) do
+    for _, desc in ipairs(myPlot and myPlot:GetDescendants() or {}) do
         local low = desc.Name:lower()
         if low:find("treadmill", 1, true) or low:find("esteira", 1, true)
-            or low:find("speed", 1, true) or low:find("belt", 1, true) then
+            or low:find("conveyor", 1, true) or low:find("belt", 1, true) then
             local part = getTreadmillPart(desc)
-            if part then return part, part.Position + Vector3.new(0, 1.5, 0) end
+            if part then return cachePart(part) end
         end
     end
 
@@ -3599,7 +3596,7 @@ local function findMyTreadmill()
                 local horizontalDistance = Vector3.new(delta.X, 0, delta.Z).Magnitude
                 local ownerMatch = child.Name:find(myId, 1, true) ~= nil
                 local score = ownerMatch and (horizontalDistance - 1000) or horizontalDistance
-                if (ownerMatch or horizontalDistance <= 120) and score < bestScore then
+                if (ownerMatch or horizontalDistance <= 240) and score < bestScore then
                     bestScore = score
                     bestCandidate = child
                     bestPart = part
@@ -3607,8 +3604,42 @@ local function findMyTreadmill()
             end
         end
         if bestCandidate and bestPart then
-            return bestPart, bestPart.Position + Vector3.new(0, 1.5, 0)
+            traceEvent("TREADMILL", "FOUND_RENDER", {
+                container = bestCandidate,
+                part = bestPart,
+                plot = myPlot,
+                distanceFromPlot = Vector3.new(bestPart.Position.X - plotCenter.X, 0, bestPart.Position.Z - plotCenter.Z).Magnitude,
+            })
+            return cachePart(bestPart)
         end
+    end
+
+
+    -- Último fallback: alguns servidores não usam __ClientTreadmillRenders.
+    -- Considere apenas objetos explicitamente nomeados e próximos ao nosso plot.
+    local nearestPart = nil
+    local nearestDistance = math.huge
+    for _, desc in ipairs(Services.Workspace:GetDescendants()) do
+        local low = desc.Name:lower()
+        if low:find("treadmill", 1, true) or low:find("esteira", 1, true) then
+            local part = getTreadmillPart(desc)
+            if part then
+                local delta = part.Position - plotCenter
+                local distance = Vector3.new(delta.X, 0, delta.Z).Magnitude
+                if distance <= 240 and distance < nearestDistance then
+                    nearestDistance = distance
+                    nearestPart = part
+                end
+            end
+        end
+    end
+    if nearestPart then
+        traceEvent("TREADMILL", "FOUND_NAMED_FALLBACK", {
+            part = nearestPart,
+            plot = myPlot,
+            distanceFromPlot = nearestDistance,
+        })
+        return cachePart(nearestPart)
     end
 
     return nil, nil
@@ -3690,9 +3721,9 @@ local function setupEsteiraRunner()
             StatusBadge.Text = "NA ESTEIRA"
             StatusBadge.TextColor3 = C_YELLOW
         end
-        local runDirection = Vector3.new(tPart.CFrame.LookVector.X, 0, tPart.CFrame.LookVector.Z)
-        if runDirection.Magnitude < 0.1 then runDirection = Vector3.new(0, 0, -1) end
-        hum:Move(runDirection.Unit, false)
+        -- O minigame lê MoveDirection; esta é a direção usada pela esteira do
+        -- mapa, independentemente da orientação visual da peça escolhida.
+        hum:Move(Vector3.new(0, 0, -1), false)
     end)
     table.insert(ScriptConnections, esteiraHeartbeatConn)
 end
@@ -3963,7 +3994,7 @@ SpeedSliderBg.Parent = SlidersCard
 addCorner(SpeedSliderBg, 5)
 
 local SpeedSliderFill = Instance.new("Frame")
-SpeedSliderFill.Size = UDim2.new((Config.MoveSpeed - 20) / 80, 0, 1, 0)
+SpeedSliderFill.Size = UDim2.new((Config.MoveSpeed - 16) / 20, 0, 1, 0)
 SpeedSliderFill.BackgroundColor3 = C_CYAN
 SpeedSliderFill.BorderSizePixel = 0
 SpeedSliderFill.Parent = SpeedSliderBg
@@ -3994,7 +4025,7 @@ table.insert(ScriptConnections, Services.RunService.RenderStepped:Connect(functi
         local barSize = SpeedSliderBg.AbsoluteSize.X
         local pct = math.clamp((mousePos - barPos) / barSize, 0, 1)
         SpeedSliderFill.Size = UDim2.new(pct, 0, 1, 0)
-        local val = 20 + math.floor(pct * 80)
+        local val = 16 + math.floor(pct * 20)
         Config.MoveSpeed = val
         SpeedLabel.Text = string.format("Velocidade de deslize: %d studs/s", val)
     end
@@ -4159,6 +4190,7 @@ unloadScript = function()
         if getgenv and type(getgenv().RoubeUmOvoTraceHookState) == "table" then
             getgenv().RoubeUmOvoTraceHookState.Enabled = false
             getgenv().RoubeUmOvoTraceHookState.Emit = nil
+            getgenv().RoubeUmOvoTraceHookState.ShouldTrace = nil
         end
     end)
 
@@ -4357,7 +4389,7 @@ end)
 task.delay(0.8, function()
     if State.IsUnloaded then return end
     executeCleanRadarScan()
-    addLog("SISTEMA", "Roube um Ovo Observatory v13.0 carregado com sucesso!")
+    addLog("SISTEMA", "Roube um Ovo Stability v13.1 carregado com sucesso!")
     addLog("TRACE", "Gravação ativa em " .. Telemetry.FileName)
     pcall(function()
         Services.StarterGui:SetCore("SendNotification", {
