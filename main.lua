@@ -2195,6 +2195,197 @@ UnloadBtnFull.MouseButton1Click:Connect(function()
     unloadScript()
 end)
 
+--================================================================--
+-- MOTOR DE AUTO-ROUBO (RAGDOLL TP & VOO DIRETO) + DETECÇÃO DE PLOT
+--================================================================--
+
+-- A. Detecção Automática do Plot / Base do Jogador
+local function findMyPlot()
+    local plots = Services.Workspace:FindFirstChild("Plots")
+    if not plots then return nil end
+
+    local myName = LocalPlayer.Name:lower()
+    local myDisplay = LocalPlayer.DisplayName:lower()
+    local myId = tostring(LocalPlayer.UserId)
+
+    for _, plot in ipairs(plots:GetChildren()) do
+        for _, tag in ipairs({"Owner", "Player", "OwnerName", "OwnerId", "UserId", "PlayerId"}) do
+            local valObj = plot:FindFirstChild(tag)
+            if valObj then
+                if valObj:IsA("ObjectValue") and (valObj.Value == LocalPlayer or valObj.Value == LocalPlayer.Character) then
+                    return plot
+                elseif valObj:IsA("StringValue") then
+                    local s = valObj.Value:lower()
+                    if s == myName or s == myDisplay then return plot end
+                elseif valObj:IsA("IntValue") or valObj:IsA("NumberValue") then
+                    if tostring(valObj.Value) == myId then return plot end
+                end
+            end
+        end
+
+        for k, v in pairs(plot:GetAttributes()) do
+            local s = tostring(v):lower()
+            if s == myName or s == myDisplay or s == myId then
+                return plot
+            end
+        end
+
+        for _, desc in ipairs(plot:GetDescendants()) do
+            if desc:IsA("TextLabel") or desc:IsA("TextButton") then
+                local txt = desc.Text:lower()
+                if txt:find(myName) or txt:find(myDisplay) then
+                    return plot
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function getMyDepositCFrame()
+    local myPlot = findMyPlot()
+    if myPlot then
+        for _, d in ipairs(myPlot:GetDescendants()) do
+            if d:IsA("BasePart") then
+                local low = d.Name:lower()
+                if low:find("deposit") or low:find("drop") or low:find("nest") or low:find("egg") or low:find("conveyor") then
+                    return d.CFrame + Vector3.new(0, 2.5, 0)
+                end
+            end
+        end
+        return myPlot:GetPivot() + Vector3.new(0, 2.5, 0)
+    end
+    return State.BaseCFrame or (getHRP() and getHRP().CFrame)
+end
+
+-- B. Localização da Galinha da Floresta (Ilha 1) para Ragdoll
+local function findForestGuard()
+    for _, obj in ipairs(Services.Workspace:GetChildren()) do
+        if obj:IsA("Model") then
+            local low = obj.Name:lower()
+            if (low:find("guard") or low:find("chicken") or low:find("forest") or low:find("galinha"))
+                and obj ~= Services.Workspace:FindFirstChild("_Guards") then
+                local p = getPositionOf(obj)
+                if p and (p - Vector3.new(598, 68, -328)).Magnitude < 160 then
+                    return obj, p
+                end
+            end
+        end
+    end
+    local gFolder = Services.Workspace:FindFirstChild("_Guards")
+    if gFolder then
+        for _, g in ipairs(gFolder:GetChildren()) do
+            local low = g.Name:lower()
+            if low:find("forest") or low:find("chicken") or low:find("galinha") then
+                local p = getPositionOf(g)
+                if p then return g, p end
+            end
+        end
+    end
+    return nil, Vector3.new(598.0, 68.0, -328.0)
+end
+
+-- C. Detecção do Estado de Ragdoll e Impulso da Galinha
+local function isPlayerInRagdoll()
+    local char = getChar()
+    if not char then return false end
+    local hum = getHum()
+    if hum then
+        local state = hum:GetState()
+        if state == Enum.HumanoidStateType.Ragdoll or state == Enum.HumanoidStateType.PlatformStanding or hum.PlatformStand then
+            return true
+        end
+    end
+    local hrp = getHRP()
+    if hrp and hrp.AssemblyLinearVelocity.Magnitude > 30 then
+        return true
+    end
+    local lpRag = LocalPlayer:GetAttribute("RagdollEndTime") or LocalPlayer:GetAttribute("IsRagdoll") or LocalPlayer:GetAttribute("Ragdoll")
+    if lpRag and (type(lpRag) == "boolean" and lpRag or type(lpRag) == "number" and lpRag > 0) then
+        return true
+    end
+    local charRag = char:GetAttribute("RagdollEndTime") or char:GetAttribute("IsRagdoll") or char:GetAttribute("Ragdoll")
+    if charRag and (type(charRag) == "boolean" and charRag or type(charRag) == "number" and charRag > 0) then
+        return true
+    end
+    if char:FindFirstChildWhichIsA("BallSocketConstraint", true) then
+        return true
+    end
+    return false
+end
+
+-- D. Execução de Roubo com Ragdoll TP Bypass
+local function executeRagdollSteal(target)
+    if not target or not target.Position then return false end
+    local myHrp = getHRP()
+    if not myHrp or State.IsUnloaded then return false end
+
+    local depositCF = getMyDepositCFrame() or myHrp.CFrame
+    local targetPos = target.Position
+
+    addLog("RAGDOLL", "Bypass Ragdoll iniciado. Alvo: " .. target.Name)
+
+    -- 1. Teleporta para a galinha da ilha 1 para tomar o hit
+    local guardObj, guardPos = findForestGuard()
+    myHrp.CFrame = CFrame.new(guardPos + Vector3.new(0, 1.0, 0))
+    task.wait(0.1)
+
+    -- 2. Aguarda o hit/ragdoll da galinha (max 1.5s)
+    local hitDetected = false
+    local t0 = os.clock()
+    while (os.clock() - t0) < 1.5 do
+        if State.IsUnloaded then return false end
+        if isPlayerInRagdoll() then
+            hitDetected = true
+            break
+        end
+        if guardObj then
+            local gP = getPositionOf(guardObj)
+            if gP then
+                myHrp.CFrame = CFrame.new(gP + Vector3.new(math.random(-1, 1) * 0.3, 0.2, math.random(-1, 1) * 0.3))
+            end
+        end
+        task.wait(0.06)
+    end
+
+    -- 3. Teleporte instantâneo para o ovo
+    myHrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 1.5, 0))
+    task.wait(0.06)
+
+    -- 4. Disparo do ProximityPrompt
+    local pInstance = target.Prompt or (target.Instance and target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true))
+    if pInstance then
+        triggerPrompt(pInstance)
+    end
+    task.wait(0.12)
+
+    -- 5. Teleporte instantâneo para a Base / Depósito
+    myHrp.CFrame = depositCF
+    addLog("BASE", "Entregando ovo na base...")
+
+    -- 6. Aguardar o depósito
+    task.wait(Config.AutoDepositWait or 0.8)
+    return true
+end
+
+-- E. Execução de Roubo com Voo Direto no Solo
+local function executeDirectSteal(target)
+    local myHrp = getHRP()
+    if not myHrp or State.IsUnloaded then return false end
+    local depositCF = getMyDepositCFrame() or myHrp.CFrame
+    local targetPos = target.Position
+
+    local arrived = movePlayerDirect(targetPos, Config.MoveSpeed)
+    if arrived then
+        local pInst = target.Prompt or (target.Instance and target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true))
+        if pInst then triggerPrompt(pInst) end
+        task.wait(0.2)
+        movePlayerOverhead(depositCF.Position, Config.MoveSpeed)
+        task.wait(Config.AutoDepositWait or 0.8)
+    end
+end
+
+
 -- Atualização de Status em Tempo Real no Loop
 local function updateTargetCardText(target)
     if target then
@@ -2204,16 +2395,22 @@ local function updateTargetCardText(target)
     end
 end
 
--- Substituir hook de status do ciclo
-local old_runStealCycle = runStealCycle
-runStealCycle = function()
+-- Ciclo Principal de Auto-Roubo
+local function runStealCycle()
     local myHrp = getHRP()
     if not myHrp or State.IsUnloaded then return end
 
     if not State.BaseCFrame then
-        State.BaseCFrame = myHrp.CFrame
-        BaseLabel.Text = string.format("Base: (%.0f, %.0f, %.0f)", myHrp.Position.X, myHrp.Position.Y, myHrp.Position.Z)
-        BaseLabel.TextColor3 = C_GREEN
+        local depCF = getMyDepositCFrame()
+        if depCF then
+            State.BaseCFrame = depCF
+            BaseLabel.Text = string.format("Base: (%.0f, %.0f, %.0f)", depCF.Position.X, depCF.Position.Y, depCF.Position.Z)
+            BaseLabel.TextColor3 = C_GREEN
+        else
+            State.BaseCFrame = myHrp.CFrame
+            BaseLabel.Text = string.format("Base: (%.0f, %.0f, %.0f)", myHrp.Position.X, myHrp.Position.Y, myHrp.Position.Z)
+            BaseLabel.TextColor3 = C_GREEN
+        end
     end
 
     local holding, heldName = isHoldingEgg()
@@ -2221,8 +2418,13 @@ runStealCycle = function()
         StatusBadge.Text = "ENTREGANDO"
         StatusBadge.TextColor3 = C_CYAN
         TargetInfoLabel.Text = "Ovo em mãos! Entregando na base..."
-        movePlayerOverhead(State.BaseCFrame.Position + Vector3.new(0, 2.5, 0), Config.MoveSpeed)
-        task.wait(Config.AutoDepositWait)
+        local depCF = getMyDepositCFrame() or State.BaseCFrame
+        if Config.StealMethod == "RagdollTP" then
+            myHrp.CFrame = depCF
+        else
+            movePlayerOverhead(depCF.Position, Config.MoveSpeed)
+        end
+        task.wait(Config.AutoDepositWait or 0.8)
         return
     end
 
@@ -2240,7 +2442,9 @@ runStealCycle = function()
 
     if #valid == 0 then
         updateTargetCardText(nil)
-        task.wait(1.2)
+        StatusBadge.Text = "AGUARDANDO"
+        StatusBadge.TextColor3 = C_MUTED
+        task.wait(0.8)
         return
     end
 
@@ -2252,16 +2456,22 @@ runStealCycle = function()
     if Config.StealMethod == "RagdollTP" then
         executeRagdollSteal(target)
     else
-        local arrived = movePlayerDirect(target.Position, Config.MoveSpeed)
-        if arrived then
-            local pInst = target.Prompt or (target.Instance and target.Instance:FindFirstChildWhichIsA("ProximityPrompt", true))
-            if pInst then triggerPrompt(pInst) end
-            task.wait(0.3)
-            movePlayerOverhead(State.BaseCFrame.Position + Vector3.new(0, 2.5, 0), Config.MoveSpeed)
-            task.wait(Config.AutoDepositWait)
-        end
+        executeDirectSteal(target)
     end
 end
+
+-- Thread Contínua em Segundo Plano para o Auto-Roubo
+task.spawn(function()
+    while true do
+        if State.IsUnloaded then break end
+        if Config.AutoStealEnabled and not State.IsExecutingSteal then
+            State.IsExecutingSteal = true
+            pcall(runStealCycle)
+            State.IsExecutingSteal = false
+        end
+        task.wait(0.3)
+    end
+end)
 
 -- Atalho LeftControl e Botão Mobile Minimalista
 table.insert(ScriptConnections, Services.UserInputService.InputBegan:Connect(function(input, gpe)
@@ -2292,5 +2502,5 @@ end)
 task.delay(0.8, function()
     if State.IsUnloaded then return end
     executeCleanRadarScan()
-    addLog("SISTEMA", "Roube um Ovo v9.0 carregado!")
+    addLog("SISTEMA", "Roube um Ovo v9.5 carregado com sucesso!")
 end)
