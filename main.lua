@@ -3,17 +3,16 @@ if not game:IsLoaded() then
 end
 
 --[[
-    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v13.3 UNSTOPPABLE & ANTI-STUCK)
+    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v14.0 DUMP ENGINE MASTER)
     -----------------------------------------------------------------------
-    - Radar honesto: somente mostra pet/raridade/renda quando o cliente replica
-      evidência real. Slots opacos aparecem como N/D.
-    - Sistema de Unload Completo: Botão no topo e configurações para encerrar
-      100% das threads, limpar conexões, remover ESP e fechar interface.
-    - Catálogo Oficial dos 11 Biomas (Ilhas 1 a 11): Coordenadas exatas, nomes
-      reais e raridades legítimas (Comum a Titã - Godzilla/Kitsune).
-    - Navegação por Humanoid/Pathfinding sem alterar CFrame do personagem.
-    - Suporte a Ovos Especiais: Demonic Egg, Dragon Egg, Limited e Brainrot.
-    - Movimento conservador sem alterar ou remover scripts do jogo.
+    - 100% Integrado com ReplicatedStorage.Client.EggState & PlotState.
+    - Coleta Legítima com Uid real via AskFieldEggCarry & EggState.CarryFieldEgg.
+    - Depósito Oficial no Ninho com LocalCFrame relativo via AskPlaceEgg.
+    - Auto-Hatch Automático: choca ovos nos ninhos assim que prontos (AskHatch/AskFinishHatch).
+    - Auto-Esteira Anti-Travamento: desmonte oficial do servidor com AskDoff e entrada com AskWearStill.
+    - Coletor 3D de Armas Secretas: pedestais Slap, Choque e Abelhas (Block touch part).
+    - Gerenciador Nativo de Pets: Equipar Melhores (WearBest) e Auto-Sell de raridades.
+    - Console de Logs com Rolagem Inteligente (Sem snap para baixo ao ler).
 ]]
 
 -- 1. Limpeza Preventiva de Globais
@@ -60,6 +59,37 @@ while not LocalPlayer do
     LocalPlayer = Services.Players.LocalPlayer
 end
 
+-- 2.1 Módulos Internos Nativos do Jogo (EggState & PlotState extraídos do dump)
+local GameModules = {
+    EggState = nil,
+    PlotState = nil
+}
+pcall(function()
+    local client = Services.ReplicatedStorage:WaitForChild("Client", 3)
+    if client then
+        local es = client:FindFirstChild("EggState")
+        if es then GameModules.EggState = require(es) end
+        local ps = client:FindFirstChild("PlotState")
+        if ps then GameModules.PlotState = require(ps) end
+    end
+end)
+
+-- 2.2 Localizador Resiliente de Remotes Oficiais (Packages.Networking)
+local function getRemote(remotePath)
+    local packages = Services.ReplicatedStorage:FindFirstChild("Packages")
+    local networking = packages and packages:FindFirstChild("Networking")
+    if networking then
+        local r = networking:FindFirstChild(remotePath)
+        if r then return r end
+    end
+    for _, desc in ipairs(Services.ReplicatedStorage:GetDescendants()) do
+        if desc.Name == remotePath then
+            return desc
+        end
+    end
+    return nil
+end
+
 -- 3. Paleta de Cores e Estilos Globais (Design Moderno & Alto Contraste v12.0)
 local C_BG = Color3.fromRGB(11, 15, 26)         -- Fundo ultramoderno e profundo
 local C_TOPBAR = Color3.fromRGB(19, 26, 45)     -- Barra superior elegante
@@ -93,6 +123,8 @@ local Config = {
     StealMethod = "CaminhadaSegura",
     AutoStealEnabled = false,
     AutoEsteiraEnabled = false,
+    AutoHatchEnabled = true,
+    AutoEquipBest = true,
     LockCurrentIsland = false, -- Padrão: busca em todo o mapa
     MaxStealDistance = 450,
     MoveSpeed = 30,
@@ -120,6 +152,8 @@ local State = {
     PendingLearnAt = 0,
     CurrentTargetEgg = nil,
     LastPromptTriggered = nil,
+    LastHatchCheck = 0,
+    LogAutoScroll = true,
     Logs = {}
 }
 
@@ -2363,7 +2397,7 @@ local function tryInstantCarryRemote(target)
     if not target then return false end
     local inst = target.Instance
     if not inst then return false end
-    
+
     local modelName = inst.Name or ""
     local slotKey = modelName:match("([%a%d_]+:Slot_%d+)")
     if not slotKey and inst.Parent then
@@ -2392,23 +2426,48 @@ local function tryInstantCarryRemote(target)
     if not uid and modelName:find("FirstAreaEgg_") then
         uid = modelName
     end
+
+    -- Se tivermos EggState oficial, buscar Uid real nos registros vivos
+    if not uid and GameModules.EggState then
+        pcall(function()
+            local fEggs = GameModules.EggState.ReadFieldEggs()
+            if fEggs and fEggs.Records then
+                local myHrp = getHRP()
+                local tPos = target.Position or (inst:IsA("BasePart") and inst.Position) or (inst:GetPivot().Position)
+                local closestDist = 999
+                for _, rec in ipairs(fEggs.Records) do
+                    if rec.BottomCFrame then
+                        local d = (rec.BottomCFrame.Position - tPos).Magnitude
+                        if d < closestDist then
+                            closestDist = d
+                            uid = rec.Uid
+                            if rec.FirstAreaSlotKey then slotKey = rec.FirstAreaSlotKey end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
     if not uid then
         uid = "FirstAreaEgg_" .. tostring(LocalPlayer.UserId) .. "_" .. tostring(math.random(1000000, 9999999)) .. "_" .. slotKey
     end
 
-    local packages = Services.ReplicatedStorage:FindFirstChild("Packages")
-    local networking = packages and packages:FindFirstChild("Networking")
-    local askCarry = networking and networking:FindFirstChild("RF/EggWorld/AskFieldEggCarry")
-    if not askCarry then
-        for _, desc in ipairs(Services.ReplicatedStorage:GetDescendants()) do
-            if desc:IsA("RemoteFunction") and (desc.Name == "RF/EggWorld/AskFieldEggCarry" or desc.Name:find("AskFieldEggCarry")) then
-                askCarry = desc
-                break
-            end
-        end
+    target.Uid = uid
+    target.SlotKey = slotKey
+
+    -- 1. Invocacao via EggState oficial (nativa do jogo)
+    local carried = false
+    if GameModules.EggState and GameModules.EggState.CarryFieldEgg then
+        pcall(function()
+            local ok = GameModules.EggState.CarryFieldEgg(uid, slotKey)
+            if ok then carried = true end
+        end)
     end
 
-    if askCarry then
+    -- 2. Invocacao direta via RemoteFunction AskFieldEggCarry
+    local askCarry = getRemote("RF/EggWorld/AskFieldEggCarry")
+    if askCarry and askCarry:IsA("RemoteFunction") then
         for i = 1, 2 do
             task.spawn(function()
                 pcall(function()
@@ -2421,7 +2480,232 @@ local function tryInstantCarryRemote(target)
         end
         return true
     end
+    return carried
+end
+
+local function getHeldEggUid()
+    local char = getChar()
+    if char then
+        for _, item in ipairs(char:GetChildren()) do
+            if item:IsA("Tool") then
+                local uid = item:GetAttribute("UID") or item:GetAttribute("Uid") or item:GetAttribute("EggUid")
+                if uid and typeof(uid) == "string" and uid ~= "" then
+                    return uid, item
+                end
+            end
+        end
+    end
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if bp then
+        for _, item in ipairs(bp:GetChildren()) do
+            if item:IsA("Tool") then
+                local uid = item:GetAttribute("UID") or item:GetAttribute("Uid") or item:GetAttribute("EggUid")
+                if uid and typeof(uid) == "string" and uid ~= "" then
+                    return uid, item
+                end
+            end
+        end
+    end
+    if StealSM and StealSM.Target and StealSM.Target.Uid then
+        return StealSM.Target.Uid, nil
+    end
+    return nil, nil
+end
+
+local function depositEggAtBase()
+    local heldUid, _ = getHeldEggUid()
+    local myPlot = findMyPlot()
+    local relativeCF = CFrame.identity
+
+    if GameModules.PlotState then
+        local ok, pResolved = pcall(function() return GameModules.PlotState.ResolvePlot() end)
+        if ok and pResolved and pResolved.CenterPoint and pResolved.PetArea then
+            relativeCF = pResolved.CenterPoint.CFrame:ToObjectSpace(CFrame.new(pResolved.PetArea.Position))
+        end
+    end
+    if relativeCF == CFrame.identity and myPlot then
+        local cp = myPlot:FindFirstChild("CenterPoint")
+        local petArea = myPlot:FindFirstChild("PetArea", true)
+        if cp and petArea and cp:IsA("BasePart") and petArea:IsA("BasePart") then
+            relativeCF = cp.CFrame:ToObjectSpace(CFrame.new(petArea.Position))
+        elseif cp and cp:IsA("BasePart") then
+            relativeCF = CFrame.new(0, 1, 0)
+        end
+    end
+
+    local planted = false
+    if heldUid then
+        if GameModules.EggState and GameModules.EggState.PlantEgg then
+            pcall(function()
+                local ok, err = GameModules.EggState.PlantEgg(heldUid, relativeCF)
+                if ok then planted = true end
+            end)
+        end
+        if not planted then
+            pcall(function()
+                local askPlace = getRemote("RF/EggWorld/AskPlaceEgg")
+                if askPlace and askPlace:IsA("RemoteFunction") then
+                    local ok, res = askPlace:InvokeServer({
+                        Uid = heldUid,
+                        LocalCFrame = relativeCF
+                    })
+                    if ok == true then planted = true end
+                end
+            end)
+        end
+    end
+
+    -- Fallback fisico por toque
+    local depositPart = getMyDepositTarget()
+    local myHrp = getHRP()
+    if depositPart and myHrp and firetouchinterest then
+        pcall(function()
+            firetouchinterest(myHrp, depositPart, 0)
+            task.wait(0.05)
+            firetouchinterest(myHrp, depositPart, 1)
+        end)
+    end
+
+    return planted
+end
+
+local function equipBestPets()
+    pcall(function()
+        local wearBest = getRemote("RF/Haul/WearBest")
+        if wearBest and wearBest:IsA("RemoteFunction") then
+            local ok, res = wearBest:InvokeServer()
+            addLog("PETS", "Melhores pets equipados com sucesso!")
+            traceEvent("PETS", "WEAR_BEST", { result = tostring(ok) })
+            return true
+        end
+    end)
     return false
+end
+
+local function configureNativeAutoSell(raritiesTable)
+    raritiesTable = raritiesTable or {
+        Common = true,
+        Uncommon = true,
+        Rare = true
+    }
+    pcall(function()
+        local writeAutoSell = getRemote("RF/Haul/WriteAutoSell")
+        if writeAutoSell and writeAutoSell:IsA("RemoteFunction") then
+            local ok, res = writeAutoSell:InvokeServer(raritiesTable)
+            addLog("PETS", "Auto-venda nativa configurada com sucesso!")
+            return true
+        end
+    end)
+    return false
+end
+
+local function checkAndAutoHatchEggs()
+    if State.IsUnloaded or not Config.AutoHatchEnabled then return end
+    pcall(function()
+        if GameModules.EggState then
+            local ownedEggs = GameModules.EggState.ReadOwnerEggs(LocalPlayer.UserId)
+            if ownedEggs and type(ownedEggs) == "table" then
+                for uid, eggRecord in pairs(ownedEggs) do
+                    if eggRecord.Placement ~= nil and GameModules.EggState.IsReadyToHatch(uid) then
+                        addLog("HATCH", "Ovo pronto detectado: " .. tostring(uid) .. ". Chocando...")
+                        traceEvent("HATCH", "START", { uid = uid })
+                        GameModules.EggState.BeginHatch(uid)
+                        task.wait(0.25)
+                        local ok, err, petUid = GameModules.EggState.FinishHatch(uid)
+                        if ok then
+                            addLog("HATCH", "Ovo chocado com sucesso! Pet coletado.")
+                            traceEvent("HATCH", "SUCCESS", { uid = uid, pet = petUid })
+                            if Config.AutoEquipBest then
+                                task.delay(0.5, function()
+                                    equipBestPets()
+                                end)
+                            end
+                        end
+                    end
+                end
+            end
+        else
+            local askHatch = getRemote("RF/EggWorld/AskHatch")
+            local askFinish = getRemote("RF/EggWorld/AskFinishHatch")
+            local askLive = getRemote("RF/EggWorld/AskLiveSnapshot")
+            if askLive and askHatch and askFinish then
+                local snapshot = askLive:InvokeServer()
+                if snapshot and type(snapshot) == "table" then
+                    for uid, eggRecord in pairs(snapshot) do
+                        if eggRecord.Placement ~= nil then
+                            askHatch:InvokeServer(uid)
+                            task.wait(0.25)
+                            askFinish:InvokeServer(uid)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+local SECRET_GEAR_PEDESTALS = {
+    { Name = "GearGiver_Slap", Display = "Slap Glove (Luva de Tapa)", Pos = Vector3.new(545.01, 53.39, -357.85) },
+    { Name = "GearGiver", Display = "Bat / Choque", Pos = Vector3.new(545.01, 53.39, -344.76) },
+    { Name = "GearGiver_BeeLauncher", Display = "Bee Launcher (Abelhas)", Pos = Vector3.new(545.01, 53.39, -371.25) }
+}
+
+local function collectAllSecretWeapons()
+    local char = getChar()
+    local hrp = getHRP()
+    local hum = getHum()
+    if not hrp or not hum then
+        addLog("ARMAS", "Personagem indisponível para coletar armas.")
+        return false, "Personagem indisponível"
+    end
+
+    local originalCF = hrp.CFrame
+    local collectedCount = 0
+    addLog("ARMAS", "Iniciando coleta das 3 armas secretas...")
+
+    for _, gear in ipairs(SECRET_GEAR_PEDESTALS) do
+        local model = Services.Workspace:FindFirstChild(gear.Name, true)
+        local blockPart = nil
+        if model then
+            blockPart = model:FindFirstChild("Block") or model:FindFirstChildWhichIsA("BasePart", true)
+        end
+        if not blockPart then
+            for _, desc in ipairs(Services.Workspace:GetDescendants()) do
+                if desc:IsA("BasePart") and desc.Name == "Block" and (desc.Position - gear.Pos).Magnitude < 12 then
+                    blockPart = desc
+                    break
+                end
+            end
+        end
+
+        local targetCFrame = blockPart and blockPart.CFrame or CFrame.new(gear.Pos)
+        hrp.CFrame = targetCFrame + Vector3.new(0, 2.0, 0)
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        task.wait(0.2)
+
+        pcall(function()
+            local rFoot = char:FindFirstChild("RightFoot") or char:FindFirstChild("Right Leg") or hrp
+            local lFoot = char:FindFirstChild("LeftFoot") or char:FindFirstChild("Left Leg") or hrp
+            if blockPart and firetouchinterest then
+                firetouchinterest(rFoot, blockPart, 0)
+                firetouchinterest(lFoot, blockPart, 0)
+                firetouchinterest(hrp, blockPart, 0)
+                task.wait(0.05)
+                firetouchinterest(rFoot, blockPart, 1)
+                firetouchinterest(lFoot, blockPart, 1)
+                firetouchinterest(hrp, blockPart, 1)
+            end
+        end)
+
+        task.wait(0.2)
+        collectedCount = collectedCount + 1
+        addLog("ARMAS", "Pedestal acionado: " .. gear.Display)
+    end
+
+    hrp.CFrame = originalCF
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    addLog("ARMAS", string.format("Coleta concluída! %d armas acionadas. Verifique o Backpack.", collectedCount))
+    return true
 end
 
 executeDirectSteal = function(target)
@@ -2876,20 +3160,17 @@ local function runStateMachineTick()
 
     --=== DEPOSITING ===--
     elseif current == "DEPOSITING" then
-        task.wait(0.5)
+        task.wait(0.3)
         State.ExpectCarryUntil = os.clock() + 3
-        local depositPart = getMyDepositTarget()
-        if depositPart and depositPart.Parent then
-            myHum:MoveTo(depositPart.Position)
-            task.wait(0.6)
-            pcall(function()
-                if firetouchinterest then
-                    firetouchinterest(myHrp, depositPart, 0)
-                    task.wait()
-                    firetouchinterest(myHrp, depositPart, 1)
-                end
-            end)
-        end
+        addLog("DEPÓSITO", "Plantando ovo no ninho oficial da base...")
+        
+        -- Executa depósito via AskPlaceEgg / EggState.PlantEgg
+        depositEggAtBase()
+        task.wait(0.4)
+        
+        -- Executa checagem de ovos prontos para auto-hatch
+        task.spawn(checkAndAutoHatchEggs)
+        
         setStealState("CONFIRMING")
         return
 
@@ -3514,7 +3795,7 @@ addCorner(TabBar, 8)
 
 local TabButtons = {}
 local TabPages = {}
-local tabNames = {"Automação", "Esteira", "Radar", "Diagnóstico"}
+local tabNames = {"Automação", "Esteira", "Armas & Pets", "Radar", "Diagnóstico"}
 local activeTab = "Automação"
 
 local ContentArea = Instance.new("Frame")
@@ -3539,8 +3820,8 @@ end
 for i, tName in ipairs(tabNames) do
     local displayName = tName
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -8, 0, 40)
-    btn.Position = UDim2.new(0, 4, 0, 4 + ((i - 1) * 46))
+    btn.Size = UDim2.new(1, -8, 0, 36)
+    btn.Position = UDim2.new(0, 4, 0, 4 + ((i - 1) * 40))
     btn.BackgroundColor3 = (tName == activeTab) and Color3.fromRGB(30, 44, 74) or Color3.fromRGB(15, 23, 42)
     btn.Text = displayName
     btn.Font = Enum.Font.GothamBold
@@ -3699,22 +3980,23 @@ EmptyHandsBtn.MouseButton1Click:Connect(function()
     State.CarryConfirmed = false
     State.CarryEvidence = nil
     pcall(function()
-        for _, desc in ipairs(Services.ReplicatedStorage:GetDescendants()) do
-            if desc:IsA("RemoteEvent") or desc:IsA("RemoteFunction") then
-                local low = desc.Name:lower()
-                if low:find("drop") and (low:find("egg") or low:find("held")) then
-                    if desc:IsA("RemoteEvent") then desc:FireServer()
-                    else desc:InvokeServer() end
-                end
-            end
+        if GameModules.EggState and GameModules.EggState.DropFieldEgg then
+            GameModules.EggState.DropFieldEgg(nil)
+        end
+        local askDrop = getRemote("RF/EggWorld/AskFieldEggDrop")
+        if askDrop and askDrop:IsA("RemoteFunction") then
+            askDrop:InvokeServer({ Reason = nil })
         end
     end)
-    addLog("DESTRAVE", "Mãos esvaziadas! Estado de transporte resetado.")
+    addLog("DESTRAVE", "Mãos esvaziadas via AskFieldEggDrop! Estado de transporte resetado.")
 end)
 
 MainToggleBtn.MouseButton1Click:Connect(function()
     Config.AutoStealEnabled = not Config.AutoStealEnabled
     if Config.AutoStealEnabled then
+        if State.IsOnTreadmill then
+            dismountTreadmill()
+        end
         Config.AutoEsteiraEnabled = false
         State.IsOnTreadmill = false
         if EsteiraToggleBtn then
@@ -3916,7 +4198,7 @@ local function findMyTreadmill()
     return nil, nil
 end
 
--- Função Mestre de Desmonte da Esteira (Garante que o jogador saia fisicamente)
+-- Função Mestre de Desmonte da Esteira (Garante desmonte oficial via AskDoff)
 local function dismountTreadmill()
     Config.AutoEsteiraEnabled = false
     State.IsOnTreadmill = false
@@ -3931,6 +4213,15 @@ local function dismountTreadmill()
         StatusBadge.Text = Config.AutoStealEnabled and "ROUBANDO" or "PARADO"
         StatusBadge.TextColor3 = Config.AutoStealEnabled and C_GREEN or C_MUTED
     end
+
+    -- Chamada oficial de desmonte no servidor para liberar o personagem
+    pcall(function()
+        local askDoff = getRemote("RF/Treadmill/AskDoff")
+        if askDoff and askDoff:IsA("RemoteFunction") then
+            askDoff:InvokeServer()
+        end
+    end)
+
     local hum = getHum()
     local hrp = getHRP()
     if hum and hrp then
@@ -3949,7 +4240,7 @@ local function dismountTreadmill()
         hrp.CFrame = CFrame.new(targetExitPos)
         hrp.AssemblyLinearVelocity = Vector3.zero
     end
-    addLog("ESTEIRA", "Desmontado da esteira com sucesso!")
+    addLog("ESTEIRA", "Desmontado da esteira com sucesso via AskDoff!")
 end
 
 GoToEsteiraBtn.MouseButton1Click:Connect(function()
@@ -4004,8 +4295,14 @@ local function setupEsteiraRunner()
         if hasManualInput then
             if State.IsOnTreadmill then
                 State.IsOnTreadmill = false
+                pcall(function()
+                    local askDoff = getRemote("RF/Treadmill/AskDoff")
+                    if askDoff and askDoff:IsA("RemoteFunction") then
+                        askDoff:InvokeServer()
+                    end
+                end)
                 lastTreadmillMode = "MANUAL_MOVE"
-                addLog("ESTEIRA", "Movimento manual detectado. Pausando auto-retorno.")
+                addLog("ESTEIRA", "Movimento manual detectado. Desmontando da esteira...")
             end
             return
         end
@@ -4046,7 +4343,15 @@ local function setupEsteiraRunner()
             end
             return
         end
-        State.IsOnTreadmill = true
+        if not State.IsOnTreadmill then
+            State.IsOnTreadmill = true
+            pcall(function()
+                local askWear = getRemote("RF/Treadmill/AskWearStill")
+                if askWear and askWear:IsA("RemoteFunction") then
+                    askWear:InvokeServer()
+                end
+            end)
+        end
         if lastTreadmillMode ~= "RUNNING" then
             lastTreadmillMode = "RUNNING"
             traceEvent("TREADMILL", "RUNNING", { position = hrp.Position })
@@ -4087,6 +4392,141 @@ EsteiraToggleBtn.MouseButton1Click:Connect(function()
 end)
 
 --================================================================--
+--================================================================--
+-- ABA 2.5: ARMAS SECRETAS & GERENCIADOR DE PETS (100% DUMP ENGINE)
+--================================================================--
+local ArmasPetsPage = TabPages["Armas & Pets"]
+
+-- Card de Armas Secretas
+local ArmasCard = createCleanCard(ArmasPetsPage, 115)
+local ArmasTitle = Instance.new("TextLabel")
+ArmasTitle.Size = UDim2.new(1, -20, 0, 18)
+ArmasTitle.Position = UDim2.new(0, 10, 0, 6)
+ArmasTitle.BackgroundTransparency = 1
+ArmasTitle.Font = Enum.Font.GothamBold
+ArmasTitle.TextSize = 10
+ArmasTitle.TextColor3 = C_YELLOW
+ArmasTitle.TextXAlignment = Enum.TextXAlignment.Left
+ArmasTitle.Text = "ARMAS SECRETAS DO MAPA (GATILHO FISIOLOGICO):"
+ArmasTitle.Parent = ArmasCard
+
+local ArmasDesc = Instance.new("TextLabel")
+ArmasDesc.Size = UDim2.new(1, -20, 0, 24)
+ArmasDesc.Position = UDim2.new(0, 10, 0, 24)
+ArmasDesc.BackgroundTransparency = 1
+ArmasDesc.Font = Enum.Font.Gotham
+ArmasDesc.TextSize = 9
+ArmasDesc.TextColor3 = C_MUTED
+ArmasDesc.TextXAlignment = Enum.TextXAlignment.Left
+ArmasDesc.TextWrapped = true
+ArmasDesc.Text = "3 pedestais mapeados (Slap Glove, Bat/Choque, Lançador de Abelhas) acionando a parte Block real."
+ArmasDesc.Parent = ArmasCard
+
+local CollectAllGearsBtn = Instance.new("TextButton")
+CollectAllGearsBtn.Size = UDim2.new(1, -20, 0, 36)
+CollectAllGearsBtn.Position = UDim2.new(0, 10, 0, 52)
+CollectAllGearsBtn.BackgroundColor3 = Color3.fromRGB(217, 119, 6)
+CollectAllGearsBtn.Text = "PEGAR TODAS AS 3 ARMAS SECRETAS"
+CollectAllGearsBtn.Font = Enum.Font.GothamBold
+CollectAllGearsBtn.TextSize = 11
+CollectAllGearsBtn.TextColor3 = C_TEXT
+CollectAllGearsBtn.Parent = ArmasCard
+addCorner(CollectAllGearsBtn, 6)
+addStroke(CollectAllGearsBtn, C_YELLOW, 1)
+
+CollectAllGearsBtn.MouseButton1Click:Connect(function()
+    CollectAllGearsBtn.Text = "COLETANDO ARMAS NO MAPA..."
+    task.spawn(function()
+        collectAllSecretWeapons()
+        CollectAllGearsBtn.Text = "PEGAR TODAS AS 3 ARMAS SECRETAS"
+    end)
+end)
+
+-- Card de Gerenciamento de Pets & Auto-Hatch
+local PetsCard = createCleanCard(ArmasPetsPage, 165)
+local PetsTitle = Instance.new("TextLabel")
+PetsTitle.Size = UDim2.new(1, -20, 0, 18)
+PetsTitle.Position = UDim2.new(0, 10, 0, 6)
+PetsTitle.BackgroundTransparency = 1
+PetsTitle.Font = Enum.Font.GothamBold
+PetsTitle.TextSize = 10
+PetsTitle.TextColor3 = C_CYAN
+PetsTitle.TextXAlignment = Enum.TextXAlignment.Left
+PetsTitle.Text = "GERENCIADOR NATIVO DE PETS & CHOCAMENTO:"
+PetsTitle.Parent = PetsCard
+
+local WearBestBtn = Instance.new("TextButton")
+WearBestBtn.Size = UDim2.new(1, -20, 0, 32)
+WearBestBtn.Position = UDim2.new(0, 10, 0, 28)
+WearBestBtn.BackgroundColor3 = Color3.fromRGB(22, 101, 52)
+WearBestBtn.Text = "EQUIPAR MELHORES PETS (WEAR BEST)"
+WearBestBtn.Font = Enum.Font.GothamBold
+WearBestBtn.TextSize = 10
+WearBestBtn.TextColor3 = Color3.fromRGB(74, 222, 128)
+WearBestBtn.Parent = PetsCard
+addCorner(WearBestBtn, 6)
+addStroke(WearBestBtn, C_GREEN, 1)
+
+WearBestBtn.MouseButton1Click:Connect(function()
+    equipBestPets()
+end)
+
+local AutoHatchToggleBtn = Instance.new("TextButton")
+AutoHatchToggleBtn.Size = UDim2.new(0.48, 0, 0, 32)
+AutoHatchToggleBtn.Position = UDim2.new(0, 10, 0, 66)
+AutoHatchToggleBtn.BackgroundColor3 = Config.AutoHatchEnabled and Color3.fromRGB(30, 44, 74) or Color3.fromRGB(26, 36, 60)
+AutoHatchToggleBtn.Text = Config.AutoHatchEnabled and "AUTO-HATCH: ATIVO" or "AUTO-HATCH: DESATIVADO"
+AutoHatchToggleBtn.Font = Enum.Font.GothamBold
+AutoHatchToggleBtn.TextSize = 9
+AutoHatchToggleBtn.TextColor3 = Config.AutoHatchEnabled and C_GREEN or C_MUTED
+AutoHatchToggleBtn.Parent = PetsCard
+addCorner(AutoHatchToggleBtn, 6)
+addStroke(AutoHatchToggleBtn, Config.AutoHatchEnabled and C_GREEN or C_BORDER, 1)
+
+AutoHatchToggleBtn.MouseButton1Click:Connect(function()
+    Config.AutoHatchEnabled = not Config.AutoHatchEnabled
+    AutoHatchToggleBtn.Text = Config.AutoHatchEnabled and "AUTO-HATCH: ATIVO" or "AUTO-HATCH: DESATIVADO"
+    AutoHatchToggleBtn.TextColor3 = Config.AutoHatchEnabled and C_GREEN or C_MUTED
+    addStroke(AutoHatchToggleBtn, Config.AutoHatchEnabled and C_GREEN or C_BORDER, 1)
+    addLog("HATCH", Config.AutoHatchEnabled and "Auto-Hatch ativado!" or "Auto-Hatch desativado.")
+end)
+
+local AutoSellBtn = Instance.new("TextButton")
+AutoSellBtn.Size = UDim2.new(0.48, -4, 0, 32)
+AutoSellBtn.Position = UDim2.new(0.52, 2, 0, 66)
+AutoSellBtn.BackgroundColor3 = Color3.fromRGB(30, 44, 74)
+AutoSellBtn.Text = "AUTO-SELL COMUNS"
+AutoSellBtn.Font = Enum.Font.GothamBold
+AutoSellBtn.TextSize = 9
+AutoSellBtn.TextColor3 = C_YELLOW
+AutoSellBtn.Parent = PetsCard
+addCorner(AutoSellBtn, 6)
+addStroke(AutoSellBtn, C_YELLOW, 1)
+
+AutoSellBtn.MouseButton1Click:Connect(function()
+    configureNativeAutoSell({
+        Common = true,
+        Uncommon = true,
+        Rare = false
+    })
+end)
+
+local ForceHatchNowBtn = Instance.new("TextButton")
+ForceHatchNowBtn.Size = UDim2.new(1, -20, 0, 28)
+ForceHatchNowBtn.Position = UDim2.new(0, 10, 0, 104)
+ForceHatchNowBtn.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
+ForceHatchNowBtn.Text = "CHOCAR TODOS OS OVOS PRONTOS AGORA"
+ForceHatchNowBtn.Font = Enum.Font.GothamBold
+ForceHatchNowBtn.TextSize = 10
+ForceHatchNowBtn.TextColor3 = C_CYAN
+ForceHatchNowBtn.Parent = PetsCard
+addCorner(ForceHatchNowBtn, 6)
+addStroke(ForceHatchNowBtn, C_BORDER, 1)
+
+ForceHatchNowBtn.MouseButton1Click:Connect(function()
+    task.spawn(checkAndAutoHatchEggs)
+end)
+
 -- ABA 3: RADAR DE OVOS & ESP 3D
 --================================================================--
 local RadarPage = TabPages["Radar"]
@@ -4418,10 +4858,10 @@ table.insert(ScriptConnections, Services.RunService.RenderStepped:Connect(functi
     end
 end))
 
--- Card de Log Console
-local LogCard = createCleanCard(ConfigsPage, 90)
+-- Card de Log Console com Rolagem Inteligente (Sem Bug de Snap ao Rolar)
+local LogCard = createCleanCard(ConfigsPage, 126)
 local LogTitle = Instance.new("TextLabel")
-LogTitle.Size = UDim2.new(1, -20, 0, 18)
+LogTitle.Size = UDim2.new(0.5, -10, 0, 18)
 LogTitle.Position = UDim2.new(0, 10, 0, 6)
 LogTitle.BackgroundTransparency = 1
 LogTitle.Font = Enum.Font.GothamBold
@@ -4431,12 +4871,37 @@ LogTitle.TextXAlignment = Enum.TextXAlignment.Left
 LogTitle.Text = "REGISTROS DO SISTEMA (LOGS):"
 LogTitle.Parent = LogCard
 
+local ScrollToggleBtn = Instance.new("TextButton")
+ScrollToggleBtn.Size = UDim2.new(0.32, -4, 0, 18)
+ScrollToggleBtn.Position = UDim2.new(0.50, 0, 0, 6)
+ScrollToggleBtn.BackgroundColor3 = Color3.fromRGB(22, 101, 52)
+ScrollToggleBtn.Text = "SCROLL: ATIVO"
+ScrollToggleBtn.Font = Enum.Font.GothamBold
+ScrollToggleBtn.TextSize = 8
+ScrollToggleBtn.TextColor3 = Color3.fromRGB(74, 222, 128)
+ScrollToggleBtn.Parent = LogCard
+addCorner(ScrollToggleBtn, 4)
+
+local ClearLogsBtn = Instance.new("TextButton")
+ClearLogsBtn.Size = UDim2.new(0.18, -4, 0, 18)
+ClearLogsBtn.Position = UDim2.new(0.82, 0, 0, 6)
+ClearLogsBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+ClearLogsBtn.Text = "LIMPAR"
+ClearLogsBtn.Font = Enum.Font.GothamBold
+ClearLogsBtn.TextSize = 8
+ClearLogsBtn.TextColor3 = C_MUTED
+ClearLogsBtn.Parent = LogCard
+addCorner(ClearLogsBtn, 4)
+
 local LogScroll = Instance.new("ScrollingFrame")
-LogScroll.Size = UDim2.new(1, -20, 0, 62)
-LogScroll.Position = UDim2.new(0, 10, 0, 24)
+LogScroll.Size = UDim2.new(1, -20, 0, 92)
+LogScroll.Position = UDim2.new(0, 10, 0, 28)
 LogScroll.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
 LogScroll.BorderSizePixel = 0
-LogScroll.ScrollBarThickness = 3
+LogScroll.ScrollBarThickness = 4
+LogScroll.ScrollBarImageColor3 = C_CYAN
+LogScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+LogScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
 LogScroll.Parent = LogCard
 addCorner(LogScroll, 6)
 
@@ -4446,7 +4911,7 @@ LogTextLabel.AutomaticSize = Enum.AutomaticSize.Y
 LogTextLabel.Position = UDim2.new(0, 4, 0, 4)
 LogTextLabel.BackgroundTransparency = 1
 LogTextLabel.Font = Enum.Font.Code
-LogTextLabel.TextSize = 10
+LogTextLabel.TextSize = 9
 LogTextLabel.TextColor3 = Color3.fromRGB(226, 232, 240)
 LogTextLabel.TextXAlignment = Enum.TextXAlignment.Left
 LogTextLabel.TextYAlignment = Enum.TextYAlignment.Top
@@ -4454,9 +4919,60 @@ LogTextLabel.TextWrapped = true
 LogTextLabel.Text = "Pronto."
 LogTextLabel.Parent = LogScroll
 
+local function updateScrollBtnState()
+    if State.LogAutoScroll then
+        ScrollToggleBtn.BackgroundColor3 = Color3.fromRGB(22, 101, 52)
+        ScrollToggleBtn.TextColor3 = Color3.fromRGB(74, 222, 128)
+        ScrollToggleBtn.Text = "SCROLL: ATIVO"
+    else
+        ScrollToggleBtn.BackgroundColor3 = Color3.fromRGB(217, 119, 6)
+        ScrollToggleBtn.TextColor3 = C_TEXT
+        ScrollToggleBtn.Text = "SCROLL: PAUSADO"
+    end
+end
+
+ScrollToggleBtn.MouseButton1Click:Connect(function()
+    State.LogAutoScroll = not State.LogAutoScroll
+    updateScrollBtnState()
+    if State.LogAutoScroll then
+        local maxY = math.max(0, LogScroll.AbsoluteCanvasSize.Y - LogScroll.AbsoluteWindowSize.Y)
+        LogScroll.CanvasPosition = Vector2.new(0, maxY)
+    end
+end)
+
+ClearLogsBtn.MouseButton1Click:Connect(function()
+    State.Logs = {}
+    LogTextLabel.Text = "Logs limpos."
+    LogScroll.CanvasPosition = Vector2.zero
+end)
+
+-- Detecta rolagem para cima sem travar o usuario
+LogScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+    local maxY = math.max(0, LogScroll.AbsoluteCanvasSize.Y - LogScroll.AbsoluteWindowSize.Y)
+    if maxY > 30 and (maxY - LogScroll.CanvasPosition.Y) > 40 then
+        if State.LogAutoScroll then
+            State.LogAutoScroll = false
+            updateScrollBtnState()
+        end
+    elseif maxY > 0 and (maxY - LogScroll.CanvasPosition.Y) <= 15 then
+        if not State.LogAutoScroll then
+            State.LogAutoScroll = true
+            updateScrollBtnState()
+        end
+    end
+end)
+
 _G.UpdateLogConsole = function()
     pcall(function()
         LogTextLabel.Text = table.concat(State.Logs, "\n")
+        if State.LogAutoScroll then
+            task.defer(function()
+                if State.LogAutoScroll and LogScroll then
+                    local maxY = math.max(0, LogScroll.AbsoluteCanvasSize.Y - LogScroll.AbsoluteWindowSize.Y)
+                    LogScroll.CanvasPosition = Vector2.new(0, maxY)
+                end
+            end)
+        end
     end)
 end
 
@@ -4700,7 +5216,7 @@ task.spawn(function()
 end)
 
 
--- Thread Contínua em Segundo Plano — Driver da Máquina de Estados de Roubo
+-- Thread Contínua em Segundo Plano — Driver da Máquina de Estados de Roubo & Auto-Hatch
 task.spawn(function()
     while true do
         if State.IsUnloaded then break end
@@ -4713,6 +5229,13 @@ task.spawn(function()
         elseif not Config.AutoStealEnabled and StealSM.Current ~= "IDLE" then
             setStealState("IDLE")
         end
+
+        -- Checagem periódica de ovos prontos para auto-hatch (a cada ~2.5s)
+        if Config.AutoHatchEnabled and (os.clock() - State.LastHatchCheck > 2.5) then
+            State.LastHatchCheck = os.clock()
+            task.spawn(checkAndAutoHatchEggs)
+        end
+
         task.wait(0.15)
     end
 end)
@@ -4721,7 +5244,7 @@ end)
 task.delay(0.8, function()
     if State.IsUnloaded then return end
     executeCleanRadarScan()
-    addLog("SISTEMA", "Roube um Ovo Stability v13.2 (FORENSIC UPGRADE) carregado com sucesso!")
+    addLog("SISTEMA", "Roube um Ovo Hub v14.0 (100% DUMP ENGINE MASTER) carregado com sucesso!")
     addLog("TRACE", "Gravação ativa em " .. Telemetry.FileName)
     pcall(function()
         Services.StarterGui:SetCore("SendNotification", {

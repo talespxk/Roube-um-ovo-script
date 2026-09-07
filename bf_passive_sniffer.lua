@@ -359,17 +359,13 @@ local function attemptCollectAllSecretGears3D()
         for _, gearInfo in ipairs(SECRET_GEARS) do
             local model = Services.Workspace:FindFirstChild(gearInfo.Name, true)
             if model then
-                -- Localiza a parte mais alta ou a placa de pressao
-                local targetPart = nil
-                for _, p in ipairs(model:GetDescendants()) do
-                    if p:IsA("BasePart") then
-                        local low = p.Name:lower()
-                        if low:find("pad") or low:find("button") or low:find("plate") or low:find("head") or low:find("stand") then
+                -- Localiza o gatilho Block real do pedestal
+                local targetPart = model:FindFirstChild("Block") or model:FindFirstChildWhichIsA("BasePart", true)
+                if not targetPart then
+                    for _, p in ipairs(model:GetDescendants()) do
+                        if p:IsA("BasePart") and (p.Name == "Block" or p.CanTouch) then
                             targetPart = p
                             break
-                        end
-                        if not targetPart or p.Position.Y > targetPart.Position.Y then
-                            targetPart = p
                         end
                     end
                 end
@@ -1208,12 +1204,12 @@ end)
 -- Detecta quando o usuario rola para cima no LogBox
 LogBox:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
     local maxY = math.max(0, LogBox.AbsoluteCanvasSize.Y - LogBox.AbsoluteWindowSize.Y)
-    if maxY > 40 and (maxY - LogBox.CanvasPosition.Y) > 50 then
+    if maxY > 20 and (maxY - LogBox.CanvasPosition.Y) > 25 then
         if autoScrollEnabled then
             autoScrollEnabled = false
             updateScrollBtnState()
         end
-    elseif maxY > 0 and (maxY - LogBox.CanvasPosition.Y) <= 15 then
+    elseif maxY > 0 and (maxY - LogBox.CanvasPosition.Y) <= 12 then
         if not autoScrollEnabled then
             autoScrollEnabled = true
             updateScrollBtnState()
