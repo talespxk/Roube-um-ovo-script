@@ -3,16 +3,16 @@ if not game:IsLoaded() then
 end
 
 --[[
-    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v14.0 DUMP ENGINE MASTER)
+    ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v14.1 DUMP ENGINE & FLUENT MASTER)
     -----------------------------------------------------------------------
     - 100% Integrado com ReplicatedStorage.Client.EggState & PlotState.
     - Coleta Legítima com Uid real via AskFieldEggCarry & EggState.CarryFieldEgg.
     - Depósito Oficial no Ninho com LocalCFrame relativo via AskPlaceEgg.
     - Auto-Hatch Automático: choca ovos nos ninhos assim que prontos (AskHatch/AskFinishHatch).
     - Auto-Esteira Anti-Travamento: desmonte oficial do servidor com AskDoff e entrada com AskWearStill.
-    - Coletor 3D de Armas Secretas: pedestais Slap, Choque e Abelhas (Block touch part).
+    - Coletor 3D de Armas Secretas: 2 pedestais oficiais (TouchPart real) e 0.7s contato.
     - Gerenciador Nativo de Pets: Equipar Melhores (WearBest) e Auto-Sell de raridades.
-    - Console de Logs com Rolagem Inteligente (Sem snap para baixo ao ler).
+    - Interface Fluent Design (Windows 11 Dark Acrylic, Lucide Icons e Toasts).
 ]]
 
 -- 1. Limpeza Preventiva de Globais
@@ -60,9 +60,14 @@ while not LocalPlayer do
 end
 
 -- 2.1 Módulos Internos Nativos do Jogo (EggState & PlotState extraídos do dump)
+-- 2.1 Modulos Internos Nativos do Jogo (EggState, PlotState, Assets, Save, etc.)
 local GameModules = {
     EggState = nil,
-    PlotState = nil
+    PlotState = nil,
+    Assets = nil,
+    Rarity = nil,
+    Save = nil,
+    AssetItems = nil
 }
 pcall(function()
     local client = Services.ReplicatedStorage:WaitForChild("Client", 3)
@@ -73,8 +78,63 @@ pcall(function()
         if ps then GameModules.PlotState = require(ps) end
     end
 end)
+pcall(function()
+    local dataFolder = Services.ReplicatedStorage:WaitForChild("Data", 3)
+    if dataFolder then
+        local ast = dataFolder:FindFirstChild("Assets")
+        if ast then GameModules.Assets = require(ast) end
+        local rar = dataFolder:FindFirstChild("Rarity")
+        if rar then GameModules.Rarity = require(rar) end
+    end
+end)
+pcall(function()
+    local shared = Services.ReplicatedStorage:WaitForChild("Shared", 3)
+    if shared then
+        local sv = shared:FindFirstChild("Save")
+        if sv then GameModules.Save = require(sv) end
+        local util = shared:FindFirstChild("Util") or shared:FindFirstChild("Utils")
+        if util then
+            local ai = util:FindFirstChild("AssetItems")
+            if ai then GameModules.AssetItems = require(ai) end
+        end
+    end
+end)
 
--- 2.2 Localizador Resiliente de Remotes Oficiais (Packages.Networking)
+-- Funcoes de Resolucao Oficial via Catalogo Data.Assets
+local function getPetConfig(assetCategory)
+    if not assetCategory or type(assetCategory) ~= "string" then return nil end
+    if GameModules.Assets and GameModules.Assets.Directory then
+        local cfg = GameModules.Assets.Directory[assetCategory]
+        if cfg then return cfg end
+    end
+    if KnownPetsCatalog then
+        for petKey, petData in pairs(KnownPetsCatalog) do
+            if petKey:lower() == assetCategory:lower() or (petData.DisplayName and petData.DisplayName:lower() == assetCategory:lower()) then
+                return petData
+            end
+        end
+    end
+    return nil
+end
+
+local function resolvePetInfo(assetCategory)
+    local cfg = getPetConfig(assetCategory)
+    local displayName = (cfg and cfg.DisplayName) or assetCategory or "Ovo Desconhecido"
+    local rarity = "Comum"
+    if cfg and cfg.Rarity then
+        if type(cfg.Rarity) == "table" then
+            rarity = cfg.Rarity.DisplayName or cfg.Rarity._id or tostring(cfg.Rarity)
+        else
+            rarity = tostring(cfg.Rarity)
+        end
+    elseif cfg and cfg.RarityName then
+        rarity = cfg.RarityName
+    end
+    local income = (cfg and cfg.EarningRate) or (cfg and cfg.Income) or 0
+    local weight = (cfg and cfg.Egg and cfg.Egg.WeightKg) or (cfg and cfg.ModelWeight) or (cfg and cfg.WeightKg) or 0
+    local score = (RarityScoreMap and RarityScoreMap[rarity:upper()]) or 500
+    return displayName, rarity, score, weight, income
+end
 local function getRemote(remotePath)
     local packages = Services.ReplicatedStorage:FindFirstChild("Packages")
     local networking = packages and packages:FindFirstChild("Networking")
@@ -1941,431 +2001,184 @@ local function scanAllEggs()
     local rawList = {}
     local myHrp = getHRP()
     local myPos = myHrp and myHrp.Position or Vector3.zero
+    local registeredUids = {}
 
-    local function addCandidate(instance, prompt, sourceTag)
-        if not instance then return end
-        local pos = getPositionOf(prompt or instance)
-        if not pos then return end
-
-        local cleanName, rarity, score, weight, income = resolveEggDetails(instance, prompt)
-        local zone, isMyPlot, owner = identifyZone(instance)
-        if zone == "Mapa Geral" and pos.X >= 510 then
-            zone = getIslandNameByPos(pos)
-        end
-        local dist = (pos - myPos).Magnitude
-
-        table.insert(rawList, {
-            Instance = instance,
-            Prompt = prompt,
-            Name = cleanName,
-            Rarity = rarity,
-            RarityScore = score,
-            WeightKg = weight,
-            Income = income,
-            Zone = zone,
-            IsMyPlot = isMyPlot,
-            PlotOwner = owner,
-            Position = pos,
-            Distance = dist,
-            Source = sourceTag
-        })
-    end
-
-    -- 1. PlacedEggRenders (Apenas se tiver ProximityPrompt ativo para roubo!)
+    -- 1. CONSULTA OFICIAL PRIORITARIA: EggState.ReadFieldEggs() (Ovos Selvagens Vivos)
     pcall(function()
-        local placed = Services.Workspace:FindFirstChild("PlacedEggRenders")
-        if placed then
-            for _, egg in ipairs(placed:GetChildren()) do
-                local p = egg:FindFirstChildWhichIsA("ProximityPrompt", true)
-                if p and p.Enabled then
-                    addCandidate(egg, p, "Base/Plot")
+        if GameModules.EggState and GameModules.EggState.ReadFieldEggs then
+            local fSnapshot = GameModules.EggState.ReadFieldEggs()
+            local records = fSnapshot and fSnapshot.Records
+            if records and type(records) == "table" then
+                for _, rec in ipairs(records) do
+                    local uid = rec.Uid
+                    local petCategory = rec.AssetCategory
+                    local cframe = rec.BottomCFrame
+                    local pos = cframe and cframe.Position or Vector3.zero
+                    local state = rec.State
+                    local carrier = rec.CarrierUserId
+
+                    if uid and petCategory and not carrier and state ~= "Claimed" then
+                        registeredUids[uid] = true
+                        local cleanName, rarity, score, weight, income = resolvePetInfo(petCategory)
+                        local zone = getIslandNameByPos(pos)
+                        local dist = (pos - myPos).Magnitude
+
+                        table.insert(rawList, {
+                            Uid = uid,
+                            SlotKey = rec.FirstAreaSlotKey,
+                            Name = cleanName,
+                            Rarity = rarity,
+                            RarityScore = score,
+                            WeightKg = weight,
+                            Income = income,
+                            Zone = zone,
+                            IsMyPlot = false,
+                            PlotOwner = nil,
+                            Position = pos,
+                            Distance = dist,
+                            Source = "FieldEgg (Oficial)",
+                            Instance = nil,
+                            Prompt = nil
+                        })
+                    end
                 end
             end
         end
     end)
 
-    -- 2. AreaEggSlotsClient
+    -- 2. CONSULTA OFICIAL DE OVOS EM BASES: EggState.ReadOwnedEggs()
     pcall(function()
-        local areaSlots = Services.Workspace:FindFirstChild("AreaEggSlotsClient")
-        if areaSlots then
-            for _, slot in ipairs(areaSlots:GetChildren()) do
-                local p = slot:FindFirstChildWhichIsA("ProximityPrompt", true)
-                addCandidate(slot, p, "Ilha Selvagem")
+        if GameModules.EggState and GameModules.EggState.ReadOwnedEggs then
+            local ownedRows = GameModules.EggState.ReadOwnedEggs()
+            if ownedRows and type(ownedRows) == "table" then
+                for _, row in ipairs(ownedRows) do
+                    local ownerId = row.OwnerUserId
+                    local isMy = (LocalPlayer and ownerId == LocalPlayer.UserId)
+                    if row.Records and type(row.Records) == "table" then
+                        for uid, rec in pairs(row.Records) do
+                            if rec.Placement ~= nil and not registeredUids[uid] then
+                                registeredUids[uid] = true
+                                local petCategory = rec.AssetCategory
+                                local cleanName, rarity, score, weight, income = resolvePetInfo(petCategory)
+                                local eggPos = nil
+                                local placedRenders = Services.Workspace:FindFirstChild("PlacedEggRenders")
+                                if placedRenders then
+                                    local m = placedRenders:FindFirstChild(uid) or placedRenders:FindFirstChild("Egg_" .. uid)
+                                    if m then eggPos = getPositionOf(m) end
+                                end
+                                if not eggPos then
+                                    local pFolder = getPlotFolderByUserId(ownerId)
+                                    if pFolder then
+                                        local petArea = pFolder:FindFirstChild("PetArea", true)
+                                        if petArea and petArea:IsA("BasePart") then
+                                            eggPos = petArea.Position
+                                        end
+                                    end
+                                end
+                                if eggPos then
+                                    local dist = (eggPos - myPos).Magnitude
+                                    table.insert(rawList, {
+                                        Uid = uid,
+                                        Name = cleanName,
+                                        Rarity = rarity,
+                                        RarityScore = score,
+                                        WeightKg = weight,
+                                        Income = income,
+                                        Zone = isMy and "Meu Ninho" or ("Base (" .. tostring(ownerId) .. ")"),
+                                        IsMyPlot = isMy,
+                                        PlotOwner = tostring(ownerId),
+                                        Position = eggPos,
+                                        Distance = dist,
+                                        Source = "PlacedEgg (Base)",
+                                        Instance = nil,
+                                        Prompt = nil
+                                    })
+                                end
+                            end
+                        end
+                    end
+                end
             end
         end
     end)
 
-    -- 3. Prompts Gerais do Workspace
+    -- 3. PROMPTS FISICOS NO WORKSPACE
+    local cachedPrompts = {}
     pcall(function()
         for _, desc in ipairs(Services.Workspace:GetDescendants()) do
-            if desc:IsA("ProximityPrompt") then
+            if desc:IsA("ProximityPrompt") and desc.Enabled then
                 local act = plainText(desc.ActionText)
                 local obj = plainText(desc.ObjectText)
                 local isCand = act:find("steal") or act:find("roubar") or act:find("take")
                     or act:find("pick") or obj:find("egg") or obj:find("ovo") or desc.Name:lower():find("egg")
                 if isCand and desc.Parent then
-                    addCandidate(desc.Parent, desc, "Prompt Geral")
+                    local pPos = getPositionOf(desc) or getPositionOf(desc.Parent)
+                    if pPos then
+                        table.insert(cachedPrompts, { Prompt = desc, Instance = desc.Parent, Position = pPos })
+                    end
                 end
             end
         end
     end)
 
-    -- Deduplicação Espacial e Vinculação
-    local deduplicated = {}
-    for _, cand in ipairs(rawList) do
-        local merged = false
-        for _, existing in ipairs(deduplicated) do
-            if (existing.Position - cand.Position).Magnitude <= 4.5 then
-                merged = true
-                if not existing.Prompt and cand.Prompt then
-                    existing.Prompt = cand.Prompt
-                end
-                if existing.Rarity == "N/D" and cand.Rarity ~= "N/D" then
-                    existing.Name = cand.Name
-                    existing.Rarity = cand.Rarity
-                    existing.RarityScore = cand.RarityScore
-                    existing.WeightKg = cand.WeightKg
-                    existing.Income = cand.Income
-                end
-                break
+    -- Vincular cada ovo da lista com o prompt fisico mais proximo
+    for _, egg in ipairs(rawList) do
+        local closestDist = 8
+        for _, cp in ipairs(cachedPrompts) do
+            local d = (cp.Position - egg.Position).Magnitude
+            if d < closestDist then
+                closestDist = d
+                egg.Prompt = cp.Prompt
+                egg.Instance = cp.Instance
             end
-        end
-        if not merged then
-            table.insert(deduplicated, cand)
         end
     end
 
-    table.sort(deduplicated, function(a, b)
+    -- 4. FALLBACK PARA ITENS DO WORKSPACE QUE NAO FORAM MAPEADOS NO EGGSTATE
+    pcall(function()
+        for _, cp in ipairs(cachedPrompts) do
+            local alreadyMatched = false
+            for _, egg in ipairs(rawList) do
+                if (egg.Position - cp.Position).Magnitude <= 4.5 then
+                    alreadyMatched = true
+                    break
+                end
+            end
+            if not alreadyMatched then
+                local cleanName, rarity, score, weight, income = resolveEggDetails(cp.Instance, cp.Prompt)
+                local zone, isMyPlot, owner = identifyZone(cp.Instance)
+                if zone == "Mapa Geral" and cp.Position.X >= 510 then
+                    zone = getIslandNameByPos(cp.Position)
+                end
+                table.insert(rawList, {
+                    Instance = cp.Instance,
+                    Prompt = cp.Prompt,
+                    Name = cleanName,
+                    Rarity = rarity,
+                    RarityScore = score,
+                    WeightKg = weight,
+                    Income = income,
+                    Zone = zone,
+                    IsMyPlot = isMyPlot,
+                    PlotOwner = owner,
+                    Position = cp.Position,
+                    Distance = (cp.Position - myPos).Magnitude,
+                    Source = "Prompt Fisico"
+                })
+            end
+        end
+    end)
+
+    -- Ordenar por maior raridade / renda e menor distancia
+    table.sort(rawList, function(a, b)
         if a.RarityScore ~= b.RarityScore then
             return a.RarityScore > b.RarityScore
         end
         return a.Distance < b.Distance
     end)
 
-    if os.clock() - lastRadarTraceAt >= 3 then
-        lastRadarTraceAt = os.clock()
-        local summary = {}
-        for index, egg in ipairs(deduplicated) do
-            if index > 80 then break end
-            table.insert(summary, {
-                name = egg.Name,
-                rarity = egg.Rarity,
-                income = egg.Income,
-                zone = egg.Zone,
-                source = egg.Source,
-                distance = math.floor(egg.Distance),
-                position = egg.Position,
-                instance = egg.Instance,
-                prompt = egg.Prompt,
-            })
-        end
-        traceEvent("RADAR", "SCAN", { count = #deduplicated, eggs = summary })
-    end
-
-    return deduplicated
+    return rawList
 end
-
--- 9. NAVEGAÇÃO SEGURA: sem escrever CFrame no personagem.
-local isMoving = false
-
-local function movePlayerSafe(targetPos, speed, onStep)
-    local hrp = getHRP()
-    local char = LocalPlayer.Character
-    if not hrp or not char or isMoving then return false end
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then return false end
-
-    isMoving = true
-    local oldWalkSpeed = humanoid.WalkSpeed
-    local requestedSpeed = math.clamp(tonumber(speed) or Config.MoveSpeed or 30, 16, 36)
-    humanoid.WalkSpeed = requestedSpeed
-    humanoid.PlatformStand = false
-    traceEvent("MOVEMENT", "START", {
-        from = hrp.Position,
-        target = targetPos,
-        speed = requestedSpeed,
-    })
-
-    local function cleanup()
-        if humanoid and humanoid.Parent and humanoid.Health > 0 then
-            humanoid:Move(Vector3.zero, false)
-            humanoid.WalkSpeed = oldWalkSpeed
-        end
-        isMoving = false
-    end
-
-    local function walkTo(point, timeout)
-        humanoid:MoveTo(point)
-        local started = os.clock()
-        local lastProgressAt = started
-        local lastDistance = (hrp.Position - point).Magnitude
-
-        while os.clock() - started < timeout do
-            if State.IsUnloaded or not char.Parent or humanoid.Health <= 0 then return false end
-            local distance = (hrp.Position - point).Magnitude
-            local horizontal = Vector3.new(point.X - hrp.Position.X, 0, point.Z - hrp.Position.Z)
-            if horizontal.Magnitude > 0.05 then
-                -- Move mantém a animação de caminhada; o WalkSpeed alto produz o
-                -- efeito de deslize pedido sem escrever CFrame nem aplicar impulso.
-                humanoid:Move(horizontal.Unit, false)
-            end
-            if onStep then onStep((hrp.Position - targetPos).Magnitude) end
-            if distance <= 4 then return true end
-            if distance < lastDistance - 0.75 then
-                lastDistance = distance
-                lastProgressAt = os.clock()
-            elseif os.clock() - lastProgressAt > 3.0 then
-                return false
-            end
-            Services.RunService.Heartbeat:Wait()
-        end
-        return false
-    end
-
-    local reached = false
-    for attempt = 1, 4 do
-        if (hrp.Position - targetPos).Magnitude <= 5 then
-            reached = true
-            break
-        end
-
-        local path = Services.PathfindingService:CreatePath({
-            AgentRadius = 2,
-            AgentHeight = 5,
-            AgentCanJump = true,
-            AgentCanClimb = true,
-            WaypointSpacing = 10,
-        })
-        local computed = pcall(function()
-            path:ComputeAsync(hrp.Position, targetPos)
-        end)
-        traceEvent("MOVEMENT", "PATH", {
-            attempt = attempt,
-            computed = computed,
-            status = tostring(path.Status),
-            distance = (hrp.Position - targetPos).Magnitude,
-        })
-
-        if computed and path.Status == Enum.PathStatus.Success then
-            local waypoints = path:GetWaypoints()
-            local routeOk = true
-            for index = 2, #waypoints do
-                local waypoint = waypoints[index]
-                if waypoint.Action == Enum.PathWaypointAction.Jump then
-                    humanoid.Jump = true
-                end
-                if not walkTo(waypoint.Position, 8) then
-                    routeOk = false
-                    break
-                end
-            end
-            if routeOk and (hrp.Position - targetPos).Magnitude <= 7 then
-                reached = true
-                break
-            end
-        else
-            -- Para alvos próximos ainda é seguro tentar MoveTo direto.
-            local distance = (hrp.Position - targetPos).Magnitude
-            if distance <= 120 and walkTo(targetPos, math.max(5, distance / humanoid.WalkSpeed + 3)) then
-                reached = true
-                break
-            end
-        end
-    end
-
-    cleanup()
-    traceEvent("MOVEMENT", reached and "ARRIVED" or "FAILED", {
-        target = targetPos,
-        finalPosition = hrp and hrp.Parent and hrp.Position or nil,
-        speed = requestedSpeed,
-    })
-    return reached
-end
-
-local function movePlayerDirect(targetPos, speed, onStep)
-    return movePlayerSafe(targetPos, speed, onStep)
-end
-
-local function movePlayerOverhead(targetPos, speed, onStep)
-    return movePlayerSafe(targetPos, speed, onStep)
-end
-
--- Acionamento Rápido de ProximityPrompt
-local function triggerPrompt(prompt)
-    if not prompt or not prompt.Parent or not prompt.Enabled then return false end
-    traceEvent("PROMPT", "TRIGGER", {
-        prompt = prompt,
-        actionText = prompt.ActionText,
-        objectText = prompt.ObjectText,
-        enabled = prompt.Enabled,
-        position = getPositionOf(prompt),
-    })
-    local triggered = false
-    local origHold = prompt.HoldDuration or 0.5
-    pcall(function()
-        prompt.HoldDuration = 0
-    end)
-    if fireproximityprompt then
-        triggered = pcall(function()
-            fireproximityprompt(prompt)
-        end)
-    end
-    pcall(function()
-        prompt:InputHoldBegin()
-        task.wait(0.06)
-        prompt:InputHoldEnd()
-    end)
-    pcall(function()
-        prompt.HoldDuration = origHold
-    end)
-    traceEvent("PROMPT", triggered and "TRIGGER_SENT" or "TRIGGER_FAILED", { prompt = prompt })
-    return triggered
-end
-
---================================================================--
--- 9.5. MOTOR MASTER DE AUTO-ROUBO (CAMINHADA SEGURA)
---================================================================--
-
--- A. Identificação do Plot do Jogador e Ponto de Depósito / Esteira
-local function findMyPlot()
-    local plots = Services.Workspace:FindFirstChild("Plots")
-    if not plots then return nil end
-
-    local myName = LocalPlayer.Name:lower()
-    local myDisplay = LocalPlayer.DisplayName:lower()
-    local myId = tostring(LocalPlayer.UserId)
-
-    for _, plot in ipairs(plots:GetChildren()) do
-        -- 1. Checagem por ObjectValue ou StringValue de proprietário
-        for _, tag in ipairs({"Owner", "Player", "OwnerName", "OwnerId", "UserId", "PlayerId"}) do
-            local valObj = plot:FindFirstChild(tag)
-            if valObj then
-                if valObj:IsA("ObjectValue") and (valObj.Value == LocalPlayer or valObj.Value == LocalPlayer.Character) then
-                    return plot
-                elseif valObj:IsA("StringValue") then
-                    local s = valObj.Value:lower()
-                    if s == myName or s == myDisplay then return plot end
-                elseif valObj:IsA("IntValue") or valObj:IsA("NumberValue") then
-                    if tostring(valObj.Value) == myId then return plot end
-                end
-            end
-        end
-
-        -- 2. Checagem de Atributos do Plot
-        for k, v in pairs(plot:GetAttributes()) do
-            local s = tostring(v):lower()
-            if s == myName or s == myDisplay or s == myId then
-                return plot
-            end
-        end
-
-        -- 3. Checagem de Placas e Nomes no Plot
-        for _, desc in ipairs(plot:GetDescendants()) do
-            if desc:IsA("TextLabel") or desc:IsA("TextButton") then
-                local txt = desc.Text:lower()
-                if txt:find(myName) or txt:find(myDisplay) then
-                    return plot
-                end
-            end
-        end
-    end
-    return nil
-end
-
-local function getMyDepositTarget()
-    local myPlot = findMyPlot()
-    if myPlot then
-        local bestPart = nil
-        local bestPriority = -1
-        for _, d in ipairs(myPlot:GetDescendants()) do
-            if d:IsA("BasePart") then
-                local low = d.Name:lower()
-                local priority = 0
-                if low:find("deposit", 1, true) or low:find("drop", 1, true) then
-                    priority = 5
-                elseif low:find("conveyor", 1, true) or low:find("esteira", 1, true) then
-                    priority = 4
-                elseif low:find("nest", 1, true) or low:find("ninho", 1, true) then
-                    priority = 3
-                elseif low:find("egg", 1, true) or low:find("ovo", 1, true) then
-                    priority = 1
-                end
-                if priority > bestPriority then
-                    bestPart = d
-                    bestPriority = priority
-                end
-            end
-        end
-        if bestPart and bestPriority > 0 then
-            return bestPart, bestPart.CFrame + Vector3.new(0, 2.5, 0)
-        end
-        return nil, myPlot:GetPivot() + Vector3.new(0, 2.5, 0)
-    end
-    return nil, State.BaseCFrame or (getHRP() and getHRP().CFrame)
-end
-
-local function getMyDepositCFrame()
-    local _, depositCFrame = getMyDepositTarget()
-    return depositCFrame
-end
-
--- B. Localização do Guarda da Floresta (Ilha 1) para Ativação de Ragdoll
-local function findForestGuard()
-    for _, obj in ipairs(Services.Workspace:GetChildren()) do
-        if obj:IsA("Model") then
-            local low = obj.Name:lower()
-            if (low:find("guard") or low:find("chicken") or low:find("forest") or low:find("galinha"))
-                and obj ~= Services.Workspace:FindFirstChild("_Guards") then
-                local p = getPositionOf(obj)
-                if p and (p - Vector3.new(598, 68, -328)).Magnitude < 180 then
-                    return obj, p
-                end
-            end
-        end
-    end
-
-    local gFolder = Services.Workspace:FindFirstChild("_Guards")
-    if gFolder then
-        for _, g in ipairs(gFolder:GetChildren()) do
-            local low = g.Name:lower()
-            if low:find("forest") or low:find("chicken") or low:find("galinha") then
-                local p = getPositionOf(g)
-                if p then return g, p end
-            end
-        end
-    end
-
-    return nil, Vector3.new(598.0, 68.0, -328.0)
-end
-
--- C. Detecção em Tempo Real de Ragdoll e Física Suspensa
-local function isPlayerInRagdoll()
-    local char = getChar()
-    if not char then return false end
-    local hum = getHum()
-    if hum then
-        local state = hum:GetState()
-        if state == Enum.HumanoidStateType.Ragdoll or state == Enum.HumanoidStateType.PlatformStanding or hum.PlatformStand then
-            return true
-        end
-    end
-    local lpRag = LocalPlayer:GetAttribute("RagdollEndTime") or LocalPlayer:GetAttribute("IsRagdoll") or LocalPlayer:GetAttribute("Ragdoll")
-    if lpRag and (type(lpRag) == "boolean" and lpRag or type(lpRag) == "number" and lpRag > 0) then
-        return true
-    end
-    local charRag = char:GetAttribute("RagdollEndTime") or char:GetAttribute("IsRagdoll") or char:GetAttribute("Ragdoll")
-    if charRag and (type(charRag) == "boolean" and charRag or type(charRag) == "number" and charRag > 0) then
-        return true
-    end
-    if char:FindFirstChildWhichIsA("BallSocketConstraint", true) then
-        return true
-    end
-    return false
-end
-
--- D. Compatibilidade: qualquer método antigo usa caminhada segura.
-local function executeRagdollSteal(target)
-    addLog("ROUBO", "Ragdoll TP removido; usando caminhada segura.")
     return executeDirectSteal(target)
 end
 
@@ -2599,6 +2412,57 @@ local function configureNativeAutoSell(raritiesTable)
     return false
 end
 
+local function sellCommonPetsInInventory()
+    local uidsToSell = {}
+    pcall(function()
+        if GameModules.Save and GameModules.Save.Get and GameModules.AssetItems then
+            local save = GameModules.Save.Get()
+            local inventory = save and save.Inventory
+            local equipped = (save and save.EquippedAssets) or {}
+            if inventory and type(inventory) == "table" then
+                for uid, rawItem in pairs(inventory) do
+                    local okDecode, itemData = pcall(function()
+                        return GameModules.AssetItems.Decode(rawItem)
+                    end)
+                    if okDecode and itemData then
+                        local isEquipped = table.find(equipped, uid) ~= nil
+                        local isFavorite = itemData.IsFavorite == true
+                        local inFuse = itemData.InFuse == true
+                        if not isEquipped and not isFavorite and not inFuse then
+                            local cat = itemData.AssetCategory
+                            local _, rarityName = resolvePetInfo(cat)
+                            local rLow = rarityName:lower()
+                            if rLow == "common" or rLow == "uncommon" or rLow == "comum" or rLow == "incomum" or rLow == "basic" then
+                                table.insert(uidsToSell, uid)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    if #uidsToSell > 0 then
+        local sellEvery = getRemote("RE/PetSatchel/SellEveryPet")
+        if sellEvery and sellEvery:IsA("RemoteEvent") then
+            sellEvery:FireServer(uidsToSell)
+            addLog("PETS", string.format("%d pets comuns/incomuns vendidos com sucesso!", #uidsToSell))
+        end
+    else
+        addLog("PETS", "Nenhum pet comum/incomum elegivel encontrado no inventario.")
+    end
+
+    pcall(function()
+        local writeAutoSell = getRemote("RF/Haul/WriteAutoSell")
+        if writeAutoSell and writeAutoSell:IsA("RemoteFunction") then
+            writeAutoSell:InvokeServer({
+                Common = true,
+                Uncommon = true
+            })
+        end
+    end)
+end
+
 local function checkAndAutoHatchEggs()
     if State.IsUnloaded or not Config.AutoHatchEnabled then return end
     pcall(function()
@@ -2646,8 +2510,7 @@ end
 
 local SECRET_GEAR_PEDESTALS = {
     { Name = "GearGiver_Slap", Display = "Slap Glove (Luva de Tapa)", Pos = Vector3.new(545.01, 53.39, -357.85) },
-    { Name = "GearGiver", Display = "Bat / Choque", Pos = Vector3.new(545.01, 53.39, -344.76) },
-    { Name = "GearGiver_BeeLauncher", Display = "Bee Launcher (Abelhas)", Pos = Vector3.new(545.01, 53.39, -371.25) }
+    { Name = "GearGiver", Display = "Bat / Bastao de Choque", Pos = Vector3.new(545.01, 53.39, -344.76) }
 }
 
 local function collectAllSecretWeapons()
@@ -2655,59 +2518,61 @@ local function collectAllSecretWeapons()
     local hrp = getHRP()
     local hum = getHum()
     if not hrp or not hum then
-        addLog("ARMAS", "Personagem indisponível para coletar armas.")
-        return false, "Personagem indisponível"
+        addLog("ARMAS", "Personagem indisponivel para coletar armas.")
+        return false, "Personagem indisponivel"
     end
 
     local originalCF = hrp.CFrame
     local collectedCount = 0
-    addLog("ARMAS", "Iniciando coleta das 3 armas secretas...")
+    addLog("ARMAS", "Iniciando coleta das 2 armas secretas nos pedestais...")
 
     for _, gear in ipairs(SECRET_GEAR_PEDESTALS) do
         local model = Services.Workspace:FindFirstChild(gear.Name, true)
-        local blockPart = nil
+        local touchPart = nil
         if model then
-            blockPart = model:FindFirstChild("Block") or model:FindFirstChildWhichIsA("BasePart", true)
+            touchPart = model:FindFirstChild("TouchPart") or model:FindFirstChildWhichIsA("BasePart", true)
         end
-        if not blockPart then
+        if not touchPart then
             for _, desc in ipairs(Services.Workspace:GetDescendants()) do
-                if desc:IsA("BasePart") and desc.Name == "Block" and (desc.Position - gear.Pos).Magnitude < 12 then
-                    blockPart = desc
+                if desc:IsA("BasePart") and desc.Name == "TouchPart" and (desc.Position - gear.Pos).Magnitude < 15 then
+                    touchPart = desc
                     break
                 end
             end
         end
 
-        local targetCFrame = blockPart and blockPart.CFrame or CFrame.new(gear.Pos)
-        hrp.CFrame = targetCFrame + Vector3.new(0, 2.0, 0)
+        local targetCFrame = (touchPart and touchPart.CFrame) or CFrame.new(gear.Pos)
+        hrp.CFrame = targetCFrame
         hrp.AssemblyLinearVelocity = Vector3.zero
-        task.wait(0.2)
+        task.wait(0.15)
 
         pcall(function()
             local rFoot = char:FindFirstChild("RightFoot") or char:FindFirstChild("Right Leg") or hrp
             local lFoot = char:FindFirstChild("LeftFoot") or char:FindFirstChild("Left Leg") or hrp
-            if blockPart and firetouchinterest then
-                firetouchinterest(rFoot, blockPart, 0)
-                firetouchinterest(lFoot, blockPart, 0)
-                firetouchinterest(hrp, blockPart, 0)
-                task.wait(0.05)
-                firetouchinterest(rFoot, blockPart, 1)
-                firetouchinterest(lFoot, blockPart, 1)
-                firetouchinterest(hrp, blockPart, 1)
+            if touchPart and firetouchinterest then
+                for _ = 1, 3 do
+                    firetouchinterest(rFoot, touchPart, 0)
+                    firetouchinterest(lFoot, touchPart, 0)
+                    firetouchinterest(hrp, touchPart, 0)
+                    task.wait(0.06)
+                    firetouchinterest(rFoot, touchPart, 1)
+                    firetouchinterest(lFoot, touchPart, 1)
+                    firetouchinterest(hrp, touchPart, 1)
+                    task.wait(0.06)
+                end
             end
         end)
 
-        task.wait(0.2)
+        task.wait(0.7)
         collectedCount = collectedCount + 1
-        addLog("ARMAS", "Pedestal acionado: " .. gear.Display)
+        addLog("ARMAS", "Pedestal acionado com sucesso: " .. gear.Display)
     end
 
     hrp.CFrame = originalCF
     hrp.AssemblyLinearVelocity = Vector3.zero
-    addLog("ARMAS", string.format("Coleta concluída! %d armas acionadas. Verifique o Backpack.", collectedCount))
+    addLog("ARMAS", string.format("Coleta concluida! %d armas acionadas. Verifique o Backpack.", collectedCount))
     return true
 end
-
 executeDirectSteal = function(target)
     if not target or not target.Position then return false end
     local myHrp = getHRP()
@@ -3669,1588 +3534,474 @@ end)
 
 
 --================================================================--
--- 12. INTERFACE OBSERVATORY v13.2 (4 ÁREAS ESSENCIAIS)
+--================================================================--
+-- 12. INTERFACE MODERNA FLUENT DESIGN v14.1 (ULTRA CLEAN)
 --================================================================--
 
-ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "RoubeUmOvoMasterHub"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-
-attachGui(ScreenGui)
-
-
-local function addCorner(instance, rad)
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, rad or 8)
-    corner.Parent = instance
-    return corner
-end
-
-local function addStroke(instance, color, thick)
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = color or C_BORDER
-    stroke.Thickness = thick or 1
-    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    stroke.Parent = instance
-    return stroke
-end
-
-local function createCleanCard(parent, height)
-    local card = Instance.new("Frame")
-    card.Size = UDim2.new(1, 0, 0, height or 60)
-    card.BackgroundColor3 = C_CARD
-    card.BorderSizePixel = 0
-    card.Parent = parent
-    addCorner(card, 8)
-    addStroke(card, C_BORDER, 1)
-    return card
-end
-
--- Janela principal com mais respiro visual e somente controles funcionais.
-MainFrame = Instance.new("Frame")
-MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 660, 0, 500)
-MainFrame.Position = UDim2.new(0.5, -330, 0.5, -250)
-MainFrame.BackgroundColor3 = C_BG
-MainFrame.BorderSizePixel = 0
-MainFrame.Active = true
-MainFrame.Draggable = true
-MainFrame.Parent = ScreenGui
-addCorner(MainFrame, 10)
-addStroke(MainFrame, C_BORDER, 1.2)
-
--- Topbar
-local Topbar = Instance.new("Frame")
-Topbar.Size = UDim2.new(1, 0, 0, 42)
-Topbar.BackgroundColor3 = C_TOPBAR
-Topbar.BorderSizePixel = 0
-Topbar.Parent = MainFrame
-addCorner(Topbar, 10)
-
-local TopbarSquare = Instance.new("Frame")
-TopbarSquare.Size = UDim2.new(1, 0, 0, 10)
-TopbarSquare.Position = UDim2.new(0, 0, 1, -10)
-TopbarSquare.BackgroundColor3 = C_TOPBAR
-TopbarSquare.BorderSizePixel = 0
-TopbarSquare.Parent = Topbar
-
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(0, 255, 1, 0)
-Title.Position = UDim2.new(0, 14, 0, 0)
-Title.BackgroundTransparency = 1
-Title.Font = Enum.Font.GothamBold
-Title.TextSize = 13
-Title.TextColor3 = C_CYAN
-Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "ROUBE UM OVO  •  STABILITY v13.2 (FORENSIC UPGRADE)"
-Title.Parent = Topbar
-
-StatusBadge = Instance.new("TextLabel")
-StatusBadge.Size = UDim2.new(0, 100, 0, 22)
-StatusBadge.Position = UDim2.new(0, 292, 0.5, -11)
-StatusBadge.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
-StatusBadge.Text = "PARADO"
-StatusBadge.Font = Enum.Font.GothamBold
-StatusBadge.TextSize = 10
-StatusBadge.TextColor3 = C_MUTED
-StatusBadge.Parent = Topbar
-addCorner(StatusBadge, 11)
-addStroke(StatusBadge, C_BORDER, 1)
-
-local UnloadBtn = Instance.new("TextButton")
-UnloadBtn.Size = UDim2.new(0, 68, 0, 24)
-UnloadBtn.Position = UDim2.new(1, -104, 0.5, -12)
-UnloadBtn.BackgroundColor3 = Color3.fromRGB(153, 27, 27)
-UnloadBtn.Text = "UNLOAD"
-UnloadBtn.Font = Enum.Font.GothamBold
-UnloadBtn.TextSize = 10
-UnloadBtn.TextColor3 = C_TEXT
-UnloadBtn.Parent = Topbar
-addCorner(UnloadBtn, 6)
-
-local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.new(0, 24, 0, 24)
-CloseBtn.Position = UDim2.new(1, -30, 0.5, -12)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(51, 65, 85)
-CloseBtn.Text = "X"
-CloseBtn.Font = Enum.Font.GothamBold
-CloseBtn.TextSize = 11
-CloseBtn.TextColor3 = C_TEXT
-CloseBtn.Parent = Topbar
-addCorner(CloseBtn, 6)
-
-CloseBtn.MouseButton1Click:Connect(function()
-    MainFrame.Visible = false
+local Fluent = nil
+local okFluent, errFluent = pcall(function()
+    return loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 end)
 
--- Navegação lateral enxuta: rotas/TP e modificadores instáveis foram removidos.
-local TabBar = Instance.new("Frame")
-TabBar.Size = UDim2.new(0, 124, 1, -70)
-TabBar.Position = UDim2.new(0, 12, 0, 58)
-TabBar.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
-TabBar.BorderSizePixel = 0
-TabBar.Parent = MainFrame
-addCorner(TabBar, 8)
-
-local TabButtons = {}
-local TabPages = {}
-local tabNames = {"Automação", "Esteira", "Armas & Pets", "Radar", "Diagnóstico"}
-local activeTab = "Automação"
-
-local ContentArea = Instance.new("Frame")
-ContentArea.Size = UDim2.new(1, -160, 1, -70)
-ContentArea.Position = UDim2.new(0, 148, 0, 58)
-ContentArea.BackgroundTransparency = 1
-ContentArea.BorderSizePixel = 0
-ContentArea.Parent = MainFrame
-
-local function switchTab(name)
-    activeTab = name
-    for tName, btn in pairs(TabButtons) do
-        local isCur = (tName == name)
-        btn.BackgroundColor3 = isCur and Color3.fromRGB(30, 44, 74) or Color3.fromRGB(15, 23, 42)
-        btn.TextColor3 = isCur and C_CYAN or C_MUTED
-    end
-    for pName, page in pairs(TabPages) do
-        page.Visible = (pName == name)
-    end
-end
-
-for i, tName in ipairs(tabNames) do
-    local displayName = tName
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -8, 0, 36)
-    btn.Position = UDim2.new(0, 4, 0, 4 + ((i - 1) * 40))
-    btn.BackgroundColor3 = (tName == activeTab) and Color3.fromRGB(30, 44, 74) or Color3.fromRGB(15, 23, 42)
-    btn.Text = displayName
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 10
-    btn.TextColor3 = (tName == activeTab) and C_CYAN or C_MUTED
-    btn.Parent = TabBar
-    addCorner(btn, 6)
-
-    btn.MouseButton1Click:Connect(function()
-        switchTab(tName)
-    end)
-    TabButtons[tName] = btn
-
-    local page = Instance.new("ScrollingFrame")
-    page.Name = tName .. "Page"
-    page.Size = UDim2.new(1, 0, 1, 0)
-    page.BackgroundTransparency = 1
-    page.BorderSizePixel = 0
-    page.ScrollBarThickness = 3
-    page.ScrollBarImageColor3 = C_CYAN
-    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    page.CanvasSize = UDim2.new(0, 0, 0, 0)
-    page.Visible = (tName == activeTab)
-    page.Parent = ContentArea
-
-    local layout = Instance.new("UIListLayout")
-    layout.Padding = UDim.new(0, 8)
-    layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Parent = page
-
-    TabPages[tName] = page
-end
-
-local TraceSidebarLabel = Instance.new("TextLabel")
-TraceSidebarLabel.Size = UDim2.new(1, -12, 0, 38)
-TraceSidebarLabel.Position = UDim2.new(0, 6, 1, -46)
-TraceSidebarLabel.BackgroundTransparency = 1
-TraceSidebarLabel.Font = Enum.Font.GothamBold
-TraceSidebarLabel.TextSize = 9
-TraceSidebarLabel.TextColor3 = C_GREEN
-TraceSidebarLabel.TextWrapped = true
-TraceSidebarLabel.Text = "● TRACE ATIVO\n" .. Telemetry.SessionId
-TraceSidebarLabel.Parent = TabBar
-
---================================================================--
--- ABA 1: AUTO-ROUBO
---================================================================--
-local AutoStealPage = TabPages["Automação"]
-
-MainToggleBtn = Instance.new("TextButton")
-MainToggleBtn.Size = UDim2.new(1, 0, 0, 46)
-MainToggleBtn.BackgroundColor3 = Config.AutoStealEnabled and Color3.fromRGB(22, 101, 52) or Color3.fromRGB(30, 41, 59)
-MainToggleBtn.Text = Config.AutoStealEnabled and "AUTO-ROUBO ATIVADO (EM EXECUCAO)" or "ATIVAR AUTO-ROUBO"
-MainToggleBtn.Font = Enum.Font.GothamBold
-MainToggleBtn.TextSize = 12
-MainToggleBtn.TextColor3 = C_TEXT
-MainToggleBtn.Parent = AutoStealPage
-addCorner(MainToggleBtn, 8)
-addStroke(MainToggleBtn, Config.AutoStealEnabled and C_GREEN or C_CYAN, 1.2)
-
--- Card da Base (Completamente Legível)
-local BaseCard = createCleanCard(AutoStealPage, 54)
-BaseLabel = Instance.new("TextLabel")
-BaseLabel.Size = UDim2.new(0.66, -10, 1, 0)
-BaseLabel.Position = UDim2.new(0, 14, 0, 0)
-BaseLabel.BackgroundTransparency = 1
-BaseLabel.Font = Enum.Font.GothamBold
-BaseLabel.TextSize = 11
-BaseLabel.TextColor3 = C_MUTED
-BaseLabel.TextXAlignment = Enum.TextXAlignment.Left
-BaseLabel.Text = "Base: Identificando plot..."
-BaseLabel.Parent = BaseCard
-
-local SetBaseBtn = Instance.new("TextButton")
-SetBaseBtn.Size = UDim2.new(0.34, -10, 0, 32)
-SetBaseBtn.Position = UDim2.new(0.66, 0, 0.5, -16)
-SetBaseBtn.BackgroundColor3 = Color3.fromRGB(30, 44, 74)
-SetBaseBtn.Text = "FIXAR BASE"
-SetBaseBtn.Font = Enum.Font.GothamBold
-SetBaseBtn.TextSize = 11
-SetBaseBtn.TextColor3 = C_CYAN
-SetBaseBtn.Parent = BaseCard
-addCorner(SetBaseBtn, 6)
-addStroke(SetBaseBtn, C_CYAN, 1)
-
-SetBaseBtn.MouseButton1Click:Connect(function()
-    local hrp = getHRP()
-    if hrp then
-        State.BaseCFrame = hrp.CFrame
-        BaseLabel.Text = string.format("Base: (%.0f, %.0f, %.0f) [Fixada]", hrp.Position.X, hrp.Position.Y, hrp.Position.Z)
-        BaseLabel.TextColor3 = C_GREEN
-        addLog("BASE", "Base fixada manualmente na posicao atual.")
-    end
-end)
-
--- Card Alvo Prioritário (Amplo, Limpo e Informativo)
-local TargetCard = createCleanCard(AutoStealPage, 68)
-local TargetTitle = Instance.new("TextLabel")
-TargetTitle.Size = UDim2.new(1, -20, 0, 18)
-TargetTitle.Position = UDim2.new(0, 14, 0, 10)
-TargetTitle.BackgroundTransparency = 1
-TargetTitle.Font = Enum.Font.GothamBold
-TargetTitle.TextSize = 11
-TargetTitle.TextColor3 = C_CYAN
-TargetTitle.TextXAlignment = Enum.TextXAlignment.Left
-TargetTitle.Text = Config.LockCurrentIsland and "ALVO PRIORITARIO (ILHA ATUAL):" or "ALVO PRIORITARIO (TODO O MAPA):"
-TargetTitle.Parent = TargetCard
-
-TargetInfoLabel = Instance.new("TextLabel")
-TargetInfoLabel.Size = UDim2.new(1, -20, 0, 26)
-TargetInfoLabel.Position = UDim2.new(0, 14, 0, 32)
-TargetInfoLabel.BackgroundTransparency = 1
-TargetInfoLabel.Font = Enum.Font.GothamBold
-TargetInfoLabel.TextSize = 12
-TargetInfoLabel.TextColor3 = C_TEXT
-TargetInfoLabel.TextXAlignment = Enum.TextXAlignment.Left
-TargetInfoLabel.Text = "Buscando ovos..."
-TargetInfoLabel.Parent = TargetCard
-
--- Card de Ações Rápidas de Destrave (Sair da Esteira / Esvaziar Mãos / Descarregar)
-local QuickActionCard = createCleanCard(AutoStealPage, 42)
-local DismountQuickBtn = Instance.new("TextButton")
-DismountQuickBtn.Size = UDim2.new(0.48, 0, 0, 32)
-DismountQuickBtn.Position = UDim2.new(0, 6, 0.5, -16)
-DismountQuickBtn.BackgroundColor3 = Color3.fromRGB(153, 27, 27)
-DismountQuickBtn.Text = "SAIR DA ESTEIRA"
-DismountQuickBtn.Font = Enum.Font.GothamBold
-DismountQuickBtn.TextSize = 10
-DismountQuickBtn.TextColor3 = C_TEXT
-DismountQuickBtn.Parent = QuickActionCard
-addCorner(DismountQuickBtn, 6)
-addStroke(DismountQuickBtn, Color3.fromRGB(239, 68, 68), 1)
-
-DismountQuickBtn.MouseButton1Click:Connect(function()
-    dismountTreadmill()
-end)
-
-local EmptyHandsBtn = Instance.new("TextButton")
-EmptyHandsBtn.Size = UDim2.new(0.48, 0, 0, 32)
-EmptyHandsBtn.Position = UDim2.new(0.52, -4, 0.5, -16)
-EmptyHandsBtn.BackgroundColor3 = Color3.fromRGB(30, 44, 74)
-EmptyHandsBtn.Text = "ESVAZIAR MÃOS (DESTRAVAR)"
-EmptyHandsBtn.Font = Enum.Font.GothamBold
-EmptyHandsBtn.TextSize = 9
-EmptyHandsBtn.TextColor3 = C_YELLOW
-EmptyHandsBtn.Parent = QuickActionCard
-addCorner(EmptyHandsBtn, 6)
-addStroke(EmptyHandsBtn, C_YELLOW, 1)
-
-EmptyHandsBtn.MouseButton1Click:Connect(function()
+if not okFluent or not Fluent then
+    warn("[RoubeUmOvo] Falha ao carregar Fluent UI: " .. tostring(errFluent))
+    addLog("UI", "Tentando carregar espelho alternativo do Fluent...")
     pcall(function()
-        local hum = getHum()
-        if hum then hum:UnequipTools() end
+        Fluent = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/main.lua"))()
     end)
-    State.CarryConfirmed = false
-    State.CarryEvidence = nil
-    pcall(function()
-        if GameModules.EggState and GameModules.EggState.DropFieldEgg then
-            GameModules.EggState.DropFieldEgg(nil)
-        end
-        local askDrop = getRemote("RF/EggWorld/AskFieldEggDrop")
-        if askDrop and askDrop:IsA("RemoteFunction") then
-            askDrop:InvokeServer({ Reason = nil })
-        end
-    end)
-    addLog("DESTRAVE", "Mãos esvaziadas via AskFieldEggDrop! Estado de transporte resetado.")
-end)
+end
 
-MainToggleBtn.MouseButton1Click:Connect(function()
-    Config.AutoStealEnabled = not Config.AutoStealEnabled
-    if Config.AutoStealEnabled then
-        if State.IsOnTreadmill then
-            dismountTreadmill()
-        end
-        Config.AutoEsteiraEnabled = false
-        State.IsOnTreadmill = false
-        if EsteiraToggleBtn then
-            EsteiraToggleBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
-            EsteiraToggleBtn.Text = "ATIVAR AUTO-ESTEIRA (TREINO)"
-            addStroke(EsteiraToggleBtn, C_CYAN, 1)
-        end
-    end
-    MainToggleBtn.BackgroundColor3 = Config.AutoStealEnabled and C_GREEN or Color3.fromRGB(30, 41, 59)
-    MainToggleBtn.Text = Config.AutoStealEnabled and "AUTO-ROUBO ATIVADO (EM EXECUCAO)" or "ATIVAR AUTO-ROUBO"
-    addStroke(MainToggleBtn, Config.AutoStealEnabled and C_GREEN or C_CYAN, 1)
-    StatusBadge.Text = Config.AutoStealEnabled and "ROUBANDO" or "PARADO"
-    StatusBadge.TextColor3 = Config.AutoStealEnabled and C_GREEN or C_MUTED
-    addLog("ROUBO", Config.AutoStealEnabled and "Auto-roubo iniciado." or "Auto-roubo desativado.")
-end)
+if Fluent then
+    local Window = Fluent:CreateWindow({
+        Title = "Roube um Ovo Hub",
+        SubTitle = "v14.1 Dump Engine Master",
+        TabWidth = 160,
+        Size = UDim2.fromOffset(580, 460),
+        Acrylic = false,
+        Theme = "Dark",
+        MinimizeKey = Enum.KeyCode.RightControl
+    })
 
---================================================================--
--- ABA 2: AUTO-ESTEIRA (TREINO CONTINUO SEM TRAVAR)
---================================================================--
-local AutoEsteiraPage = TabPages["Esteira"]
+    local Tabs = {
+        AutoSteal = Window:AddTab({ Title = "Auto-Steal", Icon = "egg" }),
+        Esteira = Window:AddTab({ Title = "Auto-Esteira", Icon = "gauge" }),
+        Radar = Window:AddTab({ Title = "Radar de Ovos", Icon = "scan" }),
+        ArmasPets = Window:AddTab({ Title = "Armas & Pets", Icon = "swords" }),
+        Teleports = Window:AddTab({ Title = "Teleportes", Icon = "map-pin" }),
+        Logs = Window:AddTab({ Title = "Console / Logs", Icon = "terminal" })
+    }
 
-local EsteiraDescCard = createCleanCard(AutoEsteiraPage, 45)
-local EsteiraDesc = Instance.new("TextLabel")
-EsteiraDesc.Size = UDim2.new(1, -20, 1, 0)
-EsteiraDesc.Position = UDim2.new(0, 10, 0, 0)
-EsteiraDesc.BackgroundTransparency = 1
-EsteiraDesc.Font = Enum.Font.Gotham
-EsteiraDesc.TextSize = 9
-EsteiraDesc.TextColor3 = C_MUTED
-EsteiraDesc.TextWrapped = true
-EsteiraDesc.TextXAlignment = Enum.TextXAlignment.Left
-EsteiraDesc.Text = "Treina continuamente na esteira da sua propria base. Quando estiver na esteira, o personagem corre sem parar (sem entrar no estado travado/parado)."
-EsteiraDesc.Parent = EsteiraDescCard
-
-EsteiraToggleBtn = Instance.new("TextButton")
-EsteiraToggleBtn.Size = UDim2.new(1, 0, 0, 42)
-EsteiraToggleBtn.BackgroundColor3 = Config.AutoEsteiraEnabled and C_GREEN or Color3.fromRGB(30, 41, 59)
-EsteiraToggleBtn.Text = Config.AutoEsteiraEnabled and "AUTO-ESTEIRA ATIVADA (TREINANDO)" or "ATIVAR AUTO-ESTEIRA (TREINO)"
-EsteiraToggleBtn.Font = Enum.Font.GothamBold
-EsteiraToggleBtn.TextSize = 11
-EsteiraToggleBtn.TextColor3 = C_TEXT
-EsteiraToggleBtn.Parent = AutoEsteiraPage
-addCorner(EsteiraToggleBtn, 8)
-addStroke(EsteiraToggleBtn, Config.AutoEsteiraEnabled and C_GREEN or C_CYAN, 1)
-
-local GoToEsteiraBtn = Instance.new("TextButton")
-GoToEsteiraBtn.Size = UDim2.new(1, 0, 0, 32)
-GoToEsteiraBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
-GoToEsteiraBtn.Text = "IR PARA MINHA ESTEIRA AGORA"
-GoToEsteiraBtn.Font = Enum.Font.GothamBold
-GoToEsteiraBtn.TextSize = 9
-GoToEsteiraBtn.TextColor3 = C_CYAN
-GoToEsteiraBtn.Parent = AutoEsteiraPage
-addCorner(GoToEsteiraBtn, 6)
-addStroke(GoToEsteiraBtn, C_BORDER, 1)
-
-local DismountEsteiraBtn = Instance.new("TextButton")
-DismountEsteiraBtn.Size = UDim2.new(1, 0, 0, 34)
-DismountEsteiraBtn.BackgroundColor3 = Color3.fromRGB(153, 27, 27)
-DismountEsteiraBtn.Text = "SAIR DA ESTEIRA (DESMONTAR AGORA)"
-DismountEsteiraBtn.Font = Enum.Font.GothamBold
-DismountEsteiraBtn.TextSize = 10
-DismountEsteiraBtn.TextColor3 = C_TEXT
-DismountEsteiraBtn.Parent = AutoEsteiraPage
-addCorner(DismountEsteiraBtn, 6)
-addStroke(DismountEsteiraBtn, Color3.fromRGB(239, 68, 68), 1.2)
-
-DismountEsteiraBtn.MouseButton1Click:Connect(function()
-    dismountTreadmill()
-end)
-
-local EsteiraStatusCard = createCleanCard(AutoEsteiraPage, 50)
-EsteiraStatusLabel = Instance.new("TextLabel")
-EsteiraStatusLabel.Size = UDim2.new(1, -20, 1, 0)
-EsteiraStatusLabel.Position = UDim2.new(0, 12, 0, 0)
-EsteiraStatusLabel.BackgroundTransparency = 1
-EsteiraStatusLabel.Font = Enum.Font.Gotham
-EsteiraStatusLabel.TextSize = 10
-EsteiraStatusLabel.TextColor3 = C_MUTED
-EsteiraStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-EsteiraStatusLabel.Text = "Esteira: Detectando..."
-EsteiraStatusLabel.Parent = EsteiraStatusCard
-
--- Funcao para achar esteira da propria base
-local treadmillCache = { At = 0, Part = nil }
-local function findMyTreadmill()
-    if os.clock() - treadmillCache.At < 2 then
-        local cachedPart = treadmillCache.Part
-        if cachedPart and cachedPart.Parent then
-            return cachedPart, cachedPart.Position + Vector3.new(0, 1.5, 0)
-        end
-        return nil, nil
-    end
-    treadmillCache.At = os.clock()
-    treadmillCache.Part = nil
-
-    local function cachePart(part)
-        treadmillCache.Part = part
-        return part, part.Position + Vector3.new(0, 1.5, 0)
-    end
-
-    local myPlot = findMyPlot()
-    local plotCenter = myPlot and myPlot:GetPivot().Position
-        or (State.BaseCFrame and State.BaseCFrame.Position)
-    if not plotCenter then return nil, nil end
-
-    local function getTreadmillPart(root)
-        if root:IsA("BasePart") then return root end
-        local fallback = nil
-        local largestArea = 0
-        for _, desc in ipairs(root:GetDescendants()) do
-            if desc:IsA("BasePart") then
-                local low = desc.Name:lower()
-                if low:find("treadmill", 1, true) or low:find("esteira", 1, true)
-                    or low:find("belt", 1, true) or low:find("run", 1, true) then
-                    return desc
-                end
-                local area = desc.Size.X * desc.Size.Z
-                if area > largestArea then
-                    largestArea = area
-                    fallback = desc
-                end
-            end
-        end
-        return fallback
-    end
-
-    -- Primeiro use uma peça real que pertença ao próprio plot.
-    for _, desc in ipairs(myPlot and myPlot:GetDescendants() or {}) do
-        local low = desc.Name:lower()
-        if low:find("treadmill", 1, true) or low:find("esteira", 1, true)
-            or low:find("conveyor", 1, true) or low:find("belt", 1, true) then
-            local part = getTreadmillPart(desc)
-            if part then return cachePart(part) end
-        end
-    end
-
-    -- Renders do cliente podem ficar fora da hierarquia do plot. Priorize o
-    -- UserId no nome e, como fallback, a menor distância horizontal.
-    local ctr = Services.Workspace:FindFirstChild("__ClientTreadmillRenders")
-    if ctr then
-        local bestCandidate = nil
-        local bestPart = nil
-        local bestScore = math.huge
-        local myId = tostring(LocalPlayer.UserId)
-        for _, child in ipairs(ctr:GetChildren()) do
-            local part = getTreadmillPart(child)
-            if part then
-                local delta = part.Position - plotCenter
-                local horizontalDistance = Vector3.new(delta.X, 0, delta.Z).Magnitude
-                local ownerMatch = child.Name:find(myId, 1, true) ~= nil
-                local score = ownerMatch and (horizontalDistance - 1000) or horizontalDistance
-                if (ownerMatch or horizontalDistance <= 240) and score < bestScore then
-                    bestScore = score
-                    bestCandidate = child
-                    bestPart = part
-                end
-            end
-        end
-        if bestCandidate and bestPart then
-            traceEvent("TREADMILL", "FOUND_RENDER", {
-                container = bestCandidate,
-                part = bestPart,
-                plot = myPlot,
-                distanceFromPlot = Vector3.new(bestPart.Position.X - plotCenter.X, 0, bestPart.Position.Z - plotCenter.Z).Magnitude,
+    -- 1. ABA AUTO-STEAL
+    Tabs.AutoSteal:AddToggle("AutoStealToggle", {
+        Title = "Ativar Auto-Steal",
+        Description = "Rouba os melhores ovos do mapa e deposita no ninho",
+        Default = Config.AutoStealEnabled,
+        Callback = function(val)
+            Config.AutoStealEnabled = val
+            addLog("ROUBO", val and "Auto-Steal ativado." or "Auto-Steal pausado.")
+            Fluent:Notify({
+                Title = "Auto-Steal",
+                Content = val and "Auto-Steal ATIVADO" or "Auto-Steal PAUSADO",
+                Duration = 2
             })
-            return cachePart(bestPart)
         end
-    end
+    })
 
+    Tabs.AutoSteal:AddToggle("AutoEquipToggle", {
+        Title = "Auto-Equipar Melhores Pets",
+        Description = "Equipa os melhores pets automaticamente apos cada choco",
+        Default = Config.AutoEquipBest,
+        Callback = function(val)
+            Config.AutoEquipBest = val
+            if val then equipBestPets() end
+        end
+    })
 
-    -- Último fallback: alguns servidores não usam __ClientTreadmillRenders.
-    -- Considere apenas objetos explicitamente nomeados e próximos ao nosso plot.
-    local nearestPart = nil
-    local nearestDistance = math.huge
-    for _, desc in ipairs(Services.Workspace:GetDescendants()) do
-        local low = desc.Name:lower()
-        if low:find("treadmill", 1, true) or low:find("esteira", 1, true) then
-            local part = getTreadmillPart(desc)
-            if part then
-                local delta = part.Position - plotCenter
-                local distance = Vector3.new(delta.X, 0, delta.Z).Magnitude
-                if distance <= 240 and distance < nearestDistance then
-                    nearestDistance = distance
-                    nearestPart = part
+    Tabs.AutoSteal:AddDropdown("PriorityModeDropdown", {
+        Title = "Prioridade de Alvo",
+        Values = {"Mais Raro", "Maior Renda", "Mais Proximo"},
+        Default = "Mais Raro",
+        Callback = function(val)
+            Config.PriorityMode = val
+            addLog("CONFIG", "Prioridade alterada para: " .. tostring(val))
+        end
+    })
+
+    Tabs.AutoSteal:AddSlider("MoveSpeedSlider", {
+        Title = "Velocidade de Deslocamento",
+        Description = "Velocidade de voo overhead e movimentacao segura",
+        Default = Config.MoveSpeed or 45,
+        Min = 16,
+        Max = 100,
+        Rounding = 0,
+        Callback = function(val)
+            Config.MoveSpeed = val
+        end
+    })
+
+    Tabs.AutoSteal:AddButton({
+        Title = "Esvaziar Maos (Descartar Ovo Preso)",
+        Description = "Descarta qualquer ovo que tenha travado nas maos",
+        Callback = function()
+            local dropped = false
+            pcall(function()
+                if GameModules.EggState and GameModules.EggState.DropFieldEgg then
+                    GameModules.EggState.DropFieldEgg("PlayerRequest")
+                    dropped = true
                 end
+            end)
+            pcall(function()
+                local askDrop = getRemote("RF/EggWorld/AskFieldEggDrop")
+                if askDrop and askDrop:IsA("RemoteFunction") then
+                    askDrop:InvokeServer({ Reason = "PlayerRequest" })
+                    dropped = true
+                end
+            end)
+            addLog("ROUBO", dropped and "Comando de esvaziar maos enviado ao servidor." or "Nenhum ovo para descartar.")
+            Fluent:Notify({
+                Title = "Esvaziar Maos",
+                Content = "Comando de descarte enviado!",
+                Duration = 2
+            })
+        end
+    })
+
+    Tabs.AutoSteal:AddButton({
+        Title = "Teleportar para Minha Base / Ninho",
+        Description = "Retorna instantaneamente para sua base",
+        Callback = function()
+            local dep = getMyDepositCFrame() or State.BaseCFrame
+            local hrp = getHRP()
+            if dep and hrp then
+                hrp.CFrame = dep + Vector3.new(0, 3, 0)
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                addLog("TELEPORTE", "Retornado para sua base com sucesso.")
             end
         end
-    end
-    if nearestPart then
-        traceEvent("TREADMILL", "FOUND_NAMED_FALLBACK", {
-            part = nearestPart,
-            plot = myPlot,
-            distanceFromPlot = nearestDistance,
-        })
-        return cachePart(nearestPart)
-    end
+    })
 
-    return nil, nil
-end
-
--- Função Mestre de Desmonte da Esteira (Garante desmonte oficial via AskDoff)
-local function dismountTreadmill()
-    Config.AutoEsteiraEnabled = false
-    State.IsOnTreadmill = false
-    lastTreadmillMode = "OFF"
-    treadmillNavigating = false
-    if EsteiraToggleBtn then
-        EsteiraToggleBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
-        EsteiraToggleBtn.Text = "ATIVAR AUTO-ESTEIRA (TREINO)"
-        addStroke(EsteiraToggleBtn, C_CYAN, 1)
-    end
-    if StatusBadge then
-        StatusBadge.Text = Config.AutoStealEnabled and "ROUBANDO" or "PARADO"
-        StatusBadge.TextColor3 = Config.AutoStealEnabled and C_GREEN or C_MUTED
-    end
-
-    -- Chamada oficial de desmonte no servidor para liberar o personagem
-    pcall(function()
-        local askDoff = getRemote("RF/Treadmill/AskDoff")
-        if askDoff and askDoff:IsA("RemoteFunction") then
-            askDoff:InvokeServer()
-        end
-    end)
-
-    local hum = getHum()
-    local hrp = getHRP()
-    if hum and hrp then
-        hum:Move(Vector3.zero, false)
-        hum.Jump = true
-        task.wait(0.04)
-        local myPlot = findMyPlot()
-        local targetExitPos = nil
-        if myPlot then
-            local plotCenter = myPlot:GetPivot().Position
-            local dir = (Vector3.new(plotCenter.X, hrp.Position.Y, plotCenter.Z) - hrp.Position).Unit
-            targetExitPos = hrp.Position + (dir * 14) + Vector3.new(0, 3, 0)
-        else
-            targetExitPos = hrp.Position + (-hrp.CFrame.LookVector * 14) + Vector3.new(0, 3, 0)
-        end
-        hrp.CFrame = CFrame.new(targetExitPos)
-        hrp.AssemblyLinearVelocity = Vector3.zero
-    end
-    addLog("ESTEIRA", "Desmontado da esteira com sucesso via AskDoff!")
-end
-
-GoToEsteiraBtn.MouseButton1Click:Connect(function()
-    local _, tPos = findMyTreadmill()
-    if tPos then
-        task.spawn(function()
-            addLog("ESTEIRA", "Caminhando até a sua esteira...")
-            local arrived = movePlayerSafe(tPos, Config.MoveSpeed)
-            addLog("ESTEIRA", arrived and "Chegou à esteira." or "Não foi possível calcular uma rota segura.")
-        end)
-    else
-        addLog("ESTEIRA", "Esteira real não encontrada no seu plot.")
-    end
-end)
-
--- Conexao de corrida continua no Heartbeat (resolve 100% o estado parado)
-local esteiraHeartbeatConn = nil
-local treadmillNavigating = false
-local lastTreadmillMode = "OFF"
-local function setupEsteiraRunner()
-    if esteiraHeartbeatConn then esteiraHeartbeatConn:Disconnect() end
-    esteiraHeartbeatConn = Services.RunService.Heartbeat:Connect(function()
-        if State.IsUnloaded or not Config.AutoEsteiraEnabled then return end
-        
-        local holding = isHoldingEgg()
-        if State.IsExecutingSteal or holding then
-            State.IsOnTreadmill = false
-            if lastTreadmillMode ~= "BLOCKED" then
-                lastTreadmillMode = "BLOCKED"
-                traceEvent("TREADMILL", "BLOCKED", { stealing = State.IsExecutingSteal, holding = holding })
-            end
-            return
-        end
-
-        local hrp = getHRP()
-        local hum = getHum()
-        if not hrp or not hum or hum.Health <= 0 then
-            State.IsOnTreadmill = false
-            return
-        end
-
-        -- Detecção de Movimento Manual do Jogador (WASD / Espaço)
-        local hasManualInput = false
-        pcall(function()
-            local uis = Services.UserInputService
-            if uis:IsKeyDown(Enum.KeyCode.W) or uis:IsKeyDown(Enum.KeyCode.A) 
-                or uis:IsKeyDown(Enum.KeyCode.S) or uis:IsKeyDown(Enum.KeyCode.D)
-                or uis:IsKeyDown(Enum.KeyCode.Space) then
-                hasManualInput = true
-            end
-        end)
-        if hasManualInput then
-            if State.IsOnTreadmill then
+    -- 2. ABA AUTO-ESTEIRA
+    local EsteiraToggle = Tabs.Esteira:AddToggle("EsteiraToggle", {
+        Title = "Ativar Treino na Esteira",
+        Description = "Monta na esteira oficial com AskWearStill e treina sem travar",
+        Default = Config.AutoEsteiraEnabled,
+        Callback = function(val)
+            Config.AutoEsteiraEnabled = val
+            if not val then
+                lastTreadmillMode = "OFF"
                 State.IsOnTreadmill = false
+                local hum = getHum()
+                if hum then hum:Move(Vector3.zero, false) end
                 pcall(function()
-                    local askDoff = getRemote("RF/Treadmill/AskDoff")
+                    local askDoff = getRemote("RF/EggWorld/AskDoff")
                     if askDoff and askDoff:IsA("RemoteFunction") then
                         askDoff:InvokeServer()
                     end
                 end)
-                lastTreadmillMode = "MANUAL_MOVE"
-                addLog("ESTEIRA", "Movimento manual detectado. Desmontando da esteira...")
             end
-            return
+            addLog("ESTEIRA", val and "Auto-Esteira iniciada." or "Auto-Esteira desativada.")
+            Fluent:Notify({
+                Title = "Auto-Esteira",
+                Content = val and "Treino ATIVADO" or "Treino DESATIVADO",
+                Duration = 2
+            })
         end
-
-        local tPart, tPos = findMyTreadmill()
-        if not tPos then
-            State.IsOnTreadmill = false
-            if lastTreadmillMode ~= "NOT_FOUND" then
-                lastTreadmillMode = "NOT_FOUND"
-                traceEvent("TREADMILL", "NOT_FOUND", {})
-            end
-            return
-        end
-
-        local hDist = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(tPos.X, 0, tPos.Z)).Magnitude
-
-        if hDist > 4.0 then
-            State.IsOnTreadmill = false
-            -- Se o jogador estiver longe (> 14 studs), não puxe de volta à força!
-            if hDist > 14.0 then
-                if lastTreadmillMode ~= "AWAY" then
-                    lastTreadmillMode = "AWAY"
-                    addLog("ESTEIRA", "Você se afastou da esteira. Auto-esteira em espera.")
-                end
-                return
-            end
-            if lastTreadmillMode ~= "RETURNING" then
-                lastTreadmillMode = "RETURNING"
-                traceEvent("TREADMILL", "RETURNING", { distance = hDist, target = tPos })
-                addLog("ESTEIRA", "Você saiu da esteira; retornando automaticamente.")
-            end
-            if not treadmillNavigating and not isMoving then
-                treadmillNavigating = true
-                task.spawn(function()
-                    movePlayerSafe(tPos, Config.MoveSpeed)
-                    treadmillNavigating = false
-                end)
-            end
-            return
-        end
-        if not State.IsOnTreadmill then
-            State.IsOnTreadmill = true
-            pcall(function()
-                local askWear = getRemote("RF/Treadmill/AskWearStill")
-                if askWear and askWear:IsA("RemoteFunction") then
-                    askWear:InvokeServer()
-                end
-            end)
-        end
-        if lastTreadmillMode ~= "RUNNING" then
-            lastTreadmillMode = "RUNNING"
-            traceEvent("TREADMILL", "RUNNING", { position = hrp.Position })
-        end
-        if StatusBadge and StatusBadge.Text ~= "NA ESTEIRA" then
-            StatusBadge.Text = "NA ESTEIRA"
-            StatusBadge.TextColor3 = C_YELLOW
-        end
-        hum:Move(Vector3.new(0, 0, -1), false)
-    end)
-    table.insert(ScriptConnections, esteiraHeartbeatConn)
-end
-
-setupEsteiraRunner()
-
-EsteiraToggleBtn.MouseButton1Click:Connect(function()
-    Config.AutoEsteiraEnabled = not Config.AutoEsteiraEnabled
-    traceEvent("TREADMILL", Config.AutoEsteiraEnabled and "ENABLED" or "DISABLED", {})
-    if Config.AutoEsteiraEnabled then
-        Config.AutoStealEnabled = false
-        setStealState("IDLE")
-        MainToggleBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
-        MainToggleBtn.Text = "ATIVAR AUTO-ROUBO"
-        addStroke(MainToggleBtn, C_CYAN, 1)
-    end
-    EsteiraToggleBtn.BackgroundColor3 = Config.AutoEsteiraEnabled and C_GREEN or Color3.fromRGB(30, 41, 59)
-    EsteiraToggleBtn.Text = Config.AutoEsteiraEnabled and "AUTO-ESTEIRA ATIVADA (TREINANDO)" or "ATIVAR AUTO-ESTEIRA (TREINO)"
-    addStroke(EsteiraToggleBtn, Config.AutoEsteiraEnabled and C_GREEN or C_CYAN, 1)
-    if not Config.AutoEsteiraEnabled then
-        lastTreadmillMode = "OFF"
-        State.IsOnTreadmill = false
-        local hum = getHum()
-        if hum then hum:Move(Vector3.zero, false) end
-        StatusBadge.Text = Config.AutoStealEnabled and "ROUBANDO" or "PARADO"
-        StatusBadge.TextColor3 = Config.AutoStealEnabled and C_GREEN or C_MUTED
-    end
-    addLog("ESTEIRA", Config.AutoEsteiraEnabled and "Auto-Esteira iniciada." or "Auto-Esteira desativada.")
-end)
-
---================================================================--
---================================================================--
--- ABA 2.5: ARMAS SECRETAS & GERENCIADOR DE PETS (100% DUMP ENGINE)
---================================================================--
-local ArmasPetsPage = TabPages["Armas & Pets"]
-
--- Card de Armas Secretas
-local ArmasCard = createCleanCard(ArmasPetsPage, 115)
-local ArmasTitle = Instance.new("TextLabel")
-ArmasTitle.Size = UDim2.new(1, -20, 0, 18)
-ArmasTitle.Position = UDim2.new(0, 10, 0, 6)
-ArmasTitle.BackgroundTransparency = 1
-ArmasTitle.Font = Enum.Font.GothamBold
-ArmasTitle.TextSize = 10
-ArmasTitle.TextColor3 = C_YELLOW
-ArmasTitle.TextXAlignment = Enum.TextXAlignment.Left
-ArmasTitle.Text = "ARMAS SECRETAS DO MAPA (GATILHO FISIOLOGICO):"
-ArmasTitle.Parent = ArmasCard
-
-local ArmasDesc = Instance.new("TextLabel")
-ArmasDesc.Size = UDim2.new(1, -20, 0, 24)
-ArmasDesc.Position = UDim2.new(0, 10, 0, 24)
-ArmasDesc.BackgroundTransparency = 1
-ArmasDesc.Font = Enum.Font.Gotham
-ArmasDesc.TextSize = 9
-ArmasDesc.TextColor3 = C_MUTED
-ArmasDesc.TextXAlignment = Enum.TextXAlignment.Left
-ArmasDesc.TextWrapped = true
-ArmasDesc.Text = "3 pedestais mapeados (Slap Glove, Bat/Choque, Lançador de Abelhas) acionando a parte Block real."
-ArmasDesc.Parent = ArmasCard
-
-local CollectAllGearsBtn = Instance.new("TextButton")
-CollectAllGearsBtn.Size = UDim2.new(1, -20, 0, 36)
-CollectAllGearsBtn.Position = UDim2.new(0, 10, 0, 52)
-CollectAllGearsBtn.BackgroundColor3 = Color3.fromRGB(217, 119, 6)
-CollectAllGearsBtn.Text = "PEGAR TODAS AS 3 ARMAS SECRETAS"
-CollectAllGearsBtn.Font = Enum.Font.GothamBold
-CollectAllGearsBtn.TextSize = 11
-CollectAllGearsBtn.TextColor3 = C_TEXT
-CollectAllGearsBtn.Parent = ArmasCard
-addCorner(CollectAllGearsBtn, 6)
-addStroke(CollectAllGearsBtn, C_YELLOW, 1)
-
-CollectAllGearsBtn.MouseButton1Click:Connect(function()
-    CollectAllGearsBtn.Text = "COLETANDO ARMAS NO MAPA..."
-    task.spawn(function()
-        collectAllSecretWeapons()
-        CollectAllGearsBtn.Text = "PEGAR TODAS AS 3 ARMAS SECRETAS"
-    end)
-end)
-
--- Card de Gerenciamento de Pets & Auto-Hatch
-local PetsCard = createCleanCard(ArmasPetsPage, 165)
-local PetsTitle = Instance.new("TextLabel")
-PetsTitle.Size = UDim2.new(1, -20, 0, 18)
-PetsTitle.Position = UDim2.new(0, 10, 0, 6)
-PetsTitle.BackgroundTransparency = 1
-PetsTitle.Font = Enum.Font.GothamBold
-PetsTitle.TextSize = 10
-PetsTitle.TextColor3 = C_CYAN
-PetsTitle.TextXAlignment = Enum.TextXAlignment.Left
-PetsTitle.Text = "GERENCIADOR NATIVO DE PETS & CHOCAMENTO:"
-PetsTitle.Parent = PetsCard
-
-local WearBestBtn = Instance.new("TextButton")
-WearBestBtn.Size = UDim2.new(1, -20, 0, 32)
-WearBestBtn.Position = UDim2.new(0, 10, 0, 28)
-WearBestBtn.BackgroundColor3 = Color3.fromRGB(22, 101, 52)
-WearBestBtn.Text = "EQUIPAR MELHORES PETS (WEAR BEST)"
-WearBestBtn.Font = Enum.Font.GothamBold
-WearBestBtn.TextSize = 10
-WearBestBtn.TextColor3 = Color3.fromRGB(74, 222, 128)
-WearBestBtn.Parent = PetsCard
-addCorner(WearBestBtn, 6)
-addStroke(WearBestBtn, C_GREEN, 1)
-
-WearBestBtn.MouseButton1Click:Connect(function()
-    equipBestPets()
-end)
-
-local AutoHatchToggleBtn = Instance.new("TextButton")
-AutoHatchToggleBtn.Size = UDim2.new(0.48, 0, 0, 32)
-AutoHatchToggleBtn.Position = UDim2.new(0, 10, 0, 66)
-AutoHatchToggleBtn.BackgroundColor3 = Config.AutoHatchEnabled and Color3.fromRGB(30, 44, 74) or Color3.fromRGB(26, 36, 60)
-AutoHatchToggleBtn.Text = Config.AutoHatchEnabled and "AUTO-HATCH: ATIVO" or "AUTO-HATCH: DESATIVADO"
-AutoHatchToggleBtn.Font = Enum.Font.GothamBold
-AutoHatchToggleBtn.TextSize = 9
-AutoHatchToggleBtn.TextColor3 = Config.AutoHatchEnabled and C_GREEN or C_MUTED
-AutoHatchToggleBtn.Parent = PetsCard
-addCorner(AutoHatchToggleBtn, 6)
-addStroke(AutoHatchToggleBtn, Config.AutoHatchEnabled and C_GREEN or C_BORDER, 1)
-
-AutoHatchToggleBtn.MouseButton1Click:Connect(function()
-    Config.AutoHatchEnabled = not Config.AutoHatchEnabled
-    AutoHatchToggleBtn.Text = Config.AutoHatchEnabled and "AUTO-HATCH: ATIVO" or "AUTO-HATCH: DESATIVADO"
-    AutoHatchToggleBtn.TextColor3 = Config.AutoHatchEnabled and C_GREEN or C_MUTED
-    addStroke(AutoHatchToggleBtn, Config.AutoHatchEnabled and C_GREEN or C_BORDER, 1)
-    addLog("HATCH", Config.AutoHatchEnabled and "Auto-Hatch ativado!" or "Auto-Hatch desativado.")
-end)
-
-local AutoSellBtn = Instance.new("TextButton")
-AutoSellBtn.Size = UDim2.new(0.48, -4, 0, 32)
-AutoSellBtn.Position = UDim2.new(0.52, 2, 0, 66)
-AutoSellBtn.BackgroundColor3 = Color3.fromRGB(30, 44, 74)
-AutoSellBtn.Text = "AUTO-SELL COMUNS"
-AutoSellBtn.Font = Enum.Font.GothamBold
-AutoSellBtn.TextSize = 9
-AutoSellBtn.TextColor3 = C_YELLOW
-AutoSellBtn.Parent = PetsCard
-addCorner(AutoSellBtn, 6)
-addStroke(AutoSellBtn, C_YELLOW, 1)
-
-AutoSellBtn.MouseButton1Click:Connect(function()
-    configureNativeAutoSell({
-        Common = true,
-        Uncommon = true,
-        Rare = false
     })
-end)
 
-local ForceHatchNowBtn = Instance.new("TextButton")
-ForceHatchNowBtn.Size = UDim2.new(1, -20, 0, 28)
-ForceHatchNowBtn.Position = UDim2.new(0, 10, 0, 104)
-ForceHatchNowBtn.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
-ForceHatchNowBtn.Text = "CHOCAR TODOS OS OVOS PRONTOS AGORA"
-ForceHatchNowBtn.Font = Enum.Font.GothamBold
-ForceHatchNowBtn.TextSize = 10
-ForceHatchNowBtn.TextColor3 = C_CYAN
-ForceHatchNowBtn.Parent = PetsCard
-addCorner(ForceHatchNowBtn, 6)
-addStroke(ForceHatchNowBtn, C_BORDER, 1)
+    Tabs.Esteira:AddDropdown("EsteiraModeDropdown", {
+        Title = "Modo de Treino",
+        Values = {"Velocidade (Speed)", "Forca (Power)"},
+        Default = "Velocidade (Speed)",
+        Callback = function(val)
+            Config.EsteiraMode = (val:find("Forca") and "Power") or "Speed"
+            addLog("ESTEIRA", "Modo de esteira alterado para: " .. tostring(Config.EsteiraMode))
+        end
+    })
 
-ForceHatchNowBtn.MouseButton1Click:Connect(function()
-    task.spawn(checkAndAutoHatchEggs)
-end)
-
--- ABA 3: RADAR DE OVOS & ESP 3D
---================================================================--
-local RadarPage = TabPages["Radar"]
-
-local RadarControlsCard = createCleanCard(RadarPage, 48)
-local SearchInput = Instance.new("TextBox")
-SearchInput.Size = UDim2.new(0.66, -10, 0, 34)
-SearchInput.Position = UDim2.new(0, 10, 0.5, -17)
-SearchInput.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
-SearchInput.PlaceholderText = "Buscar ovo (Godzilla, Kitsune, T-Rex...)"
-SearchInput.PlaceholderColor3 = C_MUTED
-SearchInput.Text = ""
-SearchInput.Font = Enum.Font.Gotham
-SearchInput.TextSize = 11
-SearchInput.TextColor3 = C_TEXT
-SearchInput.Parent = RadarControlsCard
-addCorner(SearchInput, 6)
-addStroke(SearchInput, C_BORDER, 1)
-
-local EspToggleBtn = Instance.new("TextButton")
-EspToggleBtn.Size = UDim2.new(0.34, -10, 0, 34)
-EspToggleBtn.Position = UDim2.new(0.66, 0, 0.5, -17)
-EspToggleBtn.BackgroundColor3 = Config.ESPEnabled and Color3.fromRGB(22, 101, 52) or Color3.fromRGB(30, 44, 74)
-EspToggleBtn.Text = Config.ESPEnabled and "[ESP: ATIVO]" or "[ESP: DESATIVADO]"
-EspToggleBtn.Font = Enum.Font.GothamBold
-EspToggleBtn.TextSize = 11
-EspToggleBtn.TextColor3 = Config.ESPEnabled and Color3.fromRGB(74, 222, 128) or C_MUTED
-EspToggleBtn.Parent = RadarControlsCard
-addCorner(EspToggleBtn, 6)
-addStroke(EspToggleBtn, Config.ESPEnabled and C_GREEN or C_BORDER, 1)
-
-local EggListFrame = Instance.new("Frame")
-EggListFrame.Size = UDim2.new(1, 0, 0, 0)
-EggListFrame.AutomaticSize = Enum.AutomaticSize.Y
-EggListFrame.BackgroundTransparency = 1
-EggListFrame.Parent = RadarPage
-
-local eggListLayout = Instance.new("UIListLayout")
-eggListLayout.Padding = UDim.new(0, 6)
-eggListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-eggListLayout.Parent = EggListFrame
-
-local function executeCleanRadarScan()
-    if State.IsUnloaded then return end
-    local eggs = scanAllEggs()
-    for _, child in ipairs(EggListFrame:GetChildren()) do
-        if child:IsA("Frame") then child:Destroy() end
-    end
-
-    local query = SearchInput.Text:lower()
-    local count = 0
-
-    for _, egg in ipairs(eggs) do
-        if query == "" or egg.Name:lower():find(query) or egg.Rarity:lower():find(query) then
-            count = count + 1
-            if count > 25 then break end
-
-            local card = Instance.new("Frame")
-            card.Size = UDim2.new(1, 0, 0, 54)
-            card.BackgroundColor3 = C_CARD
-            card.BorderSizePixel = 0
-            card.Parent = EggListFrame
-            addCorner(card, 8)
-            addStroke(card, C_BORDER, 1)
-
-            local rColor = C_CYAN
-            if egg.Rarity == "TITAN" then rColor = Color3.fromRGB(239, 68, 68)
-            elseif egg.Rarity == "DIVINE" then rColor = Color3.fromRGB(56, 189, 248)
-            elseif egg.Rarity == "ETERNAL" then rColor = Color3.fromRGB(168, 85, 247)
-            elseif egg.Rarity == "SECRET" then rColor = Color3.fromRGB(236, 72, 153)
-            elseif egg.Rarity == "COSMIC" then rColor = Color3.fromRGB(99, 102, 241)
-            elseif egg.Rarity:find("M") then rColor = Color3.fromRGB(249, 115, 22) end
-
-            local RarityTag = Instance.new("TextLabel")
-            RarityTag.Size = UDim2.new(0, 68, 0, 22)
-            RarityTag.Position = UDim2.new(0, 10, 0.5, -11)
-            RarityTag.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
-            RarityTag.Text = egg.Rarity
-            RarityTag.Font = Enum.Font.GothamBold
-            RarityTag.TextSize = 9
-            RarityTag.TextColor3 = rColor
-            RarityTag.Parent = card
-            addCorner(RarityTag, 5)
-            addStroke(RarityTag, rColor, 1.2)
-
-            local NameLabel = Instance.new("TextLabel")
-            NameLabel.Size = UDim2.new(1, -145, 0, 18)
-            NameLabel.Position = UDim2.new(0, 86, 0, 8)
-            NameLabel.BackgroundTransparency = 1
-            NameLabel.Font = Enum.Font.GothamBold
-            NameLabel.TextSize = 12
-            NameLabel.TextColor3 = C_TEXT
-            NameLabel.TextXAlignment = Enum.TextXAlignment.Left
-            NameLabel.Text = egg.Name
-            NameLabel.Parent = card
-
-            local incBadge = egg.Income and (" • " .. egg.Income) or ""
-            local InfoLabel = Instance.new("TextLabel")
-            InfoLabel.Size = UDim2.new(1, -145, 0, 16)
-            InfoLabel.Position = UDim2.new(0, 86, 0, 28)
-            InfoLabel.BackgroundTransparency = 1
-            InfoLabel.Font = Enum.Font.Gotham
-            InfoLabel.TextSize = 10
-            InfoLabel.TextColor3 = C_MUTED
-            InfoLabel.TextXAlignment = Enum.TextXAlignment.Left
-            InfoLabel.Text = string.format("Dist: %dm%s • %s", math.floor(egg.Distance), incBadge, egg.Zone or "Selvagem")
-            InfoLabel.Parent = card
-
-            local GoBtn = Instance.new("TextButton")
-            GoBtn.Size = UDim2.new(0, 44, 0, 30)
-            GoBtn.Position = UDim2.new(1, -54, 0.5, -15)
-            GoBtn.BackgroundColor3 = Color3.fromRGB(30, 44, 74)
-            GoBtn.Text = "IR"
-            GoBtn.Font = Enum.Font.GothamBold
-            GoBtn.TextSize = 11
-            GoBtn.TextColor3 = C_CYAN
-            GoBtn.Parent = card
-            addCorner(GoBtn, 6)
-            addStroke(GoBtn, C_CYAN, 1)
-
-            local eggPos = egg.Position
-            GoBtn.MouseButton1Click:Connect(function()
-                if eggPos and not isMoving then
-                    task.spawn(function()
-                        addLog("ROTA", "Calculando caminho seguro para: " .. egg.Name)
-                        local arrived = movePlayerSafe(eggPos, Config.MoveSpeed)
-                        addLog("ROTA", arrived and "Destino alcançado." or "Não existe rota segura até esse ovo.")
-                    end)
+    Tabs.Esteira:AddButton({
+        Title = "Desmontar Esteira Imediatamente (AskDoff)",
+        Description = "Libera o personagem e restaura controles fisicos",
+        Callback = function()
+            Config.AutoEsteiraEnabled = false
+            EsteiraToggle:SetValue(false)
+            State.IsOnTreadmill = false
+            pcall(function()
+                local askDoff = getRemote("RF/EggWorld/AskDoff")
+                if askDoff and askDoff:IsA("RemoteFunction") then
+                    askDoff:InvokeServer()
                 end
             end)
-        end
-    end
-end
-
-SearchInput:GetPropertyChangedSignal("Text"):Connect(function()
-    executeCleanRadarScan()
-end)
-
-EspToggleBtn.MouseButton1Click:Connect(function()
-    Config.ESPEnabled = not Config.ESPEnabled
-    EspToggleBtn.BackgroundColor3 = Config.ESPEnabled and Color3.fromRGB(22, 101, 52) or Color3.fromRGB(30, 44, 74)
-    EspToggleBtn.Text = Config.ESPEnabled and "[ESP: ATIVO]" or "[ESP: DESATIVADO]"
-    EspToggleBtn.TextColor3 = Config.ESPEnabled and Color3.fromRGB(74, 222, 128) or C_MUTED
-    addStroke(EspToggleBtn, Config.ESPEnabled and C_GREEN or C_BORDER, 1)
-    if Config.ESPEnabled then
-        updateESP()
-    else
-        clearAllESP()
-    end
-    addLog("ESP", Config.ESPEnabled and "ESP Ativado." or "ESP Desativado.")
-end)
-
---================================================================--
--- ABA 4: DIAGNÓSTICO, AJUSTES E LOGS
---================================================================--
-local ConfigsPage = TabPages["Diagnóstico"]
-
-local TelemetryCard = createCleanCard(ConfigsPage, 54)
-local TelemetryLabel = Instance.new("TextLabel")
-TelemetryLabel.Size = UDim2.new(1, -24, 1, -10)
-TelemetryLabel.Position = UDim2.new(0, 12, 0, 5)
-TelemetryLabel.BackgroundTransparency = 1
-TelemetryLabel.Font = Enum.Font.Gotham
-TelemetryLabel.TextSize = 10
-TelemetryLabel.TextColor3 = C_MUTED
-TelemetryLabel.TextWrapped = true
-TelemetryLabel.TextXAlignment = Enum.TextXAlignment.Left
-TelemetryLabel.Text = "● GRAVAÇÃO ATIVA  •  jogue normalmente por ~10 min\nArquivos: ROUBE_UM_OVO_DUMP.txt + ROUBE_UM_OVO_TRACE.jsonl"
-TelemetryLabel.Parent = TelemetryCard
-
--- Somente filtros que influenciam diretamente a automação/radar.
-local ModifiersCard = createCleanCard(ConfigsPage, 46)
-local ModGrid = Instance.new("Frame")
-ModGrid.Size = UDim2.new(1, -20, 1, -12)
-ModGrid.Position = UDim2.new(0, 10, 0, 6)
-ModGrid.BackgroundTransparency = 1
-ModGrid.Parent = ModifiersCard
-
-local modLayout = Instance.new("UIGridLayout")
-modLayout.CellSize = UDim2.new(0.5, -4, 0, 30)
-modLayout.CellPadding = UDim2.new(0, 8, 0, 6)
-modLayout.Parent = ModGrid
-
-local IslandLockBtn = Instance.new("TextButton")
-IslandLockBtn.BackgroundColor3 = Color3.fromRGB(26, 36, 60)
-IslandLockBtn.Text = Config.LockCurrentIsland and "TRAVAR ILHA: ON" or "TRAVAR ILHA: OFF"
-IslandLockBtn.Font = Enum.Font.GothamBold
-IslandLockBtn.TextSize = 10
-IslandLockBtn.TextColor3 = Config.LockCurrentIsland and C_GREEN or C_MUTED
-IslandLockBtn.Parent = ModGrid
-addCorner(IslandLockBtn, 6)
-addStroke(IslandLockBtn, C_BORDER, 1)
-
-IslandLockBtn.MouseButton1Click:Connect(function()
-    Config.LockCurrentIsland = not Config.LockCurrentIsland
-    IslandLockBtn.Text = Config.LockCurrentIsland and "TRAVAR ILHA: ON" or "TRAVAR ILHA: OFF"
-    IslandLockBtn.TextColor3 = Config.LockCurrentIsland and C_GREEN or C_MUTED
-    if TargetTitle then
-        TargetTitle.Text = Config.LockCurrentIsland and "ALVO PRIORITARIO (ILHA ATUAL):" or "ALVO PRIORITARIO (TODO O MAPA):"
-    end
-end)
-
-local UnownedBtn = Instance.new("TextButton")
-UnownedBtn.BackgroundColor3 = Color3.fromRGB(26, 36, 60)
-UnownedBtn.Text = Config.ShowOnlyUnowned and "IGNORAR MEUS OVOS: ON" or "IGNORAR MEUS OVOS: OFF"
-UnownedBtn.Font = Enum.Font.GothamBold
-UnownedBtn.TextSize = 10
-UnownedBtn.TextColor3 = Config.ShowOnlyUnowned and C_GREEN or C_MUTED
-UnownedBtn.Parent = ModGrid
-addCorner(UnownedBtn, 6)
-addStroke(UnownedBtn, C_BORDER, 1)
-
-UnownedBtn.MouseButton1Click:Connect(function()
-    Config.ShowOnlyUnowned = not Config.ShowOnlyUnowned
-    UnownedBtn.Text = Config.ShowOnlyUnowned and "IGNORAR MEUS OVOS: ON" or "IGNORAR MEUS OVOS: OFF"
-    UnownedBtn.TextColor3 = Config.ShowOnlyUnowned and C_GREEN or C_MUTED
-end)
-
--- Card de Sliders
-local SlidersCard = createCleanCard(ConfigsPage, 88)
-local SpeedLabel = Instance.new("TextLabel")
-SpeedLabel.Size = UDim2.new(1, -20, 0, 18)
-SpeedLabel.Position = UDim2.new(0, 10, 0, 8)
-SpeedLabel.BackgroundTransparency = 1
-SpeedLabel.Font = Enum.Font.GothamBold
-SpeedLabel.TextSize = 11
-SpeedLabel.TextColor3 = C_TEXT
-SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
-SpeedLabel.Text = string.format("Velocidade de deslize: %d studs/s", Config.MoveSpeed)
-SpeedLabel.Parent = SlidersCard
-
-local SpeedSliderBg = Instance.new("Frame")
-SpeedSliderBg.Size = UDim2.new(1, -20, 0, 10)
-SpeedSliderBg.Position = UDim2.new(0, 10, 0, 26)
-SpeedSliderBg.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
-SpeedSliderBg.Parent = SlidersCard
-addCorner(SpeedSliderBg, 5)
-
-local SpeedSliderFill = Instance.new("Frame")
-SpeedSliderFill.Size = UDim2.new((Config.MoveSpeed - 16) / 20, 0, 1, 0)
-SpeedSliderFill.BackgroundColor3 = C_CYAN
-SpeedSliderFill.BorderSizePixel = 0
-SpeedSliderFill.Parent = SpeedSliderBg
-addCorner(SpeedSliderFill, 5)
-
-local SpeedTrigger = Instance.new("TextButton")
-SpeedTrigger.Size = UDim2.new(1, 0, 1, 0)
-SpeedTrigger.BackgroundTransparency = 1
-SpeedTrigger.Text = ""
-SpeedTrigger.Parent = SpeedSliderBg
-
-local isDraggingSpeed = false
-SpeedTrigger.MouseButton1Down:Connect(function() isDraggingSpeed = true end)
-table.insert(ScriptConnections, Services.UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        if isDraggingSpeed then
-            traceEvent("CONFIG", "MOVE_SPEED", { value = Config.MoveSpeed })
-            addLog("AJUSTE", "Velocidade alterada para " .. tostring(Config.MoveSpeed) .. " studs/s")
-        end
-        isDraggingSpeed = false
-    end
-end))
-
-table.insert(ScriptConnections, Services.RunService.RenderStepped:Connect(function()
-    if isDraggingSpeed then
-        local mousePos = Services.UserInputService:GetMouseLocation().X
-        local barPos = SpeedSliderBg.AbsolutePosition.X
-        local barSize = SpeedSliderBg.AbsoluteSize.X
-        local pct = math.clamp((mousePos - barPos) / barSize, 0, 1)
-        SpeedSliderFill.Size = UDim2.new(pct, 0, 1, 0)
-        local val = 16 + math.floor(pct * 20)
-        Config.MoveSpeed = val
-        SpeedLabel.Text = string.format("Velocidade de deslize: %d studs/s", val)
-    end
-end))
-
-local DistLabel = Instance.new("TextLabel")
-DistLabel.Size = UDim2.new(1, -20, 0, 18)
-DistLabel.Position = UDim2.new(0, 10, 0, 44)
-DistLabel.BackgroundTransparency = 1
-DistLabel.Font = Enum.Font.GothamBold
-DistLabel.TextSize = 11
-DistLabel.TextColor3 = C_TEXT
-DistLabel.TextXAlignment = Enum.TextXAlignment.Left
-DistLabel.Text = string.format("Alcance Maximo: %d studs", Config.MaxStealDistance)
-DistLabel.Parent = SlidersCard
-
-local DistSliderBg = Instance.new("Frame")
-DistSliderBg.Size = UDim2.new(1, -20, 0, 10)
-DistSliderBg.Position = UDim2.new(0, 10, 0, 60)
-DistSliderBg.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
-DistSliderBg.Parent = SlidersCard
-addCorner(DistSliderBg, 5)
-
-local DistSliderFill = Instance.new("Frame")
-DistSliderFill.Size = UDim2.new(Config.MaxStealDistance / 1500, 0, 1, 0)
-DistSliderFill.BackgroundColor3 = C_CYAN
-DistSliderFill.BorderSizePixel = 0
-DistSliderFill.Parent = DistSliderBg
-addCorner(DistSliderFill, 5)
-
-local DistTrigger = Instance.new("TextButton")
-DistTrigger.Size = UDim2.new(1, 0, 1, 0)
-DistTrigger.BackgroundTransparency = 1
-DistTrigger.Text = ""
-DistTrigger.Parent = DistSliderBg
-
-local isDraggingDist = false
-DistTrigger.MouseButton1Down:Connect(function() isDraggingDist = true end)
-table.insert(ScriptConnections, Services.UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        if isDraggingDist then
-            traceEvent("CONFIG", "MAX_DISTANCE", { value = Config.MaxStealDistance })
-        end
-        isDraggingDist = false
-    end
-end))
-
-table.insert(ScriptConnections, Services.RunService.RenderStepped:Connect(function()
-    if isDraggingDist then
-        local mousePos = Services.UserInputService:GetMouseLocation().X
-        local barPos = DistSliderBg.AbsolutePosition.X
-        local barSize = DistSliderBg.AbsoluteSize.X
-        local pct = math.clamp((mousePos - barPos) / barSize, 0.05, 1)
-        DistSliderFill.Size = UDim2.new(pct, 0, 1, 0)
-        local val = math.floor(pct * 1500)
-        Config.MaxStealDistance = val
-        DistLabel.Text = string.format("Alcance Maximo: %d studs", val)
-    end
-end))
-
--- Card de Log Console com Rolagem Inteligente (Sem Bug de Snap ao Rolar)
-local LogCard = createCleanCard(ConfigsPage, 126)
-local LogTitle = Instance.new("TextLabel")
-LogTitle.Size = UDim2.new(0.5, -10, 0, 18)
-LogTitle.Position = UDim2.new(0, 10, 0, 6)
-LogTitle.BackgroundTransparency = 1
-LogTitle.Font = Enum.Font.GothamBold
-LogTitle.TextSize = 10
-LogTitle.TextColor3 = C_MUTED
-LogTitle.TextXAlignment = Enum.TextXAlignment.Left
-LogTitle.Text = "REGISTROS DO SISTEMA (LOGS):"
-LogTitle.Parent = LogCard
-
-local ScrollToggleBtn = Instance.new("TextButton")
-ScrollToggleBtn.Size = UDim2.new(0.32, -4, 0, 18)
-ScrollToggleBtn.Position = UDim2.new(0.50, 0, 0, 6)
-ScrollToggleBtn.BackgroundColor3 = Color3.fromRGB(22, 101, 52)
-ScrollToggleBtn.Text = "SCROLL: ATIVO"
-ScrollToggleBtn.Font = Enum.Font.GothamBold
-ScrollToggleBtn.TextSize = 8
-ScrollToggleBtn.TextColor3 = Color3.fromRGB(74, 222, 128)
-ScrollToggleBtn.Parent = LogCard
-addCorner(ScrollToggleBtn, 4)
-
-local ClearLogsBtn = Instance.new("TextButton")
-ClearLogsBtn.Size = UDim2.new(0.18, -4, 0, 18)
-ClearLogsBtn.Position = UDim2.new(0.82, 0, 0, 6)
-ClearLogsBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
-ClearLogsBtn.Text = "LIMPAR"
-ClearLogsBtn.Font = Enum.Font.GothamBold
-ClearLogsBtn.TextSize = 8
-ClearLogsBtn.TextColor3 = C_MUTED
-ClearLogsBtn.Parent = LogCard
-addCorner(ClearLogsBtn, 4)
-
-local LogScroll = Instance.new("ScrollingFrame")
-LogScroll.Size = UDim2.new(1, -20, 0, 92)
-LogScroll.Position = UDim2.new(0, 10, 0, 28)
-LogScroll.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
-LogScroll.BorderSizePixel = 0
-LogScroll.ScrollBarThickness = 4
-LogScroll.ScrollBarImageColor3 = C_CYAN
-LogScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-LogScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-LogScroll.Parent = LogCard
-addCorner(LogScroll, 6)
-
-local LogTextLabel = Instance.new("TextLabel")
-LogTextLabel.Size = UDim2.new(1, -8, 0, 0)
-LogTextLabel.AutomaticSize = Enum.AutomaticSize.Y
-LogTextLabel.Position = UDim2.new(0, 4, 0, 4)
-LogTextLabel.BackgroundTransparency = 1
-LogTextLabel.Font = Enum.Font.Code
-LogTextLabel.TextSize = 9
-LogTextLabel.TextColor3 = Color3.fromRGB(226, 232, 240)
-LogTextLabel.TextXAlignment = Enum.TextXAlignment.Left
-LogTextLabel.TextYAlignment = Enum.TextYAlignment.Top
-LogTextLabel.TextWrapped = true
-LogTextLabel.Text = "Pronto."
-LogTextLabel.Parent = LogScroll
-
-local function updateScrollBtnState()
-    if State.LogAutoScroll then
-        ScrollToggleBtn.BackgroundColor3 = Color3.fromRGB(22, 101, 52)
-        ScrollToggleBtn.TextColor3 = Color3.fromRGB(74, 222, 128)
-        ScrollToggleBtn.Text = "SCROLL: ATIVO"
-    else
-        ScrollToggleBtn.BackgroundColor3 = Color3.fromRGB(217, 119, 6)
-        ScrollToggleBtn.TextColor3 = C_TEXT
-        ScrollToggleBtn.Text = "SCROLL: PAUSADO"
-    end
-end
-
-ScrollToggleBtn.MouseButton1Click:Connect(function()
-    State.LogAutoScroll = not State.LogAutoScroll
-    updateScrollBtnState()
-    if State.LogAutoScroll then
-        local maxY = math.max(0, LogScroll.AbsoluteCanvasSize.Y - LogScroll.AbsoluteWindowSize.Y)
-        LogScroll.CanvasPosition = Vector2.new(0, maxY)
-    end
-end)
-
-ClearLogsBtn.MouseButton1Click:Connect(function()
-    State.Logs = {}
-    LogTextLabel.Text = "Logs limpos."
-    LogScroll.CanvasPosition = Vector2.zero
-end)
-
--- Detecta rolagem para cima sem travar o usuario
-LogScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
-    local maxY = math.max(0, LogScroll.AbsoluteCanvasSize.Y - LogScroll.AbsoluteWindowSize.Y)
-    if maxY > 30 and (maxY - LogScroll.CanvasPosition.Y) > 40 then
-        if State.LogAutoScroll then
-            State.LogAutoScroll = false
-            updateScrollBtnState()
-        end
-    elseif maxY > 0 and (maxY - LogScroll.CanvasPosition.Y) <= 15 then
-        if not State.LogAutoScroll then
-            State.LogAutoScroll = true
-            updateScrollBtnState()
-        end
-    end
-end)
-
-_G.UpdateLogConsole = function()
-    pcall(function()
-        LogTextLabel.Text = table.concat(State.Logs, "\n")
-        if State.LogAutoScroll then
-            task.defer(function()
-                if State.LogAutoScroll and LogScroll then
-                    local maxY = math.max(0, LogScroll.AbsoluteCanvasSize.Y - LogScroll.AbsoluteWindowSize.Y)
-                    LogScroll.CanvasPosition = Vector2.new(0, maxY)
-                end
-            end)
-        end
-    end)
-end
-
--- Botão Dump Completo
-local DumpBtn = Instance.new("TextButton")
-DumpBtn.Size = UDim2.new(1, 0, 0, 34)
-DumpBtn.BackgroundColor3 = Color3.fromRGB(26, 36, 60)
-DumpBtn.Text = "FINALIZAR COLETA E GERAR DUMP PARA ANÁLISE"
-DumpBtn.Font = Enum.Font.GothamBold
-DumpBtn.TextSize = 11
-DumpBtn.TextColor3 = C_CYAN
-DumpBtn.Parent = ConfigsPage
-addCorner(DumpBtn, 6)
-addStroke(DumpBtn, C_BORDER, 1)
-addCorner(DumpBtn, 5)
-addStroke(DumpBtn, C_BORDER, 1)
-
-DumpBtn.MouseButton1Click:Connect(function()
-    addLog("DUMP", "Iniciando dump de dados do jogo...")
-    task.spawn(function()
-        traceEvent("SESSION", "MANUAL_DUMP", { duration = os.clock() - Telemetry.StartedAt })
-        flushTelemetry()
-        local txt = dumpGameData()
-        pcall(function()
-            if setclipboard then setclipboard(txt) end
-            if writefile then writefile("ROUBE_UM_OVO_DUMP.txt", txt) end
-        end)
-        addLog("DUMP", "Pronto: envie o DUMP.txt e o TRACE.jsonl para análise.")
-    end)
-end)
-
--- Card UNLOAD Definitivo
-local UnloadFullCard = createCleanCard(ConfigsPage, 45)
-local UnloadBtnFull = Instance.new("TextButton")
-UnloadBtnFull.Size = UDim2.new(1, -20, 0, 30)
-UnloadBtnFull.Position = UDim2.new(0, 10, 0.5, -15)
-UnloadBtnFull.BackgroundColor3 = Color3.fromRGB(185, 28, 28)
-UnloadBtnFull.Text = "DESCARREGAR SCRIPT COMPLETAMENTE (UNLOAD)"
-UnloadBtnFull.Font = Enum.Font.GothamBold
-UnloadBtnFull.TextSize = 9
-UnloadBtnFull.TextColor3 = C_TEXT
-UnloadBtnFull.Parent = UnloadFullCard
-addCorner(UnloadBtnFull, 5)
-addStroke(UnloadBtnFull, C_RED, 1)
-
---================================================================--
--- SISTEMA MASTER DE DESCARREGAMENTO DEFINITIVO (UNLOAD)
---================================================================--
-unloadScript = function()
-    if State.IsUnloaded then return end
-    State.IsUnloaded = true
-
-    -- 1. Desativar todas as automações e flags
-    Config.AutoStealEnabled = false
-    Config.AutoEsteiraEnabled = false
-    Config.ESPEnabled = false
-    State.IsExecutingSteal = false
-    State.IsOnTreadmill = false
-    traceEvent("SESSION", "UNLOAD", { duration = os.clock() - Telemetry.StartedAt })
-    flushTelemetry()
-    Telemetry.Enabled = false
-    pcall(function()
-        if getgenv and type(getgenv().RoubeUmOvoTraceHookState) == "table" then
-            getgenv().RoubeUmOvoTraceHookState.Enabled = false
-            getgenv().RoubeUmOvoTraceHookState.Emit = nil
-            getgenv().RoubeUmOvoTraceHookState.ShouldTrace = nil
-        end
-    end)
-
-    -- 2. Desconectar o runner da esteira
-    if esteiraHeartbeatConn then
-        pcall(function() esteiraHeartbeatConn:Disconnect() end)
-        esteiraHeartbeatConn = nil
-    end
-
-    -- 3. Desconectar TODOS os eventos registrados (RunService, Inputs, GUI)
-    for _, conn in ipairs(ScriptConnections) do
-        pcall(function()
-            if conn and conn.Connected then
-                conn:Disconnect()
-            end
-        end)
-    end
-    table.clear(ScriptConnections)
-
-    -- 4. Limpar e restaurar o estado físico do Personagem
-    pcall(function()
-        local char = getChar()
-        if char then
-            -- Restaurar colisões padrão do personagem
-            for _, part in ipairs(char:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    part.CanCollide = true
-                end
-            end
-
-            -- Restaurar HumanoidRootPart e remover body movers
-            local hrp = getHRP()
-            if hrp then
-                hrp.Anchored = false
-                hrp.AssemblyLinearVelocity = Vector3.zero
-                hrp.AssemblyAngularVelocity = Vector3.zero
-                for _, child in ipairs(hrp:GetChildren()) do
-                    if child:IsA("BodyVelocity") or child:IsA("BodyPosition") or child:IsA("BodyGyro")
-                        or child:IsA("AlignPosition") or child:IsA("AlignOrientation")
-                        or child.Name:find("Mover") or child.Name:find("BV") then
-                        child:Destroy()
-                    end
-                end
-            end
-
-            -- Restaurar propriedades padrão do Humanoid
             local hum = getHum()
             if hum then
                 hum:Move(Vector3.zero, false)
-                hum.WalkSpeed = 16
-                hum.JumpPower = 50
                 hum.PlatformStand = false
             end
+            addLog("ESTEIRA", "Desmonte oficial concluido.")
+            Fluent:Notify({
+                Title = "Esteira",
+                Content = "Personagem desmontado com sucesso!",
+                Duration = 2
+            })
         end
-    end)
+    })
 
-    -- 5. Limpar 100% dos ESPs (tanto na tabela quanto no Workspace)
-    clearAllESP()
-    pcall(function()
-        for _, desc in ipairs(Services.Workspace:GetDescendants()) do
-            if desc:IsA("BillboardGui") and (desc.Name == "ESP_EggLabel" or desc.Name:find("ESP_")) then
-                desc:Destroy()
+    -- 3. ABA RADAR DE OVOS (100% NOMES REAIS VIA DUMP ENGINE)
+    local RadarSummary = Tabs.Radar:AddParagraph({
+        Title = "Radar Forense Oficial",
+        Content = "Clique em 'Atualizar Radar Agora' para escanear ovos com 100% de precisao."
+    })
+
+    local scannedEggsCache = {}
+    local scannedEggLabels = {"(Nenhum ovo escaneado ainda)"}
+    local selectedEggIndex = 1
+
+    local SelectedEggDropdown = Tabs.Radar:AddDropdown("RadarEggsDropdown", {
+        Title = "Ovos Vivos no Mapa",
+        Values = scannedEggLabels,
+        Default = scannedEggLabels[1],
+        Callback = function(val)
+            for idx, label in ipairs(scannedEggLabels) do
+                if label == val then
+                    selectedEggIndex = idx
+                    break
+                end
             end
         end
-    end)
+    })
 
-    -- 6. Destruir COMPLETAMENTE toda a interface gráfica e o botão mobile
-    purgeAllGuis()
-    pcall(function()
-        if ScreenGui then
-            ScreenGui.Enabled = false
-            ScreenGui.Parent = nil
-            ScreenGui:Destroy()
+    local function refreshRadarUI()
+        local eggs = scanAllEggs()
+        scannedEggsCache = eggs
+        local newLabels = {}
+        local secretCount = 0
+        local legendaryCount = 0
+
+        for idx, egg in ipairs(eggs) do
+            local rUpper = egg.Rarity:upper()
+            if rUpper:find("SECRET") then secretCount = secretCount + 1 end
+            if rUpper:find("LEGEND") then legendaryCount = legendaryCount + 1 end
+
+            local incStr = ""
+            if egg.Income and egg.Income > 0 then
+                if egg.Income >= 1000000000 then
+                    incStr = string.format(" • %.1fB/s", egg.Income / 1000000000)
+                elseif egg.Income >= 1000000 then
+                    incStr = string.format(" • %.1fM/s", egg.Income / 1000000)
+                elseif egg.Income >= 1000 then
+                    incStr = string.format(" • %.1fK/s", egg.Income / 1000)
+                else
+                    incStr = string.format(" • %d/s", egg.Income)
+                end
+            end
+            local label = string.format("[%s] %s (%s, %dm)%s", egg.Rarity, egg.Name, egg.Zone, math.floor(egg.Distance), incStr)
+            table.insert(newLabels, label)
+            if idx >= 60 then break end
         end
-    end)
-    pcall(function()
-        if MobileBtn then
-            MobileBtn.Visible = false
-            MobileBtn.Parent = nil
-            MobileBtn:Destroy()
+
+        if #newLabels == 0 then
+            newLabels = {"(Nenhum ovo disponivel no momento)"}
         end
-    end)
+        scannedEggLabels = newLabels
+        SelectedEggDropdown:SetValues(newLabels)
+        SelectedEggDropdown:SetValue(newLabels[1])
+        selectedEggIndex = 1
 
-    -- 7. Limpar variáveis globais
-    _G.RoubeUmOvoUnload = nil
-    _G.UpdateLogConsole = nil
-    _G.DiscoveredEggs = nil
-    _G.UpdateRadarCards = nil
-    _G.EggRadarText = nil
-    _G.MegaDumpText = nil
-    if getgenv then
-        pcall(function()
-            local g = getgenv()
-            g.RoubeUmOvoUnload = nil
-            g.DiscoveredEggs = nil
-            g.UpdateRadarCards = nil
-            g.UpdateLogConsole = nil
-            g.EggRadarText = nil
-            g.MegaDumpText = nil
-        end)
+        RadarSummary:SetTitle(string.format("Radar: %d Ovos Vivos no Mapa", #eggs))
+        RadarSummary:SetDesc(string.format("Ovos Secretos: %d | Ovos Lendarios: %d\nFonte: EggState.ReadFieldEggs + Data.Assets.Directory (100%% Nomes Reais)", secretCount, legendaryCount))
     end
-end
 
--- Exportar Unload globalmente para permitir fechamento via console / executor
-_G.RoubeUmOvoUnload = unloadScript
-if getgenv then
-    pcall(function() getgenv().RoubeUmOvoUnload = unloadScript end)
-end
+    Tabs.Radar:AddButton({
+        Title = "Atualizar Radar Agora",
+        Description = "Faz varredura imediata dos ovos vivos",
+        Callback = function()
+            refreshRadarUI()
+            Fluent:Notify({
+                Title = "Radar Atualizado",
+                Content = string.format("%d ovos mapeados!", #scannedEggsCache),
+                Duration = 2
+            })
+        end
+    })
 
-UnloadBtn.MouseButton1Click:Connect(function()
-    if unloadScript then unloadScript() end
-end)
-UnloadBtnFull.MouseButton1Click:Connect(function()
-    if unloadScript then unloadScript() end
-end)
-
--- Atalho LeftControl e Botão Mobile Minimalista
-table.insert(ScriptConnections, Services.UserInputService.InputBegan:Connect(function(input, gpe)
-    if not gpe and input.KeyCode == Enum.KeyCode.LeftControl then
-        MainFrame.Visible = not MainFrame.Visible
-    end
-end))
-
-MobileBtn = Instance.new("TextButton")
-MobileBtn.Name = "MobileToggleBtn"
-MobileBtn.Size = UDim2.new(0, 36, 0, 36)
-MobileBtn.Position = UDim2.new(0.02, 0, 0.45, 0)
-MobileBtn.BackgroundColor3 = C_TOPBAR
-MobileBtn.Text = "OVO"
-MobileBtn.Font = Enum.Font.GothamBold
-MobileBtn.TextSize = 9
-MobileBtn.TextColor3 = C_CYAN
-MobileBtn.Parent = ScreenGui
-addCorner(MobileBtn, 18)
-addStroke(MobileBtn, C_CYAN, 1)
-MobileBtn.Draggable = true
-
-MobileBtn.MouseButton1Click:Connect(function()
-    MainFrame.Visible = not MainFrame.Visible
-end)
-
--- Atualização de Status da Base e da Esteira em Tempo Real
-task.spawn(function()
-    while true do
-        task.wait(1.5)
-        if State.IsUnloaded then break end
-        
-        -- Atualizar Base
-        local myPlot = findMyPlot()
-        if myPlot then
-            local dep = getMyDepositCFrame()
-            if dep then
-                BaseLabel.Text = string.format("Base: (%s) em (%.0f, %.0f, %.0f)", myPlot.Name, dep.Position.X, dep.Position.Y, dep.Position.Z)
-                BaseLabel.TextColor3 = C_GREEN
+    Tabs.Radar:AddButton({
+        Title = "Roubar Ovo Selecionado Acima",
+        Description = "Inicia rota segura para roubar o ovo selecionado",
+        Callback = function()
+            local targetEgg = scannedEggsCache[selectedEggIndex]
+            if targetEgg then
+                addLog("ROUBO", string.format("Iniciando roubo manual de: %s [%s]", targetEgg.Name, targetEgg.Rarity))
+                task.spawn(function()
+                    executeDirectSteal(targetEgg)
+                end)
+                Fluent:Notify({
+                    Title = "Iniciando Roubo",
+                    Content = "Indo ate: " .. targetEgg.Name,
+                    Duration = 3
+                })
+            else
+                Fluent:Notify({
+                    Title = "Erro",
+                    Content = "Nenhum ovo valido selecionado!",
+                    Duration = 2
+                })
             end
         end
+    })
 
-        -- Atualizar Esteira
-        local tPart, tPos = findMyTreadmill()
-        if tPos then
+    -- 4. ABA ARMAS SECRETAS & PETS
+    Tabs.ArmasPets:AddSection("Armas Secretas (Pedestais Oficiais)")
+    Tabs.ArmasPets:AddParagraph({
+        Title = "Pedestais no Mapa",
+        Content = "O mapa original contem 2 pedestais fisicos com TouchPart (Slap Glove e Bat). A 3a arma (Bee Launcher) e recompensa de conquista do Index."
+    })
+
+    Tabs.ArmasPets:AddButton({
+        Title = "Coletar Armas Secretas (Slap Glove + Bat)",
+        Description = "Aciona os 2 pedestais fisicos via TouchPart com 0.7s de contato",
+        Callback = function()
+            task.spawn(function()
+                collectAllSecretWeapons()
+                Fluent:Notify({
+                    Title = "Armas Secretas",
+                    Content = "Coleta finalizada! Verifique seu Backpack.",
+                    Duration = 3
+                })
+            end)
+        end
+    })
+
+    Tabs.ArmasPets:AddSection("Gerenciador Nativo de Pets")
+    Tabs.ArmasPets:AddButton({
+        Title = "Equipar Melhores Pets (Wear Best)",
+        Description = "Invoca RF/Haul/WearBest no servidor",
+        Callback = function()
+            local ok = equipBestPets()
+            Fluent:Notify({
+                Title = "Equipar Melhores",
+                Content = ok and "Melhores pets equipados!" or "Comando enviado ao servidor.",
+                Duration = 2
+            })
+        end
+    })
+
+    Tabs.ArmasPets:AddButton({
+        Title = "Vender Pets Comuns & Incomuns Agora",
+        Description = "Filtra inventario com Save.Get() e vende via RE/PetSatchel/SellEveryPet",
+        Callback = function()
+            sellCommonPetsInInventory()
+            Fluent:Notify({
+                Title = "Auto-Sell",
+                Content = "Pets comuns/incomuns vendidos!",
+                Duration = 3
+            })
+        end
+    })
+
+    Tabs.ArmasPets:AddToggle("AutoHatchToggle", {
+        Title = "Auto-Hatch nos Ninhos",
+        Description = "Choca ovos dos seus ninhos assim que o timer zera",
+        Default = Config.AutoHatchEnabled,
+        Callback = function(val)
+            Config.AutoHatchEnabled = val
+            addLog("HATCH", val and "Auto-Hatch ATIVADO." or "Auto-Hatch PAUSADO.")
+        end
+    })
+
+    Tabs.ArmasPets:AddToggle("AutoSellToggle", {
+        Title = "Auto-Sell Continuo no Servidor",
+        Description = "Sincroniza venda automatica continua com RF/Haul/WriteAutoSell",
+        Default = false,
+        Callback = function(val)
+            configureNativeAutoSell({
+                Common = val,
+                Uncommon = val
+            })
+            addLog("PETS", val and "Auto-Sell continuo ativado no servidor." or "Auto-Sell continuo desativado.")
+        end
+    })
+
+    -- 5. ABA TELEPORTES
+    local TeleportTargets = {
+        ["Minha Base / Ninho"] = function() return getMyDepositCFrame() or State.BaseCFrame end,
+        ["Spawn Principal"] = function() return CFrame.new(0, 10, 0) end,
+        ["Ilha do Vulcao"] = function() return CFrame.new(650, 65, 0) end,
+        ["Ilha do Deserto"] = function() return CFrame.new(850, 75, 0) end,
+        ["Ilha de Gelo"] = function() return CFrame.new(1100, 85, 0) end,
+        ["Ilha Cibernetica"] = function() return CFrame.new(1400, 95, 0) end,
+        ["Pedestal Slap Glove"] = function() return CFrame.new(545.01, 55, -357.85) end,
+        ["Pedestal Bat / Choque"] = function() return CFrame.new(545.01, 55, -344.76) end
+    }
+
+    local selectedTpName = "Minha Base / Ninho"
+    local tpKeys = {}
+    for k in pairs(TeleportTargets) do table.insert(tpKeys, k) end
+    table.sort(tpKeys)
+
+    Tabs.Teleports:AddDropdown("TeleportDropdown", {
+        Title = "Destino",
+        Values = tpKeys,
+        Default = "Minha Base / Ninho",
+        Callback = function(val)
+            selectedTpName = val
+        end
+    })
+
+    Tabs.Teleports:AddButton({
+        Title = "Teleportar Agora",
+        Description = "Move o personagem para o destino selecionado",
+        Callback = function()
+            local fn = TeleportTargets[selectedTpName]
+            local targetCF = fn and fn()
             local hrp = getHRP()
-            local d = hrp and math.floor((tPos - hrp.Position).Magnitude) or 0
-            EsteiraStatusLabel.Text = string.format("Esteira: Detectada no Plot (%d studs)", d)
-            EsteiraStatusLabel.TextColor3 = C_GREEN
-        else
-            EsteiraStatusLabel.Text = "Esteira: Nao encontrada no plot."
-            EsteiraStatusLabel.TextColor3 = C_MUTED
-        end
-
-        -- Atualizar Radar caso este aberto
-        if activeTab == "Radar" then
-            executeCleanRadarScan()
-        end
-    end
-end)
-
-
--- Thread Contínua em Segundo Plano — Driver da Máquina de Estados de Roubo & Auto-Hatch
-task.spawn(function()
-    while true do
-        if State.IsUnloaded then break end
-        if Config.AutoStealEnabled and not State.IsOnTreadmill then
-            local ok, err = pcall(runStateMachineTick)
-            if not ok and err then
-                addLog("ERRO", "Falha na máquina de estados: " .. tostring(err))
-                setStealState("IDLE")
+            if targetCF and hrp then
+                hrp.CFrame = targetCF + Vector3.new(0, 3, 0)
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                addLog("TELEPORTE", "Teleportado para: " .. tostring(selectedTpName))
+                Fluent:Notify({
+                    Title = "Teleporte",
+                    Content = "Teleportado para: " .. tostring(selectedTpName),
+                    Duration = 2
+                })
             end
-        elseif not Config.AutoStealEnabled and StealSM.Current ~= "IDLE" then
-            setStealState("IDLE")
         end
+    })
 
-        -- Checagem periódica de ovos prontos para auto-hatch (a cada ~2.5s)
-        if Config.AutoHatchEnabled and (os.clock() - State.LastHatchCheck > 2.5) then
-            State.LastHatchCheck = os.clock()
-            task.spawn(checkAndAutoHatchEggs)
+    -- 6. ABA CONSOLE / LOGS
+    local LogParagraph = Tabs.Logs:AddParagraph({
+        Title = "Console em Tempo Real",
+        Content = "Iniciando monitoramento de logs..."
+    })
+
+    local function updateLogsView()
+        local logLines = {}
+        local startIdx = math.max(1, #LogHistory - 20)
+        for i = startIdx, #LogHistory do
+            table.insert(logLines, LogHistory[i])
         end
-
-        task.wait(0.15)
+        if #logLines == 0 then
+            logLines = {"Nenhum evento registrado ainda."}
+        end
+        LogParagraph:SetDesc(table.concat(logLines, "\n"))
     end
-end)
 
--- Inicialização Limpa
-task.delay(0.8, function()
-    if State.IsUnloaded then return end
-    executeCleanRadarScan()
-    addLog("SISTEMA", "Roube um Ovo Hub v14.0 (100% DUMP ENGINE MASTER) carregado com sucesso!")
-    addLog("TRACE", "Gravação ativa em " .. Telemetry.FileName)
-    pcall(function()
-        Services.StarterGui:SetCore("SendNotification", {
-            Title = "Roube um Ovo Hub",
-            Text = "Script carregado com sucesso! [CTRL ou botao para abrir/fechar]",
-            Duration = 5
-        })
+    Tabs.Logs:AddButton({
+        Title = "Atualizar Logs",
+        Description = "Atualiza o console com os eventos mais recentes",
+        Callback = function()
+            updateLogsView()
+        end
+    })
+
+    Tabs.Logs:AddButton({
+        Title = "Limpar Historico",
+        Description = "Esvazia os registros de logs",
+        Callback = function()
+            LogHistory = {}
+            LogParagraph:SetDesc("Historico limpo.")
+        end
+    })
+
+    -- Conectar gancho de notificacoes e logs
+    local oldAddLog = addLog
+    addLog = function(category, message)
+        oldAddLog(category, message)
+        pcall(updateLogsView)
+    end
+
+    -- Inicializacao da janela
+    Window:SelectTab(1)
+    task.spawn(function()
+        task.wait(1)
+        refreshRadarUI()
+        updateLogsView()
     end)
-end)
+
+    Fluent:Notify({
+        Title = "Roube um Ovo Hub v14.1",
+        Content = "Hub carregado com Fluent Design & Dump Engine Oficial!",
+        Duration = 5
+    })
+end
+
+-- Telemetria de Inicializacao Concluida
+addLog("INIT", "Roube um Ovo Hub v14.1 Dump Engine & Fluent carregado com sucesso!")
