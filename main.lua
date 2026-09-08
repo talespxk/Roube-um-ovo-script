@@ -1,6 +1,8 @@
-if not game:IsLoaded() then
-    game.Loaded:Wait()
-end
+pcall(function()
+    if not game:IsLoaded() then
+        game.Loaded:Wait()
+    end
+end)
 
 --[[
     ROUBE UM OVO - HUB DE AUTOMAÇÃO & RADAR (v14.1 DUMP ENGINE & FLUENT MASTER)
@@ -36,7 +38,11 @@ end)
 -- 2. Serviços Seguros via cloneref
 local function safeService(name)
     local s = game:GetService(name)
-    return (cloneref and cloneref(s)) or s
+    if cloneref then
+        local ok, ref = pcall(cloneref, s)
+        if ok and ref then return ref end
+    end
+    return s
 end
 
 local Services = {
@@ -3535,473 +3541,633 @@ end)
 
 --================================================================--
 --================================================================--
--- 12. INTERFACE MODERNA FLUENT DESIGN v14.1 (ULTRA CLEAN)
+--================================================================--
+-- 12. INTERFACE MODERNA FLUENT DESIGN v14.1 (COM FALLBACK AUTOMATICO)
 --================================================================--
 
 local Fluent = nil
-local okFluent, errFluent = pcall(function()
-    return loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+
+-- Tentativa 1: Repositorio Oficial Direto Raw GitHub (Sem Redirecionamentos 302)
+pcall(function()
+    local src = game:HttpGet("https://raw.githubusercontent.com/talespxk/Roube-um-ovo-script/main/fluent.lua")
+    if src and #src > 1000 then
+        local fn = loadstring(src)
+        if fn then
+            local res = fn()
+            if type(res) == "table" and res.CreateWindow then
+                Fluent = res
+            end
+        end
+    end
 end)
 
-if not okFluent or not Fluent then
-    warn("[RoubeUmOvo] Falha ao carregar Fluent UI: " .. tostring(errFluent))
-    addLog("UI", "Tentando carregar espelho alternativo do Fluent...")
+-- Tentativa 2: Release Oficial do Dawid
+if not Fluent then
     pcall(function()
-        Fluent = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/main.lua"))()
+        local src = game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua")
+        if src and #src > 1000 then
+            local fn = loadstring(src)
+            if fn then
+                local res = fn()
+                if type(res) == "table" and res.CreateWindow then
+                    Fluent = res
+                end
+            end
+        end
     end)
 end
 
+local uiCreated = false
+
 if Fluent then
-    local Window = Fluent:CreateWindow({
-        Title = "Roube um Ovo Hub",
-        SubTitle = "v14.1 Dump Engine Master",
-        TabWidth = 160,
-        Size = UDim2.fromOffset(580, 460),
-        Acrylic = false,
-        Theme = "Dark",
-        MinimizeKey = Enum.KeyCode.RightControl
-    })
+    local okWin, errWin = pcall(function()
+        local Window = Fluent:CreateWindow({
+            Title = "Roube um Ovo Hub",
+            SubTitle = "v14.1 Dump Engine Master",
+            TabWidth = 160,
+            Size = UDim2.fromOffset(580, 460),
+            Acrylic = false,
+            Theme = "Dark",
+            MinimizeKey = Enum.KeyCode.RightControl
+        })
 
-    local Tabs = {
-        AutoSteal = Window:AddTab({ Title = "Auto-Steal", Icon = "egg" }),
-        Esteira = Window:AddTab({ Title = "Auto-Esteira", Icon = "gauge" }),
-        Radar = Window:AddTab({ Title = "Radar de Ovos", Icon = "scan" }),
-        ArmasPets = Window:AddTab({ Title = "Armas & Pets", Icon = "swords" }),
-        Teleports = Window:AddTab({ Title = "Teleportes", Icon = "map-pin" }),
-        Logs = Window:AddTab({ Title = "Console / Logs", Icon = "terminal" })
-    }
+        local Tabs = {
+            AutoSteal = Window:AddTab({ Title = "Auto-Steal", Icon = "egg" }),
+            Esteira = Window:AddTab({ Title = "Auto-Esteira", Icon = "gauge" }),
+            Radar = Window:AddTab({ Title = "Radar de Ovos", Icon = "scan" }),
+            ArmasPets = Window:AddTab({ Title = "Armas & Pets", Icon = "swords" }),
+            Teleports = Window:AddTab({ Title = "Teleportes", Icon = "map-pin" }),
+            Logs = Window:AddTab({ Title = "Console / Logs", Icon = "terminal" })
+        }
 
-    -- 1. ABA AUTO-STEAL
-    Tabs.AutoSteal:AddToggle("AutoStealToggle", {
-        Title = "Ativar Auto-Steal",
-        Description = "Rouba os melhores ovos do mapa e deposita no ninho",
-        Default = Config.AutoStealEnabled,
-        Callback = function(val)
-            Config.AutoStealEnabled = val
-            addLog("ROUBO", val and "Auto-Steal ativado." or "Auto-Steal pausado.")
-            Fluent:Notify({
-                Title = "Auto-Steal",
-                Content = val and "Auto-Steal ATIVADO" or "Auto-Steal PAUSADO",
-                Duration = 2
-            })
-        end
-    })
-
-    Tabs.AutoSteal:AddToggle("AutoEquipToggle", {
-        Title = "Auto-Equipar Melhores Pets",
-        Description = "Equipa os melhores pets automaticamente apos cada choco",
-        Default = Config.AutoEquipBest,
-        Callback = function(val)
-            Config.AutoEquipBest = val
-            if val then equipBestPets() end
-        end
-    })
-
-    Tabs.AutoSteal:AddDropdown("PriorityModeDropdown", {
-        Title = "Prioridade de Alvo",
-        Values = {"Mais Raro", "Maior Renda", "Mais Proximo"},
-        Default = "Mais Raro",
-        Callback = function(val)
-            Config.PriorityMode = val
-            addLog("CONFIG", "Prioridade alterada para: " .. tostring(val))
-        end
-    })
-
-    Tabs.AutoSteal:AddSlider("MoveSpeedSlider", {
-        Title = "Velocidade de Deslocamento",
-        Description = "Velocidade de voo overhead e movimentacao segura",
-        Default = Config.MoveSpeed or 45,
-        Min = 16,
-        Max = 100,
-        Rounding = 0,
-        Callback = function(val)
-            Config.MoveSpeed = val
-        end
-    })
-
-    Tabs.AutoSteal:AddButton({
-        Title = "Esvaziar Maos (Descartar Ovo Preso)",
-        Description = "Descarta qualquer ovo que tenha travado nas maos",
-        Callback = function()
-            local dropped = false
-            pcall(function()
-                if GameModules.EggState and GameModules.EggState.DropFieldEgg then
-                    GameModules.EggState.DropFieldEgg("PlayerRequest")
-                    dropped = true
-                end
-            end)
-            pcall(function()
-                local askDrop = getRemote("RF/EggWorld/AskFieldEggDrop")
-                if askDrop and askDrop:IsA("RemoteFunction") then
-                    askDrop:InvokeServer({ Reason = "PlayerRequest" })
-                    dropped = true
-                end
-            end)
-            addLog("ROUBO", dropped and "Comando de esvaziar maos enviado ao servidor." or "Nenhum ovo para descartar.")
-            Fluent:Notify({
-                Title = "Esvaziar Maos",
-                Content = "Comando de descarte enviado!",
-                Duration = 2
-            })
-        end
-    })
-
-    Tabs.AutoSteal:AddButton({
-        Title = "Teleportar para Minha Base / Ninho",
-        Description = "Retorna instantaneamente para sua base",
-        Callback = function()
-            local dep = getMyDepositCFrame() or State.BaseCFrame
-            local hrp = getHRP()
-            if dep and hrp then
-                hrp.CFrame = dep + Vector3.new(0, 3, 0)
-                hrp.AssemblyLinearVelocity = Vector3.zero
-                addLog("TELEPORTE", "Retornado para sua base com sucesso.")
+        -- 1. ABA AUTO-STEAL
+        Tabs.AutoSteal:AddToggle("AutoStealToggle", {
+            Title = "Ativar Auto-Steal",
+            Description = "Rouba os melhores ovos do mapa e deposita no ninho",
+            Default = Config.AutoStealEnabled,
+            Callback = function(val)
+                Config.AutoStealEnabled = val
+                addLog("ROUBO", val and "Auto-Steal ativado." or "Auto-Steal pausado.")
+                Fluent:Notify({
+                    Title = "Auto-Steal",
+                    Content = val and "Auto-Steal ATIVADO" or "Auto-Steal PAUSADO",
+                    Duration = 2
+                })
             end
-        end
-    })
+        })
 
-    -- 2. ABA AUTO-ESTEIRA
-    local EsteiraToggle = Tabs.Esteira:AddToggle("EsteiraToggle", {
-        Title = "Ativar Treino na Esteira",
-        Description = "Monta na esteira oficial com AskWearStill e treina sem travar",
-        Default = Config.AutoEsteiraEnabled,
-        Callback = function(val)
-            Config.AutoEsteiraEnabled = val
-            if not val then
-                lastTreadmillMode = "OFF"
+        Tabs.AutoSteal:AddToggle("AutoEquipToggle", {
+            Title = "Auto-Equipar Melhores Pets",
+            Description = "Equipa os melhores pets automaticamente apos cada choco",
+            Default = Config.AutoEquipBest,
+            Callback = function(val)
+                Config.AutoEquipBest = val
+                if val then equipBestPets() end
+            end
+        })
+
+        Tabs.AutoSteal:AddDropdown("PriorityModeDropdown", {
+            Title = "Prioridade de Alvo",
+            Values = {"Mais Raro", "Maior Renda", "Mais Proximo"},
+            Default = "Mais Raro",
+            Callback = function(val)
+                Config.PriorityMode = val
+                addLog("CONFIG", "Prioridade alterada para: " .. tostring(val))
+            end
+        })
+
+        Tabs.AutoSteal:AddSlider("MoveSpeedSlider", {
+            Title = "Velocidade de Deslocamento",
+            Description = "Velocidade de voo overhead e movimentacao segura",
+            Default = Config.MoveSpeed or 45,
+            Min = 16,
+            Max = 100,
+            Rounding = 0,
+            Callback = function(val)
+                Config.MoveSpeed = val
+            end
+        })
+
+        Tabs.AutoSteal:AddButton({
+            Title = "Esvaziar Maos (Descartar Ovo Preso)",
+            Description = "Descarta qualquer ovo que tenha travado nas maos",
+            Callback = function()
+                local dropped = false
+                pcall(function()
+                    if GameModules.EggState and GameModules.EggState.DropFieldEgg then
+                        GameModules.EggState.DropFieldEgg("PlayerRequest")
+                        dropped = true
+                    end
+                end)
+                pcall(function()
+                    local askDrop = getRemote("RF/EggWorld/AskFieldEggDrop")
+                    if askDrop and askDrop:IsA("RemoteFunction") then
+                        askDrop:InvokeServer({ Reason = "PlayerRequest" })
+                        dropped = true
+                    end
+                end)
+                addLog("ROUBO", dropped and "Comando de esvaziar maos enviado ao servidor." or "Nenhum ovo para descartar.")
+                Fluent:Notify({
+                    Title = "Esvaziar Maos",
+                    Content = "Comando de descarte enviado!",
+                    Duration = 2
+                })
+            end
+        })
+
+        Tabs.AutoSteal:AddButton({
+            Title = "Teleportar para Minha Base / Ninho",
+            Description = "Retorna instantaneamente para sua base",
+            Callback = function()
+                local dep = getMyDepositCFrame() or State.BaseCFrame
+                local hrp = getHRP()
+                if dep and hrp then
+                    hrp.CFrame = dep + Vector3.new(0, 3, 0)
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                    addLog("TELEPORTE", "Retornado para sua base com sucesso.")
+                end
+            end
+        })
+
+        -- 2. ABA AUTO-ESTEIRA
+        local EsteiraToggle = Tabs.Esteira:AddToggle("EsteiraToggle", {
+            Title = "Ativar Treino na Esteira",
+            Description = "Monta na esteira oficial com AskWearStill e treina sem travar",
+            Default = Config.AutoEsteiraEnabled,
+            Callback = function(val)
+                Config.AutoEsteiraEnabled = val
+                if not val then
+                    lastTreadmillMode = "OFF"
+                    State.IsOnTreadmill = false
+                    local hum = getHum()
+                    if hum then hum:Move(Vector3.zero, false) end
+                    pcall(function()
+                        local askDoff = getRemote("RF/EggWorld/AskDoff")
+                        if askDoff and askDoff:IsA("RemoteFunction") then
+                            askDoff:InvokeServer()
+                        end
+                    end)
+                end
+                addLog("ESTEIRA", val and "Auto-Esteira iniciada." or "Auto-Esteira desativada.")
+                Fluent:Notify({
+                    Title = "Auto-Esteira",
+                    Content = val and "Treino ATIVADO" or "Treino DESATIVADO",
+                    Duration = 2
+                })
+            end
+        })
+
+        Tabs.Esteira:AddDropdown("EsteiraModeDropdown", {
+            Title = "Modo de Treino",
+            Values = {"Velocidade (Speed)", "Forca (Power)"},
+            Default = "Velocidade (Speed)",
+            Callback = function(val)
+                Config.EsteiraMode = (val:find("Forca") and "Power") or "Speed"
+                addLog("ESTEIRA", "Modo de esteira alterado para: " .. tostring(Config.EsteiraMode))
+            end
+        })
+
+        Tabs.Esteira:AddButton({
+            Title = "Desmontar Esteira Imediatamente (AskDoff)",
+            Description = "Libera o personagem e restaura controles fisicos",
+            Callback = function()
+                Config.AutoEsteiraEnabled = false
+                EsteiraToggle:SetValue(false)
                 State.IsOnTreadmill = false
-                local hum = getHum()
-                if hum then hum:Move(Vector3.zero, false) end
                 pcall(function()
                     local askDoff = getRemote("RF/EggWorld/AskDoff")
                     if askDoff and askDoff:IsA("RemoteFunction") then
                         askDoff:InvokeServer()
                     end
                 end)
-            end
-            addLog("ESTEIRA", val and "Auto-Esteira iniciada." or "Auto-Esteira desativada.")
-            Fluent:Notify({
-                Title = "Auto-Esteira",
-                Content = val and "Treino ATIVADO" or "Treino DESATIVADO",
-                Duration = 2
-            })
-        end
-    })
-
-    Tabs.Esteira:AddDropdown("EsteiraModeDropdown", {
-        Title = "Modo de Treino",
-        Values = {"Velocidade (Speed)", "Forca (Power)"},
-        Default = "Velocidade (Speed)",
-        Callback = function(val)
-            Config.EsteiraMode = (val:find("Forca") and "Power") or "Speed"
-            addLog("ESTEIRA", "Modo de esteira alterado para: " .. tostring(Config.EsteiraMode))
-        end
-    })
-
-    Tabs.Esteira:AddButton({
-        Title = "Desmontar Esteira Imediatamente (AskDoff)",
-        Description = "Libera o personagem e restaura controles fisicos",
-        Callback = function()
-            Config.AutoEsteiraEnabled = false
-            EsteiraToggle:SetValue(false)
-            State.IsOnTreadmill = false
-            pcall(function()
-                local askDoff = getRemote("RF/EggWorld/AskDoff")
-                if askDoff and askDoff:IsA("RemoteFunction") then
-                    askDoff:InvokeServer()
+                local hum = getHum()
+                if hum then
+                    hum:Move(Vector3.zero, false)
+                    hum.PlatformStand = false
                 end
-            end)
-            local hum = getHum()
-            if hum then
-                hum:Move(Vector3.zero, false)
-                hum.PlatformStand = false
+                addLog("ESTEIRA", "Desmonte oficial concluido.")
+                Fluent:Notify({
+                    Title = "Esteira",
+                    Content = "Personagem desmontado com sucesso!",
+                    Duration = 2
+                })
             end
-            addLog("ESTEIRA", "Desmonte oficial concluido.")
-            Fluent:Notify({
-                Title = "Esteira",
-                Content = "Personagem desmontado com sucesso!",
-                Duration = 2
-            })
-        end
-    })
+        })
 
-    -- 3. ABA RADAR DE OVOS (100% NOMES REAIS VIA DUMP ENGINE)
-    local RadarSummary = Tabs.Radar:AddParagraph({
-        Title = "Radar Forense Oficial",
-        Content = "Clique em 'Atualizar Radar Agora' para escanear ovos com 100% de precisao."
-    })
+        -- 3. ABA RADAR DE OVOS (100% NOMES REAIS VIA DUMP ENGINE)
+        local RadarSummary = Tabs.Radar:AddParagraph({
+            Title = "Radar Forense Oficial",
+            Content = "Clique em 'Atualizar Radar Agora' para escanear ovos com 100% de precisao."
+        })
 
-    local scannedEggsCache = {}
-    local scannedEggLabels = {"(Nenhum ovo escaneado ainda)"}
-    local selectedEggIndex = 1
+        local scannedEggsCache = {}
+        local scannedEggLabels = {"(Nenhum ovo escaneado ainda)"}
+        local selectedEggIndex = 1
 
-    local SelectedEggDropdown = Tabs.Radar:AddDropdown("RadarEggsDropdown", {
-        Title = "Ovos Vivos no Mapa",
-        Values = scannedEggLabels,
-        Default = scannedEggLabels[1],
-        Callback = function(val)
-            for idx, label in ipairs(scannedEggLabels) do
-                if label == val then
-                    selectedEggIndex = idx
-                    break
+        local SelectedEggDropdown = Tabs.Radar:AddDropdown("RadarEggsDropdown", {
+            Title = "Ovos Vivos no Mapa",
+            Values = scannedEggLabels,
+            Default = scannedEggLabels[1],
+            Callback = function(val)
+                for idx, label in ipairs(scannedEggLabels) do
+                    if label == val then
+                        selectedEggIndex = idx
+                        break
+                    end
                 end
             end
+        })
+
+        local function refreshRadarUI()
+            local eggs = scanAllEggs()
+            scannedEggsCache = eggs
+            local newLabels = {}
+            local secretCount = 0
+            local legendaryCount = 0
+
+            for idx, egg in ipairs(eggs) do
+                local rUpper = egg.Rarity:upper()
+                if rUpper:find("SECRET") then secretCount = secretCount + 1 end
+                if rUpper:find("LEGEND") then legendaryCount = legendaryCount + 1 end
+
+                local incStr = ""
+                if egg.Income and egg.Income > 0 then
+                    if egg.Income >= 1000000000 then
+                        incStr = string.format(" • %.1fB/s", egg.Income / 1000000000)
+                    elseif egg.Income >= 1000000 then
+                        incStr = string.format(" • %.1fM/s", egg.Income / 1000000)
+                    elseif egg.Income >= 1000 then
+                        incStr = string.format(" • %.1fK/s", egg.Income / 1000)
+                    else
+                        incStr = string.format(" • %d/s", egg.Income)
+                    end
+                end
+                local label = string.format("[%s] %s (%s, %dm)%s", egg.Rarity, egg.Name, egg.Zone, math.floor(egg.Distance), incStr)
+                table.insert(newLabels, label)
+                if idx >= 60 then break end
+            end
+
+            if #newLabels == 0 then
+                newLabels = {"(Nenhum ovo disponivel no momento)"}
+            end
+            scannedEggLabels = newLabels
+            SelectedEggDropdown:SetValues(newLabels)
+            SelectedEggDropdown:SetValue(newLabels[1])
+            selectedEggIndex = 1
+
+            RadarSummary:SetTitle(string.format("Radar: %d Ovos Vivos no Mapa", #eggs))
+            RadarSummary:SetDesc(string.format("Ovos Secretos: %d | Ovos Lendarios: %d\nFonte: EggState.ReadFieldEggs + Data.Assets.Directory (100%% Nomes Reais)", secretCount, legendaryCount))
         end
-    })
 
-    local function refreshRadarUI()
-        local eggs = scanAllEggs()
-        scannedEggsCache = eggs
-        local newLabels = {}
-        local secretCount = 0
-        local legendaryCount = 0
+        Tabs.Radar:AddButton({
+            Title = "Atualizar Radar Agora",
+            Description = "Faz varredura imediata dos ovos vivos",
+            Callback = function()
+                refreshRadarUI()
+                Fluent:Notify({
+                    Title = "Radar Atualizado",
+                    Content = string.format("%d ovos mapeados!", #scannedEggsCache),
+                    Duration = 2
+                })
+            end
+        })
 
-        for idx, egg in ipairs(eggs) do
-            local rUpper = egg.Rarity:upper()
-            if rUpper:find("SECRET") then secretCount = secretCount + 1 end
-            if rUpper:find("LEGEND") then legendaryCount = legendaryCount + 1 end
-
-            local incStr = ""
-            if egg.Income and egg.Income > 0 then
-                if egg.Income >= 1000000000 then
-                    incStr = string.format(" • %.1fB/s", egg.Income / 1000000000)
-                elseif egg.Income >= 1000000 then
-                    incStr = string.format(" • %.1fM/s", egg.Income / 1000000)
-                elseif egg.Income >= 1000 then
-                    incStr = string.format(" • %.1fK/s", egg.Income / 1000)
+        Tabs.Radar:AddButton({
+            Title = "Roubar Ovo Selecionado Acima",
+            Description = "Inicia rota segura para roubar o ovo selecionado",
+            Callback = function()
+                local targetEgg = scannedEggsCache[selectedEggIndex]
+                if targetEgg then
+                    addLog("ROUBO", string.format("Iniciando roubo manual de: %s [%s]", targetEgg.Name, targetEgg.Rarity))
+                    task.spawn(function()
+                        executeDirectSteal(targetEgg)
+                    end)
+                    Fluent:Notify({
+                        Title = "Iniciando Roubo",
+                        Content = "Indo ate: " .. targetEgg.Name,
+                        Duration = 3
+                    })
                 else
-                    incStr = string.format(" • %d/s", egg.Income)
+                    Fluent:Notify({
+                        Title = "Erro",
+                        Content = "Nenhum ovo valido selecionado!",
+                        Duration = 2
+                    })
                 end
             end
-            local label = string.format("[%s] %s (%s, %dm)%s", egg.Rarity, egg.Name, egg.Zone, math.floor(egg.Distance), incStr)
-            table.insert(newLabels, label)
-            if idx >= 60 then break end
-        end
+        })
 
-        if #newLabels == 0 then
-            newLabels = {"(Nenhum ovo disponivel no momento)"}
-        end
-        scannedEggLabels = newLabels
-        SelectedEggDropdown:SetValues(newLabels)
-        SelectedEggDropdown:SetValue(newLabels[1])
-        selectedEggIndex = 1
+        -- 4. ABA ARMAS SECRETAS & PETS
+        Tabs.ArmasPets:AddSection("Armas Secretas (Pedestais Oficiais)")
+        Tabs.ArmasPets:AddParagraph({
+            Title = "Pedestais no Mapa",
+            Content = "O mapa original contem 2 pedestais fisicos com TouchPart (Slap Glove e Bat). A 3a arma (Bee Launcher) e recompensa de conquista do Index."
+        })
 
-        RadarSummary:SetTitle(string.format("Radar: %d Ovos Vivos no Mapa", #eggs))
-        RadarSummary:SetDesc(string.format("Ovos Secretos: %d | Ovos Lendarios: %d\nFonte: EggState.ReadFieldEggs + Data.Assets.Directory (100%% Nomes Reais)", secretCount, legendaryCount))
-    end
-
-    Tabs.Radar:AddButton({
-        Title = "Atualizar Radar Agora",
-        Description = "Faz varredura imediata dos ovos vivos",
-        Callback = function()
-            refreshRadarUI()
-            Fluent:Notify({
-                Title = "Radar Atualizado",
-                Content = string.format("%d ovos mapeados!", #scannedEggsCache),
-                Duration = 2
-            })
-        end
-    })
-
-    Tabs.Radar:AddButton({
-        Title = "Roubar Ovo Selecionado Acima",
-        Description = "Inicia rota segura para roubar o ovo selecionado",
-        Callback = function()
-            local targetEgg = scannedEggsCache[selectedEggIndex]
-            if targetEgg then
-                addLog("ROUBO", string.format("Iniciando roubo manual de: %s [%s]", targetEgg.Name, targetEgg.Rarity))
+        Tabs.ArmasPets:AddButton({
+            Title = "Coletar Armas Secretas (Slap Glove + Bat)",
+            Description = "Aciona os 2 pedestais fisicos via TouchPart com 0.7s de contato",
+            Callback = function()
                 task.spawn(function()
-                    executeDirectSteal(targetEgg)
+                    collectAllSecretWeapons()
+                    Fluent:Notify({
+                        Title = "Armas Secretas",
+                        Content = "Coleta finalizada! Verifique seu Backpack.",
+                        Duration = 3
+                    })
                 end)
+            end
+        })
+
+        Tabs.ArmasPets:AddSection("Gerenciador Nativo de Pets")
+        Tabs.ArmasPets:AddButton({
+            Title = "Equipar Melhores Pets (Wear Best)",
+            Description = "Invoca RF/Haul/WearBest no servidor",
+            Callback = function()
+                local ok = equipBestPets()
                 Fluent:Notify({
-                    Title = "Iniciando Roubo",
-                    Content = "Indo ate: " .. targetEgg.Name,
-                    Duration = 3
-                })
-            else
-                Fluent:Notify({
-                    Title = "Erro",
-                    Content = "Nenhum ovo valido selecionado!",
+                    Title = "Equipar Melhores",
+                    Content = ok and "Melhores pets equipados!" or "Comando enviado ao servidor.",
                     Duration = 2
                 })
             end
-        end
-    })
+        })
 
-    -- 4. ABA ARMAS SECRETAS & PETS
-    Tabs.ArmasPets:AddSection("Armas Secretas (Pedestais Oficiais)")
-    Tabs.ArmasPets:AddParagraph({
-        Title = "Pedestais no Mapa",
-        Content = "O mapa original contem 2 pedestais fisicos com TouchPart (Slap Glove e Bat). A 3a arma (Bee Launcher) e recompensa de conquista do Index."
-    })
-
-    Tabs.ArmasPets:AddButton({
-        Title = "Coletar Armas Secretas (Slap Glove + Bat)",
-        Description = "Aciona os 2 pedestais fisicos via TouchPart com 0.7s de contato",
-        Callback = function()
-            task.spawn(function()
-                collectAllSecretWeapons()
+        Tabs.ArmasPets:AddButton({
+            Title = "Vender Pets Comuns & Incomuns Agora",
+            Description = "Filtra inventario com Save.Get() e vende via RE/PetSatchel/SellEveryPet",
+            Callback = function()
+                sellCommonPetsInInventory()
                 Fluent:Notify({
-                    Title = "Armas Secretas",
-                    Content = "Coleta finalizada! Verifique seu Backpack.",
+                    Title = "Auto-Sell",
+                    Content = "Pets comuns/incomuns vendidos!",
                     Duration = 3
                 })
-            end)
-        end
-    })
-
-    Tabs.ArmasPets:AddSection("Gerenciador Nativo de Pets")
-    Tabs.ArmasPets:AddButton({
-        Title = "Equipar Melhores Pets (Wear Best)",
-        Description = "Invoca RF/Haul/WearBest no servidor",
-        Callback = function()
-            local ok = equipBestPets()
-            Fluent:Notify({
-                Title = "Equipar Melhores",
-                Content = ok and "Melhores pets equipados!" or "Comando enviado ao servidor.",
-                Duration = 2
-            })
-        end
-    })
-
-    Tabs.ArmasPets:AddButton({
-        Title = "Vender Pets Comuns & Incomuns Agora",
-        Description = "Filtra inventario com Save.Get() e vende via RE/PetSatchel/SellEveryPet",
-        Callback = function()
-            sellCommonPetsInInventory()
-            Fluent:Notify({
-                Title = "Auto-Sell",
-                Content = "Pets comuns/incomuns vendidos!",
-                Duration = 3
-            })
-        end
-    })
-
-    Tabs.ArmasPets:AddToggle("AutoHatchToggle", {
-        Title = "Auto-Hatch nos Ninhos",
-        Description = "Choca ovos dos seus ninhos assim que o timer zera",
-        Default = Config.AutoHatchEnabled,
-        Callback = function(val)
-            Config.AutoHatchEnabled = val
-            addLog("HATCH", val and "Auto-Hatch ATIVADO." or "Auto-Hatch PAUSADO.")
-        end
-    })
-
-    Tabs.ArmasPets:AddToggle("AutoSellToggle", {
-        Title = "Auto-Sell Continuo no Servidor",
-        Description = "Sincroniza venda automatica continua com RF/Haul/WriteAutoSell",
-        Default = false,
-        Callback = function(val)
-            configureNativeAutoSell({
-                Common = val,
-                Uncommon = val
-            })
-            addLog("PETS", val and "Auto-Sell continuo ativado no servidor." or "Auto-Sell continuo desativado.")
-        end
-    })
-
-    -- 5. ABA TELEPORTES
-    local TeleportTargets = {
-        ["Minha Base / Ninho"] = function() return getMyDepositCFrame() or State.BaseCFrame end,
-        ["Spawn Principal"] = function() return CFrame.new(0, 10, 0) end,
-        ["Ilha do Vulcao"] = function() return CFrame.new(650, 65, 0) end,
-        ["Ilha do Deserto"] = function() return CFrame.new(850, 75, 0) end,
-        ["Ilha de Gelo"] = function() return CFrame.new(1100, 85, 0) end,
-        ["Ilha Cibernetica"] = function() return CFrame.new(1400, 95, 0) end,
-        ["Pedestal Slap Glove"] = function() return CFrame.new(545.01, 55, -357.85) end,
-        ["Pedestal Bat / Choque"] = function() return CFrame.new(545.01, 55, -344.76) end
-    }
-
-    local selectedTpName = "Minha Base / Ninho"
-    local tpKeys = {}
-    for k in pairs(TeleportTargets) do table.insert(tpKeys, k) end
-    table.sort(tpKeys)
-
-    Tabs.Teleports:AddDropdown("TeleportDropdown", {
-        Title = "Destino",
-        Values = tpKeys,
-        Default = "Minha Base / Ninho",
-        Callback = function(val)
-            selectedTpName = val
-        end
-    })
-
-    Tabs.Teleports:AddButton({
-        Title = "Teleportar Agora",
-        Description = "Move o personagem para o destino selecionado",
-        Callback = function()
-            local fn = TeleportTargets[selectedTpName]
-            local targetCF = fn and fn()
-            local hrp = getHRP()
-            if targetCF and hrp then
-                hrp.CFrame = targetCF + Vector3.new(0, 3, 0)
-                hrp.AssemblyLinearVelocity = Vector3.zero
-                addLog("TELEPORTE", "Teleportado para: " .. tostring(selectedTpName))
-                Fluent:Notify({
-                    Title = "Teleporte",
-                    Content = "Teleportado para: " .. tostring(selectedTpName),
-                    Duration = 2
-                })
             end
-        end
-    })
+        })
 
-    -- 6. ABA CONSOLE / LOGS
-    local LogParagraph = Tabs.Logs:AddParagraph({
-        Title = "Console em Tempo Real",
-        Content = "Iniciando monitoramento de logs..."
-    })
+        Tabs.ArmasPets:AddToggle("AutoHatchToggle", {
+            Title = "Auto-Hatch nos Ninhos",
+            Description = "Choca ovos dos seus ninhos assim que o timer zera",
+            Default = Config.AutoHatchEnabled,
+            Callback = function(val)
+                Config.AutoHatchEnabled = val
+                addLog("HATCH", val and "Auto-Hatch ATIVADO." or "Auto-Hatch PAUSADO.")
+            end
+        })
 
-    local function updateLogsView()
-        local logLines = {}
-        local startIdx = math.max(1, #LogHistory - 20)
-        for i = startIdx, #LogHistory do
-            table.insert(logLines, LogHistory[i])
-        end
-        if #logLines == 0 then
-            logLines = {"Nenhum evento registrado ainda."}
-        end
-        LogParagraph:SetDesc(table.concat(logLines, "\n"))
-    end
+        Tabs.ArmasPets:AddToggle("AutoSellToggle", {
+            Title = "Auto-Sell Continuo no Servidor",
+            Description = "Sincroniza venda automatica continua com RF/Haul/WriteAutoSell",
+            Default = false,
+            Callback = function(val)
+                configureNativeAutoSell({
+                    Common = val,
+                    Uncommon = val
+                })
+                addLog("PETS", val and "Auto-Sell continuo ativado no servidor." or "Auto-Sell continuo desativado.")
+            end
+        })
 
-    Tabs.Logs:AddButton({
-        Title = "Atualizar Logs",
-        Description = "Atualiza o console com os eventos mais recentes",
-        Callback = function()
+        -- 5. ABA TELEPORTES
+        local TeleportTargets = {
+            ["Minha Base / Ninho"] = function() return getMyDepositCFrame() or State.BaseCFrame end,
+            ["Spawn Principal"] = function() return CFrame.new(0, 10, 0) end,
+            ["Ilha do Vulcao"] = function() return CFrame.new(650, 65, 0) end,
+            ["Ilha do Deserto"] = function() return CFrame.new(850, 75, 0) end,
+            ["Ilha de Gelo"] = function() return CFrame.new(1100, 85, 0) end,
+            ["Ilha Cibernetica"] = function() return CFrame.new(1400, 95, 0) end,
+            ["Pedestal Slap Glove"] = function() return CFrame.new(545.01, 55, -357.85) end,
+            ["Pedestal Bat / Choque"] = function() return CFrame.new(545.01, 55, -344.76) end
+        }
+
+        local selectedTpName = "Minha Base / Ninho"
+        local tpKeys = {}
+        for k in pairs(TeleportTargets) do table.insert(tpKeys, k) end
+        table.sort(tpKeys)
+
+        Tabs.Teleports:AddDropdown("TeleportDropdown", {
+            Title = "Destino",
+            Values = tpKeys,
+            Default = "Minha Base / Ninho",
+            Callback = function(val)
+                selectedTpName = val
+            end
+        })
+
+        Tabs.Teleports:AddButton({
+            Title = "Teleportar Agora",
+            Description = "Move o personagem para o destino selecionado",
+            Callback = function()
+                local fn = TeleportTargets[selectedTpName]
+                local targetCF = fn and fn()
+                local hrp = getHRP()
+                if targetCF and hrp then
+                    hrp.CFrame = targetCF + Vector3.new(0, 3, 0)
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                    addLog("TELEPORTE", "Teleportado para: " .. tostring(selectedTpName))
+                    Fluent:Notify({
+                        Title = "Teleporte",
+                        Content = "Teleportado para: " .. tostring(selectedTpName),
+                        Duration = 2
+                    })
+                end
+            end
+        })
+
+        -- 6. ABA CONSOLE / LOGS
+        local LogParagraph = Tabs.Logs:AddParagraph({
+            Title = "Console em Tempo Real",
+            Content = "Iniciando monitoramento de logs..."
+        })
+
+        local function updateLogsView()
+            local logLines = {}
+            local startIdx = math.max(1, #LogHistory - 20)
+            for i = startIdx, #LogHistory do
+                table.insert(logLines, LogHistory[i])
+            end
+            if #logLines == 0 then
+                logLines = {"Nenhum evento registrado ainda."}
+            end
+            LogParagraph:SetDesc(table.concat(logLines, "\n"))
+        end
+
+        Tabs.Logs:AddButton({
+            Title = "Atualizar Logs",
+            Description = "Atualiza o console com os eventos mais recentes",
+            Callback = function()
+                updateLogsView()
+            end
+        })
+
+        Tabs.Logs:AddButton({
+            Title = "Limpar Historico",
+            Description = "Esvazia os registros de logs",
+            Callback = function()
+                LogHistory = {}
+                LogParagraph:SetDesc("Historico limpo.")
+            end
+        })
+
+        local oldAddLog = addLog
+        addLog = function(category, message)
+            oldAddLog(category, message)
+            pcall(updateLogsView)
+        end
+
+        Window:SelectTab(1)
+        task.spawn(function()
+            task.wait(1)
+            refreshRadarUI()
             updateLogsView()
-        end
-    })
+        end)
 
-    Tabs.Logs:AddButton({
-        Title = "Limpar Historico",
-        Description = "Esvazia os registros de logs",
-        Callback = function()
-            LogHistory = {}
-            LogParagraph:SetDesc("Historico limpo.")
-        end
-    })
+        Fluent:Notify({
+            Title = "Roube um Ovo Hub v14.1",
+            Content = "Hub carregado com Fluent Design & Dump Engine Oficial!",
+            Duration = 5
+        })
 
-    -- Conectar gancho de notificacoes e logs
-    local oldAddLog = addLog
-    addLog = function(category, message)
-        oldAddLog(category, message)
-        pcall(updateLogsView)
+        uiCreated = true
+    end)
+    if not okWin then
+        warn("[RoubeUmOvo] Erro ao criar Fluent Window: " .. tostring(errWin))
+    end
+end
+
+-- FALLBACK NATIVO: Se o Fluent falhar por qualquer motivo (executor sem suporte ou sem HTTP)
+if not uiCreated then
+    warn("[RoubeUmOvo] Ativando Fallback Nativo ScreenGui...")
+
+    local FallbackGui = Instance.new("ScreenGui")
+    FallbackGui.Name = "RoubeUmOvo_FallbackHub"
+    FallbackGui.ResetOnSpawn = false
+    attachGui(FallbackGui)
+
+    local Main = Instance.new("Frame")
+    Main.Size = UDim2.new(0, 520, 0, 380)
+    Main.Position = UDim2.new(0.5, -260, 0.5, -190)
+    Main.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
+    Main.BorderSizePixel = 0
+    Main.Active = true
+    Main.Draggable = true
+    Main.Parent = FallbackGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = Main
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(56, 189, 248)
+    stroke.Thickness = 1.5
+    stroke.Parent = Main
+
+    local Title = Instance.new("TextLabel")
+    Title.Size = UDim2.new(1, -20, 0, 36)
+    Title.Position = UDim2.new(0, 10, 0, 5)
+    Title.BackgroundTransparency = 1
+    Title.Text = "ROUBE UM OVO • HUB MASTER v14.1 (DUMP ENGINE)"
+    Title.Font = Enum.Font.GothamBold
+    Title.TextSize = 13
+    Title.TextColor3 = Color3.fromRGB(56, 189, 248)
+    Title.TextXAlignment = Enum.TextXAlignment.Left
+    Title.Parent = Main
+
+    local function createBtn(text, pos, color, onClick)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0.48, -10, 0, 36)
+        btn.Position = pos
+        btn.BackgroundColor3 = color or Color3.fromRGB(30, 41, 59)
+        btn.Text = text
+        btn.Font = Enum.Font.GothamBold
+        btn.TextSize = 10
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.Parent = Main
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 6)
+        c.Parent = btn
+        btn.MouseButton1Click:Connect(onClick)
+        return btn
     end
 
-    -- Inicializacao da janela
-    Window:SelectTab(1)
-    task.spawn(function()
-        task.wait(1)
-        refreshRadarUI()
-        updateLogsView()
+    local stealBtn = createBtn(Config.AutoStealEnabled and "AUTO-STEAL: [ATIVO]" or "AUTO-STEAL: [DESATIVADO]", UDim2.new(0, 10, 0, 50), Color3.fromRGB(30, 41, 59), function()
+        Config.AutoStealEnabled = not Config.AutoStealEnabled
+        stealBtn.BackgroundColor3 = Config.AutoStealEnabled and Color3.fromRGB(22, 101, 52) or Color3.fromRGB(30, 41, 59)
+        stealBtn.Text = Config.AutoStealEnabled and "AUTO-STEAL: [ATIVO]" or "AUTO-STEAL: [DESATIVADO]"
+        addLog("ROUBO", Config.AutoStealEnabled and "Auto-Steal ativado." or "Auto-Steal desativado.")
     end)
 
-    Fluent:Notify({
-        Title = "Roube um Ovo Hub v14.1",
-        Content = "Hub carregado com Fluent Design & Dump Engine Oficial!",
-        Duration = 5
-    })
+    local esteiraBtn = createBtn(Config.AutoEsteiraEnabled and "ESTEIRA: [ATIVO]" or "ESTEIRA: [DESATIVADO]", UDim2.new(0.52, 0, 0, 50), Color3.fromRGB(30, 41, 59), function()
+        Config.AutoEsteiraEnabled = not Config.AutoEsteiraEnabled
+        esteiraBtn.BackgroundColor3 = Config.AutoEsteiraEnabled and Color3.fromRGB(22, 101, 52) or Color3.fromRGB(30, 41, 59)
+        esteiraBtn.Text = Config.AutoEsteiraEnabled and "ESTEIRA: [ATIVO]" or "ESTEIRA: [DESATIVADO]"
+        addLog("ESTEIRA", Config.AutoEsteiraEnabled and "Auto-Esteira ativada." or "Auto-Esteira desativada.")
+    end)
+
+    createBtn("PEGAR ARMAS (SLAP + BAT)", UDim2.new(0, 10, 0, 95), Color3.fromRGB(217, 119, 6), function()
+        task.spawn(collectAllSecretWeapons)
+    end)
+
+    createBtn("EQUIPAR MELHORES PETS", UDim2.new(0.52, 0, 0, 95), Color3.fromRGB(16, 185, 129), function()
+        equipBestPets()
+    end)
+
+    createBtn("VENDER COMUNS / INCOMUNS", UDim2.new(0, 10, 0, 140), Color3.fromRGB(239, 68, 68), function()
+        sellCommonPetsInInventory()
+    end)
+
+    createBtn("ESVAZIAR MAOS (DESCARTE)", UDim2.new(0.52, 0, 0, 140), Color3.fromRGB(100, 116, 139), function()
+        pcall(function()
+            if GameModules.EggState and GameModules.EggState.DropFieldEgg then
+                GameModules.EggState.DropFieldEgg("PlayerRequest")
+            end
+        end)
+    end)
+
+    createBtn("TELEPORTAR PARA MINHA BASE", UDim2.new(0, 10, 0, 185), Color3.fromRGB(59, 130, 246), function()
+        local dep = getMyDepositCFrame() or State.BaseCFrame
+        local hrp = getHRP()
+        if dep and hrp then
+            hrp.CFrame = dep + Vector3.new(0, 3, 0)
+            hrp.AssemblyLinearVelocity = Vector3.zero
+        end
+    end)
+
+    createBtn("DESMONTAR ESTEIRA (ASKDOFF)", UDim2.new(0.52, 0, 0, 185), Color3.fromRGB(147, 51, 234), function()
+        pcall(function()
+            local askDoff = getRemote("RF/EggWorld/AskDoff")
+            if askDoff and askDoff:IsA("RemoteFunction") then
+                askDoff:InvokeServer()
+            end
+        end)
+    end)
+
+    local StatusLog = Instance.new("TextLabel")
+    StatusLog.Size = UDim2.new(1, -20, 0, 130)
+    StatusLog.Position = UDim2.new(0, 10, 0, 235)
+    StatusLog.BackgroundColor3 = Color3.fromRGB(11, 15, 26)
+    StatusLog.TextColor3 = Color3.fromRGB(148, 163, 184)
+    StatusLog.Font = Enum.Font.Code
+    StatusLog.TextSize = 9
+    StatusLog.TextXAlignment = Enum.TextXAlignment.Left
+    StatusLog.TextYAlignment = Enum.TextYAlignment.Top
+    StatusLog.TextWrapped = true
+    StatusLog.Text = "Status: Hub Master carregado com sucesso via Fallback Nativo."
+    StatusLog.Parent = Main
+
+    local oldAddLog = addLog
+    addLog = function(cat, msg)
+        oldAddLog(cat, msg)
+        pcall(function()
+            local lines = {}
+            for i = math.max(1, #LogHistory - 6), #LogHistory do
+                table.insert(lines, LogHistory[i])
+            end
+            StatusLog.Text = table.concat(lines, "\n")
+        end)
+    end
 end
 
 -- Telemetria de Inicializacao Concluida
-addLog("INIT", "Roube um Ovo Hub v14.1 Dump Engine & Fluent carregado com sucesso!")
+addLog("INIT", "Roube um Ovo Hub v14.1 carregado com sucesso!")
