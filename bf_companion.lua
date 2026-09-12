@@ -1,20 +1,20 @@
 --[[
-    AUTO ESTEIRA - ASSISTENTE DE VELOCIDADE (v3.6 RETORNO A BASE & SPRINT ROBUSTO)
+    AUTO ESTEIRA - ASSISTENTE DE VELOCIDADE (v3.8 FARM DEFINITIVO & ANTI-AFK)
     -----------------------------------------------------------------------
-    - Retorno Garantido a Base (De Qualquer Ilha ou Ponto do Mapa):
-      * Se o BF parar em qualquer ilha (1 a 11) ou fora da cerca, o script sabe exatamente onde fica a Base.
-      * Se a esteira ainda nao estiver em alcance visual, define a Base do jogador como alvo primario.
-      * Ao se aproximar da Base, faz o lock-in instantaneo na Esteira de Anjo e sobe nela.
-    - Fim da Auto-Cancelacao de Movimento:
-      * Corrigido o bug onde o script iniciava o movimento e o proprio sensor de movimento achava que era o BF andando, cancelando a si mesmo.
-      * Quando o companion esta conduzindo o jogador (ou treinando com ovo), o movimento proprio e reconhecido e protegido.
-    - Suporte Completo a Treino com Ovo na Mao:
-      * BF parou com ovo (ex: ninhos cheios) -> Companion assume apos 1.5s e leva o jogador com o ovo ate a esteira!
-      * Personagem treina velocidade na esteira segurando o ovo normalmente.
-    - Sprint Continuo e Fluido via Humanoid:MoveTo com Avanco Dinamico:
-      * Avanca waypoints com antecedencia antes de frear (elimina "passinho em passinho").
-      * Pulo automatico em obstaculos e cercas por raycast 3D.
-      * Pathfinding assincrono em task.spawn (zero erros de C-call).
+    - Anti-AFK Integrado (Anti-Kick 20 Minutos):
+      * Engana a deteccao de inatividade do motor oficial do Roblox via VirtualUser.
+      * Permite deixar farmando durante toda a noite sem ser desconectado.
+    - Otimizador de Desempenho (FPS Boost):
+      * Botao 'FPS Boost' no painel que desativa sombras, efeitos pos-processamento,
+        nuvens e decoracao de terreno para reduzir consumo de CPU/GPU e temperatura.
+    - Auto-Rejoin / Reconexao Automatica:
+      * Monitora mensagens de erro (Erro 277 / 268) e reconecta automaticamente ao mesmo
+        servidor ou servidor novo sem necessidade de intervencao manual.
+    - Protecao Total contra Auto-Cancelamento:
+      * Companion em movimento tem prioridade absoluta protegida no topo do sensor.
+      * Cede exclusivamente para teclas WASD, voo aereo sustentado real ou teleporte do BF.
+    - Retorno a Base & Treino com Ovo Seguro:
+      * Resposta continua com Humanoid:MoveTo a 25 Hz.
 ]]
 
 -- 1. Silenciamento Total Preventivo contra LogService.MessageOut
@@ -60,7 +60,11 @@ local Services = {
     HttpService = safeService("HttpService"),
     TweenService = safeService("TweenService"),
     PathfindingService = safeService("PathfindingService"),
-    ReplicatedStorage = safeService("ReplicatedStorage")
+    ReplicatedStorage = safeService("ReplicatedStorage"),
+    TeleportService = safeService("TeleportService"),
+    VirtualUser = safeService("VirtualUser"),
+    GuiService = safeService("GuiService"),
+    Lighting = safeService("Lighting")
 }
 
 local LocalPlayer = Services.Players.LocalPlayer
@@ -73,6 +77,74 @@ end
 local isRunning = true
 local activeConnections = {}
 
+-- 5.1 Anti-AFK Integrado (Anti-Kick 20 Minutos Oficial)
+pcall(function()
+    table.insert(activeConnections, LocalPlayer.Idled:Connect(function()
+        pcall(function()
+            Services.VirtualUser:CaptureController()
+            Services.VirtualUser:ClickButton2(Vector2.new(0, 0))
+        end)
+    end))
+end)
+
+-- 5.2 Auto-Rejoin em caso de Desconexao ou Kick (Erro 277 / 268)
+pcall(function()
+    table.insert(activeConnections, Services.GuiService.ErrorMessageChanged:Connect(function()
+        task.wait(1.5)
+        pcall(function()
+            if #Services.Players:GetPlayers() <= 1 then
+                Services.TeleportService:Teleport(game.PlaceId, LocalPlayer)
+            else
+                Services.TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+            end
+        end)
+    end))
+end)
+
+pcall(function()
+    local coreGui = game:GetService("CoreGui")
+    local promptGui = coreGui:FindFirstChild("RobloxPromptGui")
+    if promptGui then
+        local overlay = promptGui:FindFirstChild("promptOverlay")
+        if overlay then
+            table.insert(activeConnections, overlay.ChildAdded:Connect(function(child)
+                if child.Name == "ErrorPrompt" then
+                    task.wait(2.0)
+                    pcall(function()
+                        Services.TeleportService:Teleport(game.PlaceId, LocalPlayer)
+                    end)
+                end
+            end))
+        end
+    end
+end)
+
+-- 5.3 Otimizador de Desempenho (Modo FPS Boost)
+local fpsBoostActive = false
+local function setFPSBoost(enable)
+    fpsBoostActive = enable
+    pcall(function()
+        Services.Lighting.GlobalShadows = not enable
+        if enable then
+            pcall(function() settings().Rendering.QualityLevel = 1 end)
+        end
+    end)
+    pcall(function()
+        for _, obj in ipairs(Services.Lighting:GetChildren()) do
+            if obj:IsA("PostProcessEffect") or obj:IsA("Atmosphere") or obj:IsA("Clouds")
+                or obj:IsA("SunRaysEffect") or obj:IsA("BloomEffect") or obj:IsA("BlurEffect") then
+                obj.Enabled = not enable
+            end
+        end
+    end)
+    pcall(function()
+        local terrain = Services.Workspace:FindFirstChildOfClass("Terrain")
+        if terrain then
+            terrain.Decoration = not enable
+        end
+    end)
+end
+
 -- 6. Configuracoes e Estado
 local Config = {
     Enabled = true,
@@ -81,7 +153,8 @@ local Config = {
     TreadmillSurfaceY = 0,
     TreadmillRunDirection = Vector3.new(0, 0, -1),
     BasePosition = nil,
-    ManualTreadmillSet = false
+    ManualTreadmillSet = false,
+    FPSBoost = false
 }
 
 local State = {
@@ -125,6 +198,8 @@ table.insert(activeConnections, LocalPlayer.CharacterAdded:Connect(function()
     State.HoldingEgg = false
     State.WasHoldingEgg = false
     State.EggHoldStillSince = 0
+    State.AirborneSince = 0
+    State.LastBusyReason = "Renascido"
     State.LastPosition = Vector3.zero
     State.LastActiveTick = os.clock() + 1.5
     State.CurrentStatus = "Carregando..."
@@ -1006,6 +1081,12 @@ local function unloadCompanion()
     end
 
     pcall(function()
+        if fpsBoostActive then
+            setFPSBoost(false)
+        end
+    end)
+
+    pcall(function()
         _G.AutoEsteira_Active = nil
         if getgenv then getgenv().AutoEsteira_Active = nil end
     end)
@@ -1112,7 +1193,7 @@ Title.Font = Enum.Font.SourceSansBold
 Title.TextSize = 12
 Title.TextColor3 = Color3.fromRGB(240, 245, 255)
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "Auto Esteira (BF) v3.7.4"
+Title.Text = "Auto Esteira (BF) v3.8"
 Title.Parent = Header
 
 local MinBtn = Instance.new("TextButton")
@@ -1283,6 +1364,66 @@ RescanBtn.MouseButton1Click:Connect(function()
     end)
 end)
 
+local ActionRow2 = Instance.new("Frame")
+ActionRow2.Size = UDim2.new(1, 0, 0, 20)
+ActionRow2.BackgroundTransparency = 1
+ActionRow2.Parent = ContentBox
+
+local rowLayout2 = Instance.new("UIListLayout")
+rowLayout2.FillDirection = Enum.FillDirection.Horizontal
+rowLayout2.SortOrder = Enum.SortOrder.LayoutOrder
+rowLayout2.Padding = UDim.new(0, 4)
+rowLayout2.Parent = ActionRow2
+
+local FPSBtn = Instance.new("TextButton")
+FPSBtn.Size = UDim2.new(0.5, -2, 1, 0)
+FPSBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+FPSBtn.Text = "FPS Boost: OFF"
+FPSBtn.Font = Enum.Font.SourceSansBold
+FPSBtn.TextSize = 10
+FPSBtn.TextColor3 = Color3.fromRGB(148, 163, 184)
+FPSBtn.Parent = ActionRow2
+local fpsCorner = Instance.new("UICorner")
+fpsCorner.CornerRadius = UDim.new(0, 4)
+fpsCorner.Parent = FPSBtn
+
+FPSBtn.MouseButton1Click:Connect(function()
+    Config.FPSBoost = not Config.FPSBoost
+    setFPSBoost(Config.FPSBoost)
+    if Config.FPSBoost then
+        FPSBtn.Text = "FPS Boost: ON"
+        FPSBtn.TextColor3 = Color3.fromRGB(16, 185, 129)
+        FPSBtn.BackgroundColor3 = Color3.fromRGB(20, 50, 35)
+    else
+        FPSBtn.Text = "FPS Boost: OFF"
+        FPSBtn.TextColor3 = Color3.fromRGB(148, 163, 184)
+        FPSBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+    end
+end)
+
+local RejoinBtn = Instance.new("TextButton")
+RejoinBtn.Size = UDim2.new(0.5, -2, 1, 0)
+RejoinBtn.BackgroundColor3 = Color3.fromRGB(30, 41, 59)
+RejoinBtn.Text = "Reconectar"
+RejoinBtn.Font = Enum.Font.SourceSansBold
+RejoinBtn.TextSize = 10
+RejoinBtn.TextColor3 = Color3.fromRGB(251, 146, 60)
+RejoinBtn.Parent = ActionRow2
+local rjCorner = Instance.new("UICorner")
+rjCorner.CornerRadius = UDim.new(0, 4)
+rjCorner.Parent = RejoinBtn
+
+RejoinBtn.MouseButton1Click:Connect(function()
+    RejoinBtn.Text = "Conectando..."
+    pcall(function()
+        if #Services.Players:GetPlayers() <= 1 then
+            Services.TeleportService:Teleport(game.PlaceId, LocalPlayer)
+        else
+            Services.TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+        end
+    end)
+end)
+
 local isMinimized = false
 MinBtn.MouseButton1Click:Connect(function()
     isMinimized = not isMinimized
@@ -1337,7 +1478,7 @@ task.spawn(function()
                 local walk = State.WalkingToTreadmill and "S" or "N"
                 local onT = State.IsOnTreadmill and "S" or "N"
                 local reason = State.LastBusyReason or "Livre"
-                DebugLabel.Text = string.format("v3.7.4 | Nav:%s Walk:%s Est:%s | %s", nav, walk, onT, reason)
+                DebugLabel.Text = string.format("v3.8 | Nav:%s Walk:%s Est:%s | %s", nav, walk, onT, reason)
             end
         end
         task.wait(0.25)
