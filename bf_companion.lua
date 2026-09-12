@@ -1,22 +1,24 @@
 --[[
-    AUTO ESTEIRA - ASSISTENTE DE VELOCIDADE (v3.4 SPRINT FLUIDO & NAVEGACAO ENTRE ILHAS)
+    AUTO ESTEIRA - ASSISTENTE DE VELOCIDADE (v3.5 CORRIDA COM OVO & SPRINT SEM PARAR)
     -----------------------------------------------------------------------
-    - Movimentacao Fluida de Alta Velocidade (Zero "Passinho em Passinho"):
-      * Substitui o MoveTo picotado por corrida continua em alta frequencia via Humanoid:Move(direcao, false).
-      * Avanco instantaneo de waypoints em movimento sem desaceleracao ou paradas intermediarias.
-      * Pulinho proativo em degraus e cercas baixas.
-    - Deteccao Ativa de Paredes por Raycast 3D:
-      * Sensores frontais, esquerda e direita analisam colisoes de paredes a frente.
-      * Desvio automatico de paredes altas e contorno suave de esquinas e portões.
-    - Corredores Inter-Ilhas (Da Ilha 11 ate a Base):
-      * Mapeamento dos 11 biomas oficiais com corredores segmentados.
-      * Se o BF parar na ultima ilha (Ilha 11 - Templo do Tita), o companion divide o trajeto
-        em percursos curtos entre ilhas, encontrando os portais, arcos e portas em cada muralha.
-    - Deteccao da Esteira de Anjo ("aquela na direita de anjo"):
-      * Varre ClientRenders, modelos de Anjo e TouchTransmitters da base.
-      * Highlight 3D ciano e Billboard flutuante [ESTEIRA DETECTADA].
-      * Botao [Definir Minha Pos] para calibracao manual instantanea.
-    - Zero Conflito: NUNCA chama hum:Move(Vector3.zero) durante as operacoes do BF.
+    - Suporte a Treino na Esteira Segurando Ovo:
+      * Se o BF roubar um ovo, chegar na base e os ninhos estiverem cheios, o BF para com o ovo na mao.
+      * Apos 2.0s parado com o ovo, o companion assume e conduz o jogador ate a esteira de anjo.
+      * O personagem corre e treina velocidade na esteira SEGURANDO O OVO sem conflito!
+      * Caso o BF retome qualquer acao (ninho liberado, andar ou voar), o script cede o controle instantaneamente.
+    - Zero Falso-Positivo na Deteccao do BF:
+      * Removidas travas de switches globais estaticos (AutoSteal_Active/BF_Active) que travavam o script.
+      * Checagem fisica real de forca em BodyVelocity/LinearVelocity (ignora AlignOrientation de rotacao).
+      * Ignora ferramentas na mochila (apenas checa ovos fisicamente equipados no corpo).
+    - Movimentacao Fluida de Alta Frequencia em Heartbeat:
+      * Pathfinding assincrono seguro via task.spawn (zero erros de C-call boundary).
+      * Humanoid:Move continuo mantem o personagem correndo a toda velocidade sem "passinhos".
+      * Na esteira, a corrida e mantida a 60 FPS ininterruptos.
+    - Sensores 3D com Raycast Inteligente:
+      * Sensores ignoram o proprio personagem e ferramentas/ovos nas maos.
+      * Pulinho proativo em cercas e bordas; desvio suave de quinas e paredes.
+    - Corredores das 11 Ilhas:
+      * Se o jogador estiver em qualquer ilha distante, trajeto segmentado conduz com seguranca ate a base.
 ]]
 
 -- 1. Silenciamento Total Preventivo contra LogService.MessageOut
@@ -93,7 +95,8 @@ local State = {
     TreadmillSource = "Buscando...",
     HoldingEgg = false,
     WasHoldingEgg = false,
-    LastHoldingTick = 0,
+    EggPickupTick = 0,
+    EggHoldStillSince = 0,
     LastEggDropTick = 0,
     IsOnTreadmill = false,
     WalkingToTreadmill = false,
@@ -123,6 +126,7 @@ table.insert(activeConnections, LocalPlayer.CharacterAdded:Connect(function()
     State.WalkingToTreadmill = false
     State.HoldingEgg = false
     State.WasHoldingEgg = false
+    State.EggHoldStillSince = 0
     State.LastPosition = Vector3.zero
     State.LastActiveTick = os.clock() + 1.5
     State.CurrentStatus = "Carregando..."
@@ -132,7 +136,7 @@ table.insert(activeConnections, LocalPlayer.CharacterAdded:Connect(function()
     end
 end))
 
--- 7. Deteccao Rigorosa de Posse de Ovo
+-- 7. Deteccao Rigorosa de Posse de Ovo (Apenas Equipado/Nas Maos)
 local standardLimbNames = {
     ["head"] = true, ["uppertorso"] = true, ["lowertorso"] = true,
     ["leftupperarm"] = true, ["rightupperarm"] = true, ["leftlowerarm"] = true,
@@ -148,6 +152,7 @@ local function checkIsHoldingEgg()
     local char = LocalPlayer.Character
     if not char then return false end
 
+    -- Atributos no Personagem ou Player
     for _, attr in ipairs({"EggUid", "CarryingEgg", "HoldingEgg", "HasEgg", "StolenEgg", "Carrying"}) do
         local val = char:GetAttribute(attr)
         if val ~= nil and val ~= "" and val ~= false then return true end
@@ -155,6 +160,7 @@ local function checkIsHoldingEgg()
         if valP ~= nil and valP ~= "" and valP ~= false then return true end
     end
 
+    -- Ferramentas ou modelos de ovo seguros nas maos (apenas no Character)
     for _, child in ipairs(char:GetChildren()) do
         local low = child.Name:lower()
         if not standardLimbNames[low] and not child:IsA("Accessory") and not child:IsA("Shirt")
@@ -168,18 +174,6 @@ local function checkIsHoldingEgg()
                         or child:FindFirstChildWhichIsA("Weld", true)
                         or child:FindFirstChildWhichIsA("Motor6D", true)
                     if hasWeld then return true end
-                end
-            end
-        end
-    end
-
-    local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
-    if bp then
-        for _, item in ipairs(bp:GetChildren()) do
-            if item:IsA("Tool") then
-                local n = item.Name:lower()
-                if n:find("egg") or n:find("ovo") or item:GetAttribute("IsEgg") then
-                    return true
                 end
             end
         end
@@ -368,14 +362,14 @@ local function findBestTreadmill()
         return wPos, sY, rDir, best.instance, srcName
     end
 
-    -- PRIORIDADE 3: Busca por TouchTransmitter em estruturas proximas
+    -- PRIORIDADE 3: Busca por TouchTransmitter em pecas da base (raio de ate 250 studs)
     local touchCandidates = {}
     for _, desc in ipairs(Services.Workspace:GetDescendants()) do
         if desc:IsA("TouchTransmitter") or desc.Name == "TouchInterest" then
             local p = desc.Parent
             if p and p:IsA("BasePart") and hrp then
                 local d = (p.Position - charPos).Magnitude
-                if d < 120 and math.abs(p.Position.Y - charPos.Y) < 15 then
+                if d < 250 and math.abs(p.Position.Y - charPos.Y) < 25 then
                     table.insert(touchCandidates, { part = p, dist = d })
                 end
             end
@@ -420,10 +414,8 @@ local function checkGlobalBFBusy()
     for _, env in ipairs(envs) do
         if type(env) == "table" then
             if rawget(env, "BF_IsBusy") == true then return true, "BF Ocupado (Global)" end
-            if rawget(env, "BF_Active") == true then return true, "BF Ativo (Global)" end
             if rawget(env, "BF_Stealing") == true then return true, "BF Roubando (Global)" end
             if rawget(env, "BF_Flying") == true then return true, "BF Voando (Global)" end
-            if rawget(env, "AutoSteal_Active") == true then return true, "Auto-Steal Ativo" end
             if rawget(env, "IsStealing") == true then return true, "Roubo Ativo" end
 
             local sm = rawget(env, "StealSM")
@@ -432,7 +424,7 @@ local function checkGlobalBFBusy()
             end
 
             local lastTick = rawget(env, "BF_LastActionTick")
-            if type(lastTick) == "number" and (os.clock() - lastTick) < 3.0 then
+            if type(lastTick) == "number" and (os.clock() - lastTick) < 2.5 then
                 return true, "BF Operando Recentemente"
             end
         end
@@ -441,71 +433,101 @@ local function checkGlobalBFBusy()
 end
 
 local function detectBFActivity(hrp, hum, moveDelta, currentPos)
+    -- CAMADA 1: Handshake Global de Execucao Real
     local globalBusy, globalReason = checkGlobalBFBusy()
     if globalBusy then return true, globalReason end
 
+    local now = os.clock()
+    local hVel = math.sqrt(hrp.AssemblyLinearVelocity.X^2 + hrp.AssemblyLinearVelocity.Z^2)
+
+    -- CAMADA 2: Posse de Ovo & Cooldown de Deposito / Plantio
     local isHolding = checkIsHoldingEgg()
     if isHolding then
+        if not State.HoldingEgg then
+            -- Momento exato em que pegou o ovo
+            State.HoldingEgg = true
+            State.WasHoldingEgg = true
+            State.EggPickupTick = now
+            State.EggHoldStillSince = 0
+            return true, "BF: Pegou Ovo"
+        end
+
+        -- Se estiver se movendo ativamente ou voando alto -> BF em transporte
+        local isMoving = (hVel > 2.0 or moveDelta > 0.5)
+        local isHigh = (Config.TreadmillSurfaceY ~= 0 and currentPos.Y > (Config.TreadmillSurfaceY + 5.5))
+
+        if isMoving or isHigh then
+            State.EggHoldStillSince = 0
+            return true, isHigh and "BF: Voando com Ovo" or "BF: Transportando Ovo"
+        end
+
+        -- Se pegou ha menos de 2.5s, dar tempo para o BF iniciar a rota
+        if (now - State.EggPickupTick) < 2.5 then
+            State.EggHoldStillSince = 0
+            return true, "BF: Segurando Ovo (Aguardando)"
+        end
+
+        -- Se esta PARADO com o ovo na mao (ex: em frente a base com ninhos cheios)
+        if State.EggHoldStillSince == 0 then
+            State.EggHoldStillSince = now
+        end
+
+        local stillDuration = now - State.EggHoldStillSince
+        if stillDuration < 2.0 then
+            return true, string.format("BF com Ovo: Estabilizando (%.1fs)", math.max(0.1, 2.0 - stillDuration))
+        end
+
+        -- PARADO A MAIS DE 2.0s COM OVO: BF terminou o roubo e esta ocioso!
+        -- O companion agora pode assumir e treinar na esteira segurando o ovo!
         State.HoldingEgg = true
         State.WasHoldingEgg = true
-        State.LastHoldingTick = os.clock()
-        return true, "BF: Segurando Ovo"
+    else
+        State.EggHoldStillSince = 0
+        if State.HoldingEgg or State.WasHoldingEgg then
+            State.HoldingEgg = false
+            State.WasHoldingEgg = false
+            State.LastEggDropTick = now
+        end
     end
-    State.HoldingEgg = false
 
-    if State.WasHoldingEgg then
-        State.WasHoldingEgg = false
-        State.LastEggDropTick = os.clock()
-    end
-
-    if State.LastEggDropTick > 0 and (os.clock() - State.LastEggDropTick) < 3.5 then
-        local rem = 3.5 - (os.clock() - State.LastEggDropTick)
+    -- Cooldown apos soltar/plantar o ovo (3.0s de protecao)
+    if State.LastEggDropTick > 0 and (now - State.LastEggDropTick) < 3.0 then
+        local rem = 3.0 - (now - State.LastEggDropTick)
         return true, string.format("BF: Plantando Ovo (%.1fs)", math.max(0.1, rem))
     end
 
-    if Config.TreadmillSurfaceY ~= 0 and currentPos.Y > (Config.TreadmillSurfaceY + 5.5) then
+    -- CAMADA 3: Deteccao Aerea / Voo Real com Forca Fisica Ativa
+    if Config.TreadmillSurfaceY ~= 0 and currentPos.Y > (Config.TreadmillSurfaceY + 6.0) and hrp.AssemblyLinearVelocity.Magnitude > 1.5 then
         return true, string.format("BF Voando Alto (Y+%.1f)", currentPos.Y - Config.TreadmillSurfaceY)
     end
 
-    local flightMovers = {
-        "BodyVelocity", "BodyPosition", "BodyGyro", "BodyThrust",
-        "LinearVelocity", "AlignPosition", "AlignOrientation", "VectorForce", "RocketPropulsion"
-    }
-    for _, mName in ipairs(flightMovers) do
-        if hrp:FindFirstChildOfClass(mName) then
-            return true, "BF: Voo Ativo (" .. mName .. ")"
-        end
-    end
-    local char = LocalPlayer.Character
-    if char then
-        local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
-        if torso then
-            for _, mName in ipairs(flightMovers) do
-                if torso:FindFirstChildOfClass(mName) then
-                    return true, "BF: Voo Ativo (" .. mName .. ")"
-                end
-            end
-        end
+    local bv = hrp:FindFirstChildOfClass("BodyVelocity")
+    if bv and bv.MaxForce.Magnitude > 0 and bv.Velocity.Magnitude > 1.5 then
+        return true, "BF: Voo Ativo (BodyVelocity)"
     end
 
-    local humState = hum:GetState()
-    if humState == Enum.HumanoidStateType.Freefall or humState == Enum.HumanoidStateType.Flying or humState == Enum.HumanoidStateType.PlatformStanding then
-        if Config.TreadmillSurfaceY ~= 0 and currentPos.Y > (Config.TreadmillSurfaceY + 3.0) then
-            return true, "BF: Em Voo (" .. humState.Name .. ")"
-        end
+    local lv = hrp:FindFirstChildOfClass("LinearVelocity")
+    if lv and lv.Enabled and lv.VectorVelocity.Magnitude > 1.5 then
+        return true, "BF: Voo Ativo (LinearVelocity)"
     end
 
+    local bp = hrp:FindFirstChildOfClass("BodyPosition")
+    if bp and bp.MaxForce.Magnitude > 0 and (bp.Position - hrp.Position).Magnitude > 3.0 then
+        return true, "BF: Voo Ativo (BodyPosition)"
+    end
+
+    -- CAMADA 4: Movimentacao Dinamica e Intencao de Caminhada do BF
     if State.IsOnTreadmill then
         if hum.MoveDirection.Magnitude > 0.15 then
             local dot = hum.MoveDirection:Dot(Config.TreadmillRunDirection)
-            if dot < 0.3 then
+            if dot < 0.25 then
                 return true, "BF: Saindo da Esteira"
             end
         end
 
         if Config.TreadmillPosition then
             local hDistTreadmill = getHorizontalDistance(currentPos, Config.TreadmillPosition)
-            if hDistTreadmill > 5.0 then
+            if hDistTreadmill > 5.5 then
                 return true, "BF: Deslocou da Esteira"
             end
         end
@@ -513,13 +535,12 @@ local function detectBFActivity(hrp, hum, moveDelta, currentPos)
     elseif State.WalkingToTreadmill then
         if Config.TreadmillPosition then
             local curDist = getHorizontalDistance(currentPos, Config.TreadmillPosition)
-            if curDist > (State.LastDistToTreadmill + 4.0) and curDist > 15.0 then
+            if curDist > (State.LastDistToTreadmill + 5.0) and curDist > 15.0 then
                 return true, "BF: Andando para Outro Alvo"
             end
         end
 
     else
-        local hVel = math.sqrt(hrp.AssemblyLinearVelocity.X^2 + hrp.AssemblyLinearVelocity.Z^2)
         if hVel > 2.5 and moveDelta > 0.6 then
             return true, "BF: Andando"
         end
@@ -551,24 +572,34 @@ local IslandCorridors = {
 
 -- 12. DETECTOR DE PAREDES POR RAYCAST 3D E DESVIO DINAMICO
 local function detectWallAndGetDirection(hrp, moveDir)
+    local char = LocalPlayer.Character
+    if not char then return "CLEAR", moveDir end
+
     local rayParams = RaycastParams.new()
     rayParams.FilterType = RaycastFilterType.Exclude
-    rayParams.FilterDescendantsInstances = { LocalPlayer.Character }
 
-    local origin = hrp.Position
-    local checkDist = 4.2
+    local ignoreList = { char }
+    for _, item in ipairs(char:GetChildren()) do
+        if item:IsA("Tool") or item:IsA("Model") then
+            table.insert(ignoreList, item)
+        end
+    end
+    rayParams.FilterDescendantsInstances = ignoreList
 
-    -- Raio frontal baixo (cintura)
+    -- Iniciar o raio ligeiramente a frente da capsula para evitar colisoes internas
+    local origin = hrp.Position + (moveDir * 1.0) + Vector3.new(0, 0.4, 0)
+    local checkDist = 3.8
+
     local frontRay = Services.Workspace:Raycast(origin, moveDir * checkDist, rayParams)
     if frontRay and frontRay.Instance and frontRay.Instance.CanCollide then
-        -- Obstaculo detectado! Verificar se e baixo (pular)
-        local highRay = Services.Workspace:Raycast(origin + Vector3.new(0, 3.2, 0), moveDir * checkDist, rayParams)
+        -- Obstaculo detectado: checar se e baixo (pular)
+        local highRay = Services.Workspace:Raycast(origin + Vector3.new(0, 3.0, 0), moveDir * checkDist, rayParams)
         if not highRay then
             return "JUMP", moveDir
         else
-            -- Parede alta! Testar diagonais esquerda e direita (+- 45 graus)
-            local leftDir = (CFrame.Angles(0, math.rad(50), 0) * Vector3.new(moveDir.X, 0, moveDir.Z)).Unit
-            local rightDir = (CFrame.Angles(0, math.rad(-50), 0) * Vector3.new(moveDir.X, 0, moveDir.Z)).Unit
+            -- Parede alta: testar diagonais (+- 45 graus)
+            local leftDir = (CFrame.Angles(0, math.rad(45), 0) * Vector3.new(moveDir.X, 0, moveDir.Z)).Unit
+            local rightDir = (CFrame.Angles(0, math.rad(-45), 0) * Vector3.new(moveDir.X, 0, moveDir.Z)).Unit
 
             local leftRay = Services.Workspace:Raycast(origin, leftDir * checkDist, rayParams)
             local rightRay = Services.Workspace:Raycast(origin, rightDir * checkDist, rayParams)
@@ -578,7 +609,6 @@ local function detectWallAndGetDirection(hrp, moveDir)
             elseif not rightRay then
                 return "STEER", rightDir
             else
-                -- Beco ou quina: desvio perpendicular de 90 graus
                 local hardLeft = (CFrame.Angles(0, math.rad(90), 0) * Vector3.new(moveDir.X, 0, moveDir.Z)).Unit
                 return "STEER", hardLeft
             end
@@ -588,70 +618,81 @@ local function detectWallAndGetDirection(hrp, moveDir)
     return "CLEAR", moveDir
 end
 
--- 13. MOTOR DE NAVEGACAO CONTINUA DE ALTA VELOCIDADE (SEM PASSINHO EM PASSINHO)
+-- 13. MOTOR DE NAVEGACAO FLUIDA E PATHFINDING ASSINCRONO (ZERO C-CALL ERRORS)
 local navWaypoints = nil
 local navIndex = 1
 local lastPathComputeTick = 0
 local lastTargetPos = nil
 local isNavigating = false
+local isComputingPath = false
 
 local function getEffectiveIntermediateTarget(currentPos, finalTarget)
-    -- Se estiver alem da Ilha 1 (X > 650), encontrar o proximo corredor intermediario rumo a base
+    -- Se estiver alem da Ilha 1 (X > 650), guiar pelo corredor da ilha rumo a base
     if currentPos.X > 650 then
-        -- Percorrer os corredores do maior X ate o menor X
         for _, corridor in ipairs(IslandCorridors) do
             if currentPos.X > (corridor.X + 25) then
-                -- Corredor da ilha anterior rumo a base
                 return Vector3.new(corridor.X, corridor.Y, corridor.Z), corridor.Name
             end
         end
-        -- Caso esteja entre 650 e 760 (saindo da ilha 1 para a base)
         return Vector3.new(550, 12, -340), "Entrada da Base"
     end
 
-    -- Ja esta na area da base / lobby: ir direto para a esteira
     return finalTarget, "Esteira Final"
 end
 
-local function computeNextRoute(currentPos, intermediateTarget)
-    lastPathComputeTick = os.clock()
-    lastTargetPos = intermediateTarget
+local function requestPathUpdate(fromPos, toPos)
+    if isComputingPath then return end
+    local now = os.clock()
+    if (now - lastPathComputeTick) < 1.2 then return end
 
-    local path = Services.PathfindingService:CreatePath({
-        AgentRadius = 2.0,
-        AgentHeight = 5.0,
-        AgentCanJump = true,
-        WaypointSpacing = 8.0
-    })
+    isComputingPath = true
+    lastPathComputeTick = now
 
-    local ok, _ = pcall(function()
-        path:ComputeAsync(currentPos, intermediateTarget)
-    end)
+    task.spawn(function()
+        local path = Services.PathfindingService:CreatePath({
+            AgentRadius = 2.0,
+            AgentHeight = 5.0,
+            AgentCanJump = true,
+            WaypointSpacing = 6.5
+        })
 
-    if ok and path.Status == Enum.PathStatus.Success then
-        local wps = path:GetWaypoints()
-        if #wps > 1 then
-            navWaypoints = wps
-            navIndex = 2
-            return true
+        local ok, _ = pcall(function()
+            path:ComputeAsync(fromPos, toPos)
+        end)
+
+        if ok and path.Status == Enum.PathStatus.Success then
+            local wps = path:GetWaypoints()
+            if #wps > 1 then
+                navWaypoints = wps
+                navIndex = 2
+                lastTargetPos = toPos
+            end
         end
-    end
 
-    navWaypoints = nil
-    navIndex = 1
-    return false
+        isComputingPath = false
+    end)
 end
 
--- RUNNER CONTINUO EM RUNSERVICE (HEARTBEAT - 60 FPS SEM TRAVAMENTOS)
+-- RUNNER CONTINUO EM HEARTBEAT (MOVIMENTACAO FLUIDA SEM TRAVAMENTOS)
 table.insert(activeConnections, Services.RunService.Heartbeat:Connect(function(dt)
     if not isRunning or not Config.Enabled then return end
-    if not isNavigating or not Config.TreadmillPosition then return end
+    if not isNavigating and not State.IsOnTreadmill then return end
 
     local hrp = getHRP()
     local hum = getHumanoid()
     if not hrp or not hum or hum.Health <= 0 then return end
 
     local currentPos = hrp.Position
+
+    -- CASO A: JA ESTA NA ESTEIRA -> CORRIDA CONTINUA A 60 FPS
+    if State.IsOnTreadmill then
+        hum:Move(Config.TreadmillRunDirection, false)
+        return
+    end
+
+    -- CASO B: A CAMINHO DA ESTEIRA
+    if not isNavigating or not Config.TreadmillPosition then return end
+
     local finalDist = getHorizontalDistance(currentPos, Config.TreadmillPosition)
 
     -- CHEGADA NA ESTEIRA
@@ -664,14 +705,12 @@ table.insert(activeConnections, Services.RunService.Heartbeat:Connect(function(d
         return
     end
 
-    -- ALVO INTERMEDIARIO (CORREDOR DE ILHAS OU ESTEIRA)
+    -- ALVO INTERMEDIARIO (CORREDOR DE ILHAS OU ESTEIRA FINAL)
     local subTarget, subName = getEffectiveIntermediateTarget(currentPos, Config.TreadmillPosition)
-    local subDist = getHorizontalDistance(currentPos, subTarget)
 
-    -- Computar caminho se nao houver ou estiver expirado (a cada 2.5s)
-    local now = os.clock()
-    if not navWaypoints or navIndex > #navWaypoints or (now - lastPathComputeTick) > 2.5 or (lastTargetPos and (subTarget - lastTargetPos).Magnitude > 30) then
-        computeNextRoute(currentPos, subTarget)
+    -- Se precisar de rota, solicitar calculo assincrono seguro
+    if not navWaypoints or navIndex > #navWaypoints or (lastTargetPos and (subTarget - lastTargetPos).Magnitude > 25) then
+        requestPathUpdate(currentPos, subTarget)
     end
 
     -- SELECIONAR PROXIMO PONTO DE MOVIMENTO
@@ -686,7 +725,6 @@ table.insert(activeConnections, Services.RunService.Heartbeat:Connect(function(d
         end
 
         local distToWp = getHorizontalDistance(currentPos, targetStepPos)
-        -- Avanco sem parada: quando estiver a 4.5 studs do waypoint, ja mira no proximo sem frear!
         local advanceThreshold = math.clamp(hum.WalkSpeed * 0.16, 3.8, 8.0)
         if distToWp < advanceThreshold and navIndex < #navWaypoints then
             navIndex = navIndex + 1
@@ -696,7 +734,7 @@ table.insert(activeConnections, Services.RunService.Heartbeat:Connect(function(d
         end
     end
 
-    -- VETOR DE DIRECAO CONTINO (ZERO DECELERATION)
+    -- VETOR DE DIRECAO CONTINUO (ZERO HESITACAO)
     local toStep = Vector3.new(targetStepPos.X - currentPos.X, 0, targetStepPos.Z - currentPos.Z)
     if toStep.Magnitude > 0.1 then
         local moveDir = toStep.Unit
@@ -710,11 +748,10 @@ table.insert(activeConnections, Services.RunService.Heartbeat:Connect(function(d
         end
 
         -- Pulinho na borda da esteira
-        if finalDist < 4.5 and currentPos.Y < (Config.TreadmillSurfaceY + 0.3) then
+        if finalDist < 4.5 and currentPos.Y < (Config.TreadmillSurfaceY + 0.5) then
             hum.Jump = true
         end
 
-        -- APLICACAO DE MOVIMENTO CONTINUO A TODA VELOCIDADE (SEM FREIO)
         hum:Move(moveDir, false)
     end
 end))
@@ -749,7 +786,7 @@ task.spawn(function()
                 local isBusy, busyReason = detectBFActivity(hrp, hum, moveDelta, currentPos)
 
                 if isBusy then
-                    -- BF ATIVO: Ceder controle total
+                    -- BF ATIVO: Ceder controle total imediatamente
                     State.LastActiveTick = os.clock()
                     State.CurrentStatus = busyReason or "BF Operando"
                     isNavigating = false
@@ -774,10 +811,11 @@ task.spawn(function()
                                 isNavigating = true
 
                                 local _, locName = getEffectiveIntermediateTarget(currentPos, Config.TreadmillPosition)
+                                local eggPrefix = State.HoldingEgg and "com Ovo " or ""
                                 if locName == "Esteira Final" then
-                                    State.CurrentStatus = string.format("Sprint para Esteira (%.0fm)", hDist)
+                                    State.CurrentStatus = string.format("Sprint para Esteira %s(%.0fm)", eggPrefix, hDist)
                                 else
-                                    State.CurrentStatus = string.format("Rumo a Base: %s (%.0fm)", locName, hDist)
+                                    State.CurrentStatus = string.format("Rumo a Base: %s %s(%.0fm)", locName, eggPrefix, hDist)
                                 end
 
                             else
@@ -786,7 +824,7 @@ task.spawn(function()
                                     navWaypoints = nil
                                     State.WalkingToTreadmill = false
                                     State.IsOnTreadmill = true
-                                    State.CurrentStatus = "Na Esteira (Treinando)"
+                                    State.CurrentStatus = State.HoldingEgg and "Na Esteira com Ovo (Treinando)" or "Na Esteira (Treinando)"
                                     hum:Move(Config.TreadmillRunDirection, false)
                                 else
                                     State.IsOnTreadmill = false
@@ -804,7 +842,8 @@ task.spawn(function()
                         isNavigating = false
                         State.WalkingToTreadmill = false
                         navWaypoints = nil
-                        State.CurrentStatus = string.format("Aguardando BF (%.1fs)", math.max(0, Config.IdleThresholdSeconds - idleTime))
+                        local eggStr = State.HoldingEgg and " (Ovo Seguro)" or ""
+                        State.CurrentStatus = string.format("Aguardando BF (%.1fs)%s", math.max(0, Config.IdleThresholdSeconds - idleTime), eggStr)
                     end
                 end
             end
@@ -877,7 +916,7 @@ local function getGuiContainer()
     return container or Services.Workspace
 end
 
--- 17. INTERFACE MINIMALISTA, ELEGANTE E DISCRETA (v3.4)
+-- 17. INTERFACE MINIMALISTA, ELEGANTE E DISCRETA (v3.5)
 local randomId = Services.HttpService:GenerateGUID(false):sub(1, 8)
 ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "HUD_" .. randomId
