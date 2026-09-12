@@ -468,7 +468,7 @@ local function checkGlobalBFBusy()
     return false, nil
 end
 
--- Checagem profunda de BodyMovers em qualquer parte do personagem (voo horizontal/reto)
+-- Checagem profunda de BodyMovers em qualquer parte do personagem (voo horizontal/reto do BF)
 local function checkAnyBodyMover(hrp)
     local char = LocalPlayer.Character
     if not char then return false, nil end
@@ -486,30 +486,24 @@ local function checkAnyBodyMover(hrp)
             if cn == "BodyVelocity" then
                 local ok, mf = pcall(function() return child.MaxForce end)
                 local ok2, vel = pcall(function() return child.Velocity end)
-                if ok and ok2 and mf.Magnitude > 0 and vel.Magnitude > 1.0 then
+                if ok and ok2 and mf and vel and mf.Magnitude > 100 and vel.Magnitude > 3.0 then
                     return true, string.format("Voo BF (BodyVelocity vel=%.1f)", vel.Magnitude)
                 end
 
             elseif cn == "BodyPosition" then
                 local ok, mf = pcall(function() return child.MaxForce end)
                 local ok2, tgt = pcall(function() return child.Position end)
-                if ok and ok2 and mf.Magnitude > 0 then
+                if ok and ok2 and mf and tgt and mf.Magnitude > 100 then
                     local dist = (tgt - part.Position).Magnitude
-                    if dist > 3.0 then
+                    if dist > 8.0 then
                         return true, string.format("Voo BF (BodyPosition d=%.1f)", dist)
                     end
-                end
-
-            elseif cn == "BodyGyro" or cn == "BodyThrust" then
-                local ok, mf = pcall(function() return child.MaxForce or child.MaxTorque end)
-                if ok and mf and mf.Magnitude > 500 then
-                    return true, "Voo BF (" .. cn .. ")"
                 end
 
             elseif cn == "LinearVelocity" then
                 local ok, en = pcall(function() return child.Enabled end)
                 local ok2, vv = pcall(function() return child.VectorVelocity end)
-                if ok and ok2 and en and vv.Magnitude > 1.0 then
+                if ok and ok2 and en and vv and vv.Magnitude > 3.0 then
                     return true, string.format("Voo BF (LinearVelocity vel=%.1f)", vv.Magnitude)
                 end
 
@@ -518,7 +512,7 @@ local function checkAnyBodyMover(hrp)
                 local ok2, tgt = pcall(function() return child.Position end)
                 if ok and ok2 and en and tgt then
                     local dist = (tgt - part.Position).Magnitude
-                    if dist > 3.0 then
+                    if dist > 8.0 then
                         return true, string.format("Voo BF (AlignPosition d=%.1f)", dist)
                     end
                 end
@@ -526,7 +520,7 @@ local function checkAnyBodyMover(hrp)
             elseif cn == "VectorForce" then
                 local ok, en = pcall(function() return child.Enabled end)
                 local ok2, frc = pcall(function() return child.Force end)
-                if ok and ok2 and en and frc.Magnitude > 50 then
+                if ok and ok2 and en and frc and frc.Magnitude > 200 then
                     return true, string.format("Voo BF (VectorForce f=%.0f)", frc.Magnitude)
                 end
 
@@ -540,50 +534,65 @@ local function checkAnyBodyMover(hrp)
 end
 
 local function detectBFActivity(hrp, hum, moveDelta, currentPos)
-    -- CAMADA 1: Handshake Global de Execucao Real
+    -- CAMADA 1: Handshake Global de Execucao Real do BF
     local globalBusy, globalReason = checkGlobalBFBusy()
     if globalBusy then return true, globalReason end
 
+    -- CAMADA 2: PROTECAO TOTAL DO COMPANION EM MOVIMENTO (SEM AUTO-CANCELAMENTO)
+    -- Se o companion ja esta CONDUZINDO o personagem (a caminho da esteira ou correndo nela):
+    -- O MOVIMENTO ATUAL E DO PROPRIO COMPANION!
+    if State.WalkingToTreadmill or State.IsOnTreadmill then
+        -- 1. Ceder imediatamente se o jogador tocar nas teclas de controle manual (WASD)
+        local uis = Services.UserInputService
+        if uis:IsKeyDown(Enum.KeyCode.W) or uis:IsKeyDown(Enum.KeyCode.A)
+            or uis:IsKeyDown(Enum.KeyCode.S) or uis:IsKeyDown(Enum.KeyCode.D) then
+            return true, "Movimento Manual"
+        end
+
+        -- 2. Ceder se o BF ativar um mover de voo real no ar
+        local hasMover, moverReason = checkAnyBodyMover(hrp)
+        if hasMover then
+            -- Mover presente: so ceder se estiver descolado do chao ou velocidade extrema
+            if hum.FloorMaterial == Enum.Material.Air or hrp.AssemblyLinearVelocity.Magnitude > (hum.WalkSpeed + 15) then
+                return true, moverReason
+            end
+        end
+
+        -- 3. Ceder se o BF teleportar o personagem para longe repentinamente (> 45 studs em 1 tick)
+        if moveDelta > 45.0 then
+            return true, "BF: Teleporte Detectado"
+        end
+
+        -- Movimento de caminhada e corrida pertence ao Companion: manter controle ininterrupto!
+        return false, nil
+    end
+
+    -- A PARTIR DAQUI: O COMPANION ESTA INATIVO (O PERSONAGEM DEVERIA ESTAR PARADO)
     local now = os.clock()
     local vel3D = hrp.AssemblyLinearVelocity
     local hVel = math.sqrt(vel3D.X^2 + vel3D.Z^2)
     local totalVel = vel3D.Magnitude
 
-    -- CAMADA 2: Deteccao de Voo (Horizontal, Vertical, Qualquer Direcao)
-    -- Checar BodyMovers/Constraints fisicos em HRP e Torso
+    -- CAMADA 3: Deteccao de Voo do BF (Fisico, Linear ou CFrame)
     local hasPhysFlight, physReason = checkAnyBodyMover(hrp)
     if hasPhysFlight then
-        -- Se companion esta ativo, so ceder se o mover realmente estiver movendo o boneco
-        if State.WalkingToTreadmill or State.IsOnTreadmill then
-            if totalVel > 8.0 or (currentPos.Y > (Config.TreadmillSurfaceY + 4.0) and Config.TreadmillSurfaceY ~= 0) then
-                return true, physReason
-            end
-        else
-            return true, physReason
+        return true, physReason
+    end
+
+    -- Se o personagem estiver no ar e se movendo (voo aereo sustentado)
+    if hum.FloorMaterial == Enum.Material.Air and totalVel > 4.0 then
+        local humState = hum:GetState()
+        if humState ~= Enum.HumanoidStateType.Jumping then
+            return true, string.format("BF: Voo Aereo (vel=%.1f)", totalVel)
         end
     end
 
-    -- Voo por velocidade alta sem BodyMover visivel (ex: TweenService ou CFrame direto)
-    if totalVel > 35.0 then
-        return true, string.format("BF: Voo Rapido (vel=%.0f)", totalVel)
+    -- Velocidade extrema sem mover visivel (CFrame / Tween)
+    if totalVel > (hum.WalkSpeed + 25) and totalVel > 50 then
+        return true, string.format("BF: Voo CFrame (vel=%.0f)", totalVel)
     end
 
-    -- Altitude elevada acima da esteira (horizontal ou vertical)
-    if Config.TreadmillSurfaceY ~= 0 and currentPos.Y > (Config.TreadmillSurfaceY + 6.0) then
-        if totalVel > 3.0 or hVel > 2.0 then
-            return true, string.format("BF Voando (Y+%.1f vel=%.1f)", currentPos.Y - Config.TreadmillSurfaceY, totalVel)
-        end
-    end
-
-    -- Freefall / Flying state com velocidade real
-    local humState = hum:GetState()
-    if (humState == Enum.HumanoidStateType.Freefall or humState == Enum.HumanoidStateType.Flying) and totalVel > 5.0 then
-        if not (State.WalkingToTreadmill or State.IsOnTreadmill) then
-            return true, string.format("BF: Voo (%s vel=%.1f)", humState.Name, totalVel)
-        end
-    end
-
-    -- CAMADA 3: Posse de Ovo e Cooldown de Deposito / Plantio
+    -- CAMADA 4: Posse de Ovo e Cooldown de Deposito / Plantio
     local isHolding = checkIsHoldingEgg()
     if isHolding then
         if not State.HoldingEgg then
@@ -594,12 +603,7 @@ local function detectBFActivity(hrp, hum, moveDelta, currentPos)
             return true, "BF: Pegou Ovo"
         end
 
-        -- Se companion ja esta ativo: o movimento e nosso, manter controle
-        if State.WalkingToTreadmill or State.IsOnTreadmill then
-            return false, nil
-        end
-
-        -- Se estiver se movendo ou alto: BF em transporte
+        -- Se estiver se movendo com o ovo: BF em transporte
         local isMoving = (hVel > 2.0 or moveDelta > 0.5)
         if isMoving then
             State.EggHoldStillSince = 0
@@ -621,7 +625,7 @@ local function detectBFActivity(hrp, hum, moveDelta, currentPos)
             return true, string.format("BF Ovo: Parado (%.1fs)", math.max(0.1, 1.5 - stillDuration))
         end
 
-        -- Parado > 1.5s: BF ocioso! Companion livre para assumir.
+        -- Parado > 1.5s com ovo: BF ocioso! Liberado para o companion assumir
         State.HoldingEgg = true
         State.WasHoldingEgg = true
     else
@@ -639,23 +643,11 @@ local function detectBFActivity(hrp, hum, moveDelta, currentPos)
         return true, string.format("BF: Plantou Ovo (%.1fs)", math.max(0.1, rem))
     end
 
-    -- CAMADA 4: Movimento Ativo (Teclas Manuais vs Companion vs BF Andando)
-    -- Se o companion ja esta em controle: so cede para WASD humano
-    if State.IsOnTreadmill or State.WalkingToTreadmill then
-        local uis = Services.UserInputService
-        if uis:IsKeyDown(Enum.KeyCode.W) or uis:IsKeyDown(Enum.KeyCode.A)
-            or uis:IsKeyDown(Enum.KeyCode.S) or uis:IsKeyDown(Enum.KeyCode.D) then
-            return true, "Movimento Manual"
-        end
-        return false, nil
-    end
-
-    -- Se NEM companion NEM ovo: checar se BF comecou a andar
+    -- CAMADA 5: Movimento Terrestre do BF ou Teclas Manuais
     if hVel > 2.5 and moveDelta > 0.6 then
         return true, "BF: Andando"
     end
 
-    -- Teclas manuais
     local uis = Services.UserInputService
     if uis:IsKeyDown(Enum.KeyCode.W) or uis:IsKeyDown(Enum.KeyCode.A)
         or uis:IsKeyDown(Enum.KeyCode.S) or uis:IsKeyDown(Enum.KeyCode.D) then
