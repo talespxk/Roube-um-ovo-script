@@ -98,7 +98,9 @@ local State = {
     WalkingToTreadmill = false,
     LastActiveTick = os.clock(),
     LastPosition = Vector3.zero,
-    LastDistToTarget = 999
+    LastDistToTarget = 999,
+    AirborneSince = 0,
+    LastBusyReason = "Iniciando"
 }
 
 -- Funcoes Auxiliares do Personagem
@@ -534,9 +536,14 @@ local function checkAnyBodyMover(hrp)
 end
 
 local function detectBFActivity(hrp, hum, moveDelta, currentPos)
+    local now = os.clock()
+
     -- CAMADA 1: Handshake Global de Execucao Real do BF
     local globalBusy, globalReason = checkGlobalBFBusy()
-    if globalBusy then return true, globalReason end
+    if globalBusy then
+        State.LastBusyReason = globalReason
+        return true, globalReason
+    end
 
     -- CAMADA 2: PROTECAO TOTAL DO COMPANION EM MOVIMENTO (SEM AUTO-CANCELAMENTO)
     -- Se o companion ja esta CONDUZINDO o personagem (a caminho da esteira ou correndo nela):
@@ -546,29 +553,40 @@ local function detectBFActivity(hrp, hum, moveDelta, currentPos)
         local uis = Services.UserInputService
         if uis:IsKeyDown(Enum.KeyCode.W) or uis:IsKeyDown(Enum.KeyCode.A)
             or uis:IsKeyDown(Enum.KeyCode.S) or uis:IsKeyDown(Enum.KeyCode.D) then
+            State.LastBusyReason = "Movimento Manual"
             return true, "Movimento Manual"
         end
 
-        -- 2. Ceder se o BF ativar um mover de voo real no ar
-        local hasMover, moverReason = checkAnyBodyMover(hrp)
-        if hasMover then
-            -- Mover presente: so ceder se estiver descolado do chao ou velocidade extrema
-            if hum.FloorMaterial == Enum.Material.Air or hrp.AssemblyLinearVelocity.Magnitude > (hum.WalkSpeed + 15) then
-                return true, moverReason
+        -- 2. Rastreador de tempo aereo continuo (filtra pulos de obstaculos normais de 0.3s)
+        local isAir = (hum.FloorMaterial == Enum.Material.Air)
+        if isAir then
+            if State.AirborneSince == 0 then State.AirborneSince = now end
+        else
+            State.AirborneSince = 0
+        end
+        local airTime = (State.AirborneSince > 0) and (now - State.AirborneSince) or 0
+
+        -- So ceder se o BF ativar voo aereo REAL sustentado (> 1.2s flutuando no ar)
+        if airTime > 1.2 then
+            local hasMover, moverReason = checkAnyBodyMover(hrp)
+            if hasMover or hrp.AssemblyLinearVelocity.Magnitude > 30 then
+                State.LastBusyReason = moverReason or "BF: Voo Sustentado"
+                return true, State.LastBusyReason
             end
         end
 
-        -- 3. Ceder se o BF teleportar o personagem para longe repentinamente (> 45 studs em 1 tick)
-        if moveDelta > 45.0 then
-            return true, "BF: Teleporte Detectado"
+        -- 3. Ceder se o BF teleportar o personagem para longe repentinamente (> 50 studs em 1 tick)
+        if moveDelta > 50.0 then
+            State.LastBusyReason = "BF: Teleporte"
+            return true, "BF: Teleporte"
         end
 
         -- Movimento de caminhada e corrida pertence ao Companion: manter controle ininterrupto!
+        State.LastBusyReason = "Companion Navegando"
         return false, nil
     end
 
     -- A PARTIR DAQUI: O COMPANION ESTA INATIVO (O PERSONAGEM DEVERIA ESTAR PARADO)
-    local now = os.clock()
     local vel3D = hrp.AssemblyLinearVelocity
     local hVel = math.sqrt(vel3D.X^2 + vel3D.Z^2)
     local totalVel = vel3D.Magnitude
@@ -576,6 +594,7 @@ local function detectBFActivity(hrp, hum, moveDelta, currentPos)
     -- CAMADA 3: Deteccao de Voo do BF (Fisico, Linear ou CFrame)
     local hasPhysFlight, physReason = checkAnyBodyMover(hrp)
     if hasPhysFlight then
+        State.LastBusyReason = physReason
         return true, physReason
     end
 
@@ -583,13 +602,15 @@ local function detectBFActivity(hrp, hum, moveDelta, currentPos)
     if hum.FloorMaterial == Enum.Material.Air and totalVel > 4.0 then
         local humState = hum:GetState()
         if humState ~= Enum.HumanoidStateType.Jumping then
-            return true, string.format("BF: Voo Aereo (vel=%.1f)", totalVel)
+            State.LastBusyReason = string.format("BF: Voo Aereo (vel=%.1f)", totalVel)
+            return true, State.LastBusyReason
         end
     end
 
     -- Velocidade extrema sem mover visivel (CFrame / Tween)
     if totalVel > (hum.WalkSpeed + 25) and totalVel > 50 then
-        return true, string.format("BF: Voo CFrame (vel=%.0f)", totalVel)
+        State.LastBusyReason = string.format("BF: Voo CFrame (vel=%.0f)", totalVel)
+        return true, State.LastBusyReason
     end
 
     -- CAMADA 4: Posse de Ovo e Cooldown de Deposito / Plantio
@@ -600,6 +621,7 @@ local function detectBFActivity(hrp, hum, moveDelta, currentPos)
             State.WasHoldingEgg = true
             State.EggPickupTick = now
             State.EggHoldStillSince = 0
+            State.LastBusyReason = "BF: Pegou Ovo"
             return true, "BF: Pegou Ovo"
         end
 
@@ -607,12 +629,14 @@ local function detectBFActivity(hrp, hum, moveDelta, currentPos)
         local isMoving = (hVel > 2.0 or moveDelta > 0.5)
         if isMoving then
             State.EggHoldStillSince = 0
+            State.LastBusyReason = "BF: Transportando Ovo"
             return true, "BF: Transportando Ovo"
         end
 
         -- Tempo de graca apos pegar o ovo (2.0s)
         if (now - State.EggPickupTick) < 2.0 then
             State.EggHoldStillSince = 0
+            State.LastBusyReason = "BF: Segurando Ovo"
             return true, "BF: Segurando Ovo (Aguardando)"
         end
 
@@ -622,7 +646,8 @@ local function detectBFActivity(hrp, hum, moveDelta, currentPos)
         end
         local stillDuration = now - State.EggHoldStillSince
         if stillDuration < 1.5 then
-            return true, string.format("BF Ovo: Parado (%.1fs)", math.max(0.1, 1.5 - stillDuration))
+            State.LastBusyReason = string.format("BF Ovo: Parado (%.1fs)", math.max(0.1, 1.5 - stillDuration))
+            return true, State.LastBusyReason
         end
 
         -- Parado > 1.5s com ovo: BF ocioso! Liberado para o companion assumir
@@ -640,20 +665,24 @@ local function detectBFActivity(hrp, hum, moveDelta, currentPos)
     -- Cooldown apos soltar/plantar o ovo (2.5s)
     if State.LastEggDropTick > 0 and (now - State.LastEggDropTick) < 2.5 then
         local rem = 2.5 - (now - State.LastEggDropTick)
-        return true, string.format("BF: Plantou Ovo (%.1fs)", math.max(0.1, rem))
+        State.LastBusyReason = string.format("BF: Plantou Ovo (%.1fs)", math.max(0.1, rem))
+        return true, State.LastBusyReason
     end
 
     -- CAMADA 5: Movimento Terrestre do BF ou Teclas Manuais
     if hVel > 2.5 and moveDelta > 0.6 then
+        State.LastBusyReason = "BF: Andando"
         return true, "BF: Andando"
     end
 
     local uis = Services.UserInputService
     if uis:IsKeyDown(Enum.KeyCode.W) or uis:IsKeyDown(Enum.KeyCode.A)
         or uis:IsKeyDown(Enum.KeyCode.S) or uis:IsKeyDown(Enum.KeyCode.D) then
+        State.LastBusyReason = "Movimento Manual"
         return true, "Movimento Manual"
     end
 
+    State.LastBusyReason = "Livre"
     return false, nil
 end
 
@@ -1027,7 +1056,7 @@ ScreenGui.Parent = getGuiContainer()
 
 local Card = Instance.new("Frame")
 Card.Name = "Panel"
-Card.Size = UDim2.new(0, 210, 0, 0)
+Card.Size = UDim2.new(0, 235, 0, 0)
 Card.AutomaticSize = Enum.AutomaticSize.Y
 Card.Position = UDim2.new(0.84, -10, 0.05, 0)
 Card.BackgroundColor3 = Color3.fromRGB(15, 20, 28)
@@ -1080,10 +1109,10 @@ Title.Size = UDim2.new(1, -54, 1, 0)
 Title.Position = UDim2.new(0, 14, 0, 0)
 Title.BackgroundTransparency = 1
 Title.Font = Enum.Font.SourceSansBold
-Title.TextSize = 13
+Title.TextSize = 12
 Title.TextColor3 = Color3.fromRGB(240, 245, 255)
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "Auto Esteira (BF)"
+Title.Text = "Auto Esteira (BF) v3.7.4"
 Title.Parent = Header
 
 local MinBtn = Instance.new("TextButton")
@@ -1264,7 +1293,7 @@ MinBtn.MouseButton1Click:Connect(function()
         cardPad.PaddingBottom = UDim.new(0, 4)
         cardPad.PaddingTop = UDim.new(0, 4)
     else
-        Card.Size = UDim2.new(0, 210, 0, 0)
+        Card.Size = UDim2.new(0, 235, 0, 0)
         cardPad.PaddingBottom = UDim.new(0, 10)
         cardPad.PaddingTop = UDim.new(0, 8)
     end
@@ -1307,11 +1336,8 @@ task.spawn(function()
                 local nav = isNavigating and "S" or "N"
                 local walk = State.WalkingToTreadmill and "S" or "N"
                 local onT = State.IsOnTreadmill and "S" or "N"
-                local tF = State.TreadmillFound and "S" or "N"
-                local tP = Config.TreadmillPosition and "OK" or "NIL"
-                local bP = Config.BasePosition and "OK" or "NIL"
-                local idle = string.format("%.1f", os.clock() - State.LastActiveTick)
-                DebugLabel.Text = string.format("Nav:%s Walk:%s Est:%s T:%s/%s B:%s I:%s", nav, walk, onT, tF, tP, bP, idle)
+                local reason = State.LastBusyReason or "Livre"
+                DebugLabel.Text = string.format("v3.7.4 | Nav:%s Walk:%s Est:%s | %s", nav, walk, onT, reason)
             end
         end
         task.wait(0.25)
