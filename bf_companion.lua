@@ -700,7 +700,7 @@ local function checkObstacleJump(hrp, moveDir)
     if not char then return false end
 
     local rayParams = RaycastParams.new()
-    rayParams.FilterType = RaycastFilterType.Exclude
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
     local ignoreList = { char }
     for _, item in ipairs(char:GetChildren()) do
