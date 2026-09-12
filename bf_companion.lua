@@ -1,14 +1,17 @@
 --[[
-    AUTO ESTEIRA - ASSISTENTE DE VELOCIDADE (v3.1 ESTAVEL & FLUIDO)
+    AUTO ESTEIRA - ASSISTENTE DE VELOCIDADE (v3.2 ANTI-CONFLITO TOTAL COM BF)
     -----------------------------------------------------------------------
-    - Movimentacao Fluida: Elimina travamentos na esteira usando corrida continua
-      via Humanoid:Move(direcao, false), simulando a tecla 'W' sem paradas.
-    - Altura Real da Superficie: Calcula o topo exato do tapete da esteira e realiza
-      ajuste suave de piso (com pequeno pulo caso haja degrau).
-    - Histerese Anti-Oscilacao: Impede o vaivem entre andar e correr na esteira.
-    - Parada Imediata: Desativar no menu interrompe o movimento na mesma hora.
-    - Limpeza de Auto-Execute: Remove restos de autoexec indesejados no inicializador.
-    - Zero palavras-chave rastreadas e interface compacta de 210px.
+    - Deteccao Multicamadas de Atividade do BF (BigFroot / Scripts de Roubo):
+      * Camada 1: Handshake Global (_G.BF_IsBusy, getgenv().BF_IsBusy, StealSM, BF_LastActionTick).
+      * Camada 2: Posse de Ovo & Cooldown de Deposito (4.0s de tolerancia pos-plantio para finalizar o ciclo).
+      * Camada 3: Voo Overhead e Altitude (Y > chao + 4.5m) e movers de fisica (BodyVelocity, LinearVelocity, etc.).
+      * Camada 4: Posicionamento no Mapa (raio > 35m fora da base).
+      * Camada 5: Intencao de Caminhada (hVel > 1.4, moveDelta > 0.45, MoveDirection > 0.05 e WASD manual).
+    - Zero Travamentos: NUNCA injeta Move(Vector3.zero) durante as operacoes do BF.
+    - Cede o Controle Instantaneamente: Se o BF ativar enquanto o personagem estiver
+      na esteira, desengata na mesma hora sem disputa de fisica.
+    - Corrida Continua Fluida: Simula 'W' continuo na esteira apenas quando 100% ocioso.
+    - Interface Minimalista de 210px com indicacao de status em tempo real do BF.
 ]]
 
 -- 1. Silenciamento Total Preventivo contra LogService.MessageOut
@@ -16,7 +19,7 @@ local function silentOutput(...) end
 local print = silentOutput
 local warn = silentOutput
 
--- 2. Limpeza de Instâncias Anteriores
+-- 2. Limpeza de Instancias Anteriores
 pcall(function()
     _G.AutoEsteira_Active = nil
     if getgenv then getgenv().AutoEsteira_Active = nil end
@@ -40,7 +43,7 @@ pcall(function()
     end
 end)
 
--- 4. Serviços Seguros via cloneref
+-- 4. Servicos Seguros via cloneref
 local function safeService(name)
     local s = game:GetService(name)
     return (cloneref and cloneref(s)) or s
@@ -52,7 +55,8 @@ local Services = {
     RunService = safeService("RunService"),
     UserInputService = safeService("UserInputService"),
     HttpService = safeService("HttpService"),
-    TweenService = safeService("TweenService")
+    TweenService = safeService("TweenService"),
+    ReplicatedStorage = safeService("ReplicatedStorage")
 }
 
 local LocalPlayer = Services.Players.LocalPlayer
@@ -61,14 +65,14 @@ while not LocalPlayer do
     LocalPlayer = Services.Players.LocalPlayer
 end
 
--- 5. Variáveis de Ciclo de Vida e Controle
+-- 5. Variaveis de Ciclo de Vida e Controle
 local isRunning = true
 local activeConnections = {}
 
--- 6. Configurações e Estado
+-- 6. Configuracoes e Estado
 local Config = {
     Enabled = true,
-    IdleThresholdSeconds = 2.0,
+    IdleThresholdSeconds = 2.5, -- Tempo seguro de inatividade total antes de ir a esteira
     TreadmillPosition = nil,
     TreadmillSurfaceY = 0,
     TreadmillRunDirection = Vector3.new(0, 0, -1),
@@ -80,12 +84,32 @@ local State = {
     PlotFound = false,
     TreadmillFound = false,
     HoldingEgg = false,
+    WasHoldingEgg = false,
+    LastHoldingTick = 0,
+    LastEggDropTick = 0,
     IsOnTreadmill = false,
+    WalkingToTreadmill = false,
     LastActiveTick = os.clock(),
-    LastPosition = Vector3.zero
+    LastPosition = Vector3.zero,
+    LastDistToTreadmill = 999
 }
 
--- Funções Auxiliares do Personagem
+-- 6.1 Gancho de Reaparecimento do Personagem (CharacterAdded)
+table.insert(activeConnections, LocalPlayer.CharacterAdded:Connect(function()
+    State.IsOnTreadmill = false
+    State.WalkingToTreadmill = false
+    State.HoldingEgg = false
+    State.WasHoldingEgg = false
+    State.LastPosition = Vector3.zero
+    State.LastActiveTick = os.clock() + 2.0 -- 2s de tolerancia apos renascer
+    State.CurrentStatus = "Carregando Personagem..."
+    task.wait(1.0)
+    if isRunning and Config.Enabled then
+        pcall(updateTreadmillTarget)
+    end
+end))
+
+-- Funcoes Auxiliares do Personagem
 local function getHRP()
     local c = LocalPlayer.Character
     return c and c:FindFirstChild("HumanoidRootPart")
@@ -111,11 +135,12 @@ local standardLimbNames = {
     ["right leg"] = true, ["animate"] = true, ["humanoid"] = true
 }
 
--- 7. Detecção Rigorosa de Posse de Ovo (Sem Falso-Positivo)
+-- 7. Deteccao Rigorosa de Posse de Ovo (Sem Falso-Positivo)
 local function checkIsHoldingEgg()
     local char = LocalPlayer.Character
     if not char then return false end
 
+    -- A. Atributos no Personagem ou Jogador
     for _, attr in ipairs({"EggUid", "CarryingEgg", "HoldingEgg", "HasEgg", "StolenEgg", "Carrying"}) do
         local val = char:GetAttribute(attr)
         if val ~= nil and val ~= "" and val ~= false then return true end
@@ -123,6 +148,7 @@ local function checkIsHoldingEgg()
         if valP ~= nil and valP ~= "" and valP ~= false then return true end
     end
 
+    -- B. Ferramentas ou partes soldadas no Personagem
     for _, child in ipairs(char:GetChildren()) do
         local low = child.Name:lower()
         if not standardLimbNames[low] and not child:IsA("Accessory") and not child:IsA("Shirt")
@@ -141,6 +167,7 @@ local function checkIsHoldingEgg()
         end
     end
 
+    -- C. Mochila (Backpack)
     local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
     if bp then
         for _, item in ipairs(bp:GetChildren()) do
@@ -153,10 +180,27 @@ local function checkIsHoldingEgg()
         end
     end
 
+    -- D. Consulta ao Modulo Nativo EggState se presente
+    local eggStateHolding = false
+    pcall(function()
+        local rep = Services.ReplicatedStorage
+        local client = rep and rep:FindFirstChild("Client")
+        if client then
+            local es = client:FindFirstChild("EggState")
+            if es then
+                local mod = require(es)
+                if mod and type(mod.GetCarriedEgg) == "function" and mod.GetCarriedEgg() then
+                    eggStateHolding = true
+                end
+            end
+        end
+    end)
+    if eggStateHolding then return true end
+
     return false
 end
 
--- 8. ALGORITMO: DETECTAR A PRÓPRIA BASE (PLOT)
+-- 8. ALGORITMO: DETECTAR A PROPRIA BASE (PLOT)
 local function findMyPlot()
     local plots = Services.Workspace:FindFirstChild("Plots")
     if not plots then return nil end
@@ -217,7 +261,7 @@ local function findMyPlot()
     return nil
 end
 
--- 9. ALGORITMO: DETECTAR A PRÓPRIA ESTEIRA (NUNCA A DOS OUTROS)
+-- 9. ALGORITMO: DETECTAR A PROPRIA ESTEIRA (NUNCA A DOS OUTROS)
 local function findMyTreadmill(myPlot)
     if not myPlot then return nil, nil, nil end
 
@@ -226,7 +270,7 @@ local function findMyTreadmill(myPlot)
 
     local targetPart = nil
 
-    -- A. Buscar dentro dos descendentes do próprio Plot
+    -- A. Buscar dentro dos descendentes do proprio Plot
     for _, desc in ipairs(myPlot:GetDescendants()) do
         local low = desc.Name:lower()
         if low:find("treadmill") or low:find("esteira") or low:find("belt") or low:find("speed") or low:find("treino") then
@@ -291,13 +335,13 @@ local function findMyTreadmill(myPlot)
         local surfaceY = partPos.Y + (sizeY / 2)
         local walkPos = Vector3.new(partPos.X, surfaceY, partPos.Z)
 
-        -- Determinar direção da corrida (contra o movimento ou virado para a frente da esteira)
+        -- Determinar direcao da corrida (contra o movimento ou virado para a frente da esteira)
         local runDir = targetPart.CFrame.LookVector
         if targetPart.AssemblyLinearVelocity.Magnitude > 1 then
             local v = targetPart.AssemblyLinearVelocity
             runDir = -Vector3.new(v.X, 0, v.Z).Unit
         else
-            -- Aponta para longe do centro do plot (em direção à parede onde fica o painel da esteira)
+            -- Aponta para longe do centro do plot (em direcao a parede onde fica o painel da esteira)
             local p1 = partPos + runDir * 2
             local p2 = partPos - runDir * 2
             if (p1 - plotCenter).Magnitude < (p2 - plotCenter).Magnitude then
@@ -330,7 +374,171 @@ local function updateTreadmillTarget()
     return false
 end
 
--- 10. LOOP PRINCIPAL DE COOPERAÇÃO SUAVE E SEM TRAVAMENTO
+-- 10. MOTOR MULTICAMADAS DE DETECCAO DO BF (ZERO CONFLITO)
+local function checkGlobalBFBusy()
+    local envs = { _G }
+    if getgenv then
+        pcall(function() table.insert(envs, getgenv()) end)
+    end
+
+    for _, env in ipairs(envs) do
+        if type(env) == "table" then
+            -- Flags explicitas do BF ou do nosso Hub
+            if rawget(env, "BF_IsBusy") == true then return true, "BF Ocupado (Global)" end
+            if rawget(env, "BF_Active") == true then return true, "BF Ativo (Global)" end
+            if rawget(env, "BF_Stealing") == true then return true, "BF Roubando (Global)" end
+            if rawget(env, "BF_Flying") == true then return true, "BF Voando (Global)" end
+            if rawget(env, "AutoSteal_Active") == true then return true, "Auto-Steal Ativo" end
+            if rawget(env, "IsStealing") == true then return true, "Roubo Ativo" end
+            if rawget(env, "StealActive") == true then return true, "Roubo em Progresso" end
+
+            -- State Machine do main.lua
+            local sm = rawget(env, "StealSM")
+            if type(sm) == "table" and sm.Current and sm.Current ~= "IDLE" then
+                return true, "BF: " .. tostring(sm.Current)
+            end
+
+            -- Acao recente de roubo/voo com tolerancia de 3.5s
+            local lastTick = rawget(env, "BF_LastActionTick")
+            if type(lastTick) == "number" and (os.clock() - lastTick) < 3.5 then
+                return true, "BF Operando Recentemente"
+            end
+        end
+    end
+    return false, nil
+end
+
+local function detectBFActivity(hrp, hum, moveDelta, currentPos)
+    -- CAMADA 1: Handshake Global e Sockets
+    local globalBusy, globalReason = checkGlobalBFBusy()
+    if globalBusy then
+        return true, globalReason
+    end
+
+    -- CAMADA 2: Posse de Ovo & Cooldown de Deposito / Plantio
+    local isHolding = checkIsHoldingEgg()
+    if isHolding then
+        State.HoldingEgg = true
+        State.WasHoldingEgg = true
+        State.LastHoldingTick = os.clock()
+        return true, "BF: Segurando Ovo"
+    end
+    State.HoldingEgg = false
+
+    -- Quando solta o ovo na base (plantio/deposito), dar 4.0s de tolerancia para o BF concluir
+    if State.WasHoldingEgg then
+        State.WasHoldingEgg = false
+        State.LastEggDropTick = os.clock()
+    end
+
+    if State.LastEggDropTick > 0 and (os.clock() - State.LastEggDropTick) < 4.0 then
+        local rem = 4.0 - (os.clock() - State.LastEggDropTick)
+        return true, string.format("BF: Plantando Ovo (%.1fs)", math.max(0.1, rem))
+    end
+
+    -- CAMADA 3: Deteccao Aerea / Voo Overhead / Suspensao Fisica
+    local groundY = Config.TreadmillSurfaceY
+    if groundY == 0 and Config.PlotPosition then
+        groundY = Config.PlotPosition.Y
+    end
+
+    -- Altura > 4.5 studs do solo indica jogador no ar (voando pelo mapa ou pulando)
+    if groundY ~= 0 and currentPos.Y > (groundY + 4.5) then
+        return true, string.format("BF Voando Alto (Y+%.1f)", currentPos.Y - groundY)
+    end
+
+    -- Controladores de fisica e instancias de voo inseridas pelo BF
+    local flightMovers = {
+        "BodyVelocity", "BodyPosition", "BodyGyro", "BodyThrust",
+        "LinearVelocity", "AlignPosition", "AlignOrientation", "VectorForce", "RocketPropulsion"
+    }
+    for _, mName in ipairs(flightMovers) do
+        if hrp:FindFirstChildOfClass(mName) then
+            return true, "BF: Voo Ativo (" .. mName .. ")"
+        end
+    end
+    local char = LocalPlayer.Character
+    if char then
+        local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+        if torso then
+            for _, mName in ipairs(flightMovers) do
+                if torso:FindFirstChildOfClass(mName) then
+                    return true, "BF: Voo Ativo (" .. mName .. ")"
+                end
+            end
+        end
+    end
+
+    -- Estado fisico do Humanoid
+    local humState = hum:GetState()
+    if humState == Enum.HumanoidStateType.Freefall or humState == Enum.HumanoidStateType.Flying or humState == Enum.HumanoidStateType.PlatformStanding then
+        return true, "BF: Em Voo (" .. humState.Name .. ")"
+    end
+    if hum.PlatformStand or hum.Sit then
+        return true, "BF: Estado Suspenso"
+    end
+
+    -- CAMADA 4: Fora da Base (Operando pelo mapa / visitando outros plots)
+    if Config.PlotPosition then
+        local hDistFromPlot = getHorizontalDistance(currentPos, Config.PlotPosition)
+        if hDistFromPlot > 35.0 then
+            return true, string.format("BF no Mapa (%.0fm)", hDistFromPlot)
+        end
+    end
+
+    -- CAMADA 5: Movimentacao Dinamica e Intencao de Caminhada
+    if State.IsOnTreadmill then
+        -- Na esteira: detectar se o BF ou jogador esta tentando sair ou andar para outra direcao
+        if hum.MoveDirection.Magnitude > 0.1 then
+            local dot = hum.MoveDirection:Dot(Config.TreadmillRunDirection)
+            if dot < 0.4 then
+                return true, "BF: Direcionando Fora da Esteira"
+            end
+        end
+
+        if Config.TreadmillPosition then
+            local hDistTreadmill = getHorizontalDistance(currentPos, Config.TreadmillPosition)
+            if hDistTreadmill > 4.5 then
+                return true, "BF: Deslocou da Esteira"
+            end
+        end
+
+    elseif State.WalkingToTreadmill then
+        -- A caminho da esteira: se estiver se afastando ao inves de aproximar, BF assumiu
+        if Config.TreadmillPosition then
+            local curDist = getHorizontalDistance(currentPos, Config.TreadmillPosition)
+            if curDist > (State.LastDistToTreadmill + 1.2) then
+                return true, "BF: Andando para Outro Alvo"
+            end
+        end
+
+    else
+        -- No chao da base, parado ou em movimento
+        local hVel = math.sqrt(hrp.AssemblyLinearVelocity.X^2 + hrp.AssemblyLinearVelocity.Z^2)
+        if hVel > 1.4 then
+            return true, "BF: Andando"
+        end
+
+        if moveDelta > 0.45 then
+            return true, "BF: Andando"
+        end
+
+        if hum.MoveDirection.Magnitude > 0.05 then
+            return true, "BF: Andando"
+        end
+
+        -- Teclado manual (WASD)
+        local uis = Services.UserInputService
+        if uis:IsKeyDown(Enum.KeyCode.W) or uis:IsKeyDown(Enum.KeyCode.A)
+            or uis:IsKeyDown(Enum.KeyCode.S) or uis:IsKeyDown(Enum.KeyCode.D) then
+            return true, "Movimento Manual do Jogador"
+        end
+    end
+
+    return false, nil
+end
+
+-- 11. LOOP PRINCIPAL DE COOPERACAO SUAVE E SEM TRAVAMENTO (ANTI-CONFLITO TOTAL)
 task.spawn(function()
     while isRunning do
         task.wait(0.25)
@@ -339,6 +547,7 @@ task.spawn(function()
         if not Config.Enabled then
             State.CurrentStatus = "Pausado"
             State.IsOnTreadmill = false
+            State.WalkingToTreadmill = false
         else
             local hrp = getHRP()
             local hum = getHumanoid()
@@ -348,65 +557,73 @@ task.spawn(function()
                     updateTreadmillTarget()
                 end
 
-                local holding = checkIsHoldingEgg()
-                State.HoldingEgg = holding
-
                 local currentPos = hrp.Position
-                local moveDelta = (currentPos - State.LastPosition).Magnitude
+                local moveDelta = 0
+                if State.LastPosition ~= Vector3.zero then
+                    moveDelta = (currentPos - State.LastPosition).Magnitude
+                end
                 State.LastPosition = currentPos
 
-                local distFromPlot = Config.PlotPosition and (currentPos - Config.PlotPosition).Magnitude or 0
+                -- Executar deteccao profunda do BF
+                local isBusy, busyReason = detectBFActivity(hrp, hum, moveDelta, currentPos)
 
-                -- 1. Segurando ovo -> Script Principal plantando!
-                if holding then
+                if isBusy then
+                    -- BF ESTA OPERANDO (Voando, Andando, Pegando Ovo ou Plantando)!
                     State.LastActiveTick = os.clock()
-                    State.IsOnTreadmill = false
-                    State.CurrentStatus = "Plantando Ovo"
-                    hum:Move(Vector3.zero, false)
+                    State.CurrentStatus = busyReason or "BF Operando"
 
-                -- 2. Movimento rápido ou fora da base -> Script Principal roubando/voando!
-                elseif (distFromPlot > 60 or moveDelta > 12) and Config.PlotPosition then
-                    State.LastActiveTick = os.clock()
-                    State.IsOnTreadmill = false
-                    State.CurrentStatus = "Operando no Mapa"
-                    hum:Move(Vector3.zero, false)
+                    -- Ceder o controle IMEDIATAMENTE e desengatar da esteira
+                    if State.IsOnTreadmill or State.WalkingToTreadmill then
+                        State.IsOnTreadmill = false
+                        State.WalkingToTreadmill = false
+                    end
 
-                -- 3. Na base sem ovos em mãos!
+                    -- IMPORTANTE: NUNCA chamar hum:Move(Vector3.zero) aqui!
+                    -- O BF tem passagem 100% livre e fluida para andar e voar sem interrupcao!
+
                 else
+                    -- BF ESTA INATIVO E PERSONAGEM TOTALMENTE PARADO NO CHAO DA BASE!
                     local idleTime = os.clock() - State.LastActiveTick
 
                     if idleTime >= Config.IdleThresholdSeconds then
                         if Config.TreadmillPosition then
                             local hDist = getHorizontalDistance(currentPos, Config.TreadmillPosition)
 
-                            -- CASO A: Fora da esteira (distância > 2.5 studs) -> Caminhar até ela
+                            -- CASO A: Fora da esteira (distancia > 2.5 studs) -> Caminhar suavemente ate ela
                             if not State.IsOnTreadmill and hDist > 2.5 then
+                                State.WalkingToTreadmill = true
+                                State.LastDistToTreadmill = hDist
                                 State.CurrentStatus = "Indo para a Esteira..."
                                 hum:MoveTo(Config.TreadmillPosition)
 
-                                -- Pequeno pulo suave caso haja degrau na esteira
+                                -- Pequeno pulo suave caso haja degrau na entrada da esteira
                                 if hDist < 4.0 and currentPos.Y < (Config.TreadmillSurfaceY + 0.2) then
                                     hum.Jump = true
                                 end
 
-                            -- CASO B: Na esteira (hDist <= 2.5 para entrar, mantém até 4.2) -> CORRER CONTINUAMENTE
+                            -- CASO B: Na esteira (hDist <= 2.5 para entrar, mantem ate 4.2) -> CORRER CONTINUAMENTE
                             else
                                 if hDist <= 4.2 then
+                                    State.WalkingToTreadmill = false
                                     State.IsOnTreadmill = true
                                     State.CurrentStatus = "Na Esteira (Treinando)"
 
-                                    -- Corrida contínua sem interrupção (imita segurar a tecla 'W')
+                                    -- Corrida continua suave sem interrupcao (imita segurar a tecla 'W')
                                     hum:Move(Config.TreadmillRunDirection, false)
                                 else
-                                    -- Caiu da esteira, voltar a se aproximar
+                                    -- Caiu ou saiu da esteira, voltar a se aproximar
                                     State.IsOnTreadmill = false
+                                    State.WalkingToTreadmill = true
+                                    State.LastDistToTreadmill = hDist
                                     hum:MoveTo(Config.TreadmillPosition)
                                 end
                             end
                         else
+                            State.WalkingToTreadmill = false
                             State.CurrentStatus = "Procurando Esteira..."
                         end
                     else
+                        State.WalkingToTreadmill = false
                         State.CurrentStatus = string.format("Aguardando (%.1fs)", math.max(0, Config.IdleThresholdSeconds - idleTime))
                     end
                 end
@@ -415,7 +632,7 @@ task.spawn(function()
     end
 end)
 
--- 11. FUNÇÃO UNLOAD COMPLETA
+-- 12. FUNCAO UNLOAD COMPLETA
 local ScreenGui = nil
 
 local function unloadCompanion()
@@ -441,7 +658,7 @@ local function unloadCompanion()
     end)
 end
 
--- 12. PROTEÇÃO ANTECIPADA DA INTERFACE GRÁFICA
+-- 13. PROTECAO ANTECIPADA DA INTERFACE GRAFICA
 local function protectGui(gui)
     pcall(function()
         local env = (getgenv and getgenv()) or _G
@@ -474,7 +691,7 @@ local function getGuiContainer()
     return container or Services.Workspace
 end
 
--- 13. INTERFACE MINIMALISTA, ELEGANTE E DISCRETA (v3.1)
+-- 14. INTERFACE MINIMALISTA, ELEGANTE E DISCRETA (v3.2)
 local randomId = Services.HttpService:GenerateGUID(false):sub(1, 8)
 ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "HUD_" .. randomId
@@ -518,7 +735,7 @@ cardLayout.SortOrder = Enum.SortOrder.LayoutOrder
 cardLayout.Padding = UDim.new(0, 6)
 cardLayout.Parent = Card
 
--- Header: Indicador, Título, Minimizar e Fechar
+-- Header: Indicador, Titulo, Minimizar e Fechar
 local Header = Instance.new("Frame")
 Header.Size = UDim2.new(1, 0, 0, 20)
 Header.BackgroundTransparency = 1
@@ -543,7 +760,7 @@ Title.Font = Enum.Font.SourceSansBold
 Title.TextSize = 13
 Title.TextColor3 = Color3.fromRGB(240, 245, 255)
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "Auto Esteira"
+Title.Text = "Auto Esteira (BF)"
 Title.Parent = Header
 
 local MinBtn = Instance.new("TextButton")
@@ -576,7 +793,7 @@ CloseBtn.MouseButton1Click:Connect(function()
     unloadCompanion()
 end)
 
--- Container de Conteúdo Expansível
+-- Container de Conteudo Expansivel
 local ContentBox = Instance.new("Frame")
 ContentBox.Size = UDim2.new(1, 0, 0, 0)
 ContentBox.AutomaticSize = Enum.AutomaticSize.Y
@@ -600,7 +817,7 @@ StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
 StatusLabel.Text = "Status: Procurando..."
 StatusLabel.Parent = ContentBox
 
--- 2. Linha de Detecção da Base & Esteira
+-- 2. Linha de Deteccao da Base & Esteira
 local EsteiraLabel = Instance.new("TextLabel")
 EsteiraLabel.Size = UDim2.new(1, 0, 0, 15)
 EsteiraLabel.BackgroundTransparency = 1
@@ -611,7 +828,7 @@ EsteiraLabel.TextXAlignment = Enum.TextXAlignment.Left
 EsteiraLabel.Text = "Base: Buscando... | Esteira: ..."
 EsteiraLabel.Parent = ContentBox
 
--- 3. Botão Único Liga/Desliga Minimalista (Com Parada Imediata)
+-- 3. Botao Unico Liga/Desliga Minimalista (Com Parada Imediata)
 local ToggleBtn = Instance.new("TextButton")
 ToggleBtn.Size = UDim2.new(1, 0, 0, 26)
 ToggleBtn.BackgroundColor3 = Color3.fromRGB(16, 80, 50)
@@ -637,17 +854,18 @@ ToggleBtn.MouseButton1Click:Connect(function()
         ToggleBtn.BackgroundColor3 = Color3.fromRGB(35, 42, 54)
         ToggleBtn.TextColor3 = Color3.fromRGB(160, 175, 195)
         State.IsOnTreadmill = false
+        State.WalkingToTreadmill = false
         State.CurrentStatus = "Pausado"
         local hum = getHumanoid()
         if hum then hum:Move(Vector3.zero, false) end
     end
 end)
 
--- 4. Ação Discreta de Re-escanear Base/Esteira
+-- 4. Acao Discreta de Re-escanear Base/Esteira
 local RescanBtn = Instance.new("TextButton")
 RescanBtn.Size = UDim2.new(1, 0, 0, 16)
 RescanBtn.BackgroundTransparency = 1
-RescanBtn.Text = "Reescanear Própria Base"
+RescanBtn.Text = "Reescanear Propria Base"
 RescanBtn.Font = Enum.Font.SourceSans
 RescanBtn.TextSize = 10
 RescanBtn.TextColor3 = Color3.fromRGB(56, 189, 248)
@@ -658,11 +876,11 @@ RescanBtn.MouseButton1Click:Connect(function()
     Config.TreadmillPosition = nil
     updateTreadmillTarget()
     task.delay(1, function()
-        RescanBtn.Text = "Reescanear Própria Base"
+        RescanBtn.Text = "Reescanear Propria Base"
     end)
 end)
 
--- Minimização Elegante (Pílula Compacta)
+-- Minimizacao Elegante (Pilula Compacta)
 local isMinimized = false
 MinBtn.MouseButton1Click:Connect(function()
     isMinimized = not isMinimized
@@ -679,7 +897,7 @@ MinBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- 14. Atualização Contínua e Suave do Status na Interface
+-- 15. Atualizacao Continua e Suave do Status na Interface
 task.spawn(function()
     while isRunning do
         if StatusLabel and StatusLabel.Parent then
@@ -694,9 +912,12 @@ task.spawn(function()
             elseif State.CurrentStatus:find("Pausado") then
                 StatusLabel.TextColor3 = Color3.fromRGB(148, 163, 184)
                 StatusDot.BackgroundColor3 = Color3.fromRGB(100, 116, 139)
-            else
+            elseif State.CurrentStatus:find("BF") or State.CurrentStatus:find("Ovo") or State.CurrentStatus:find("Mapa") then
                 StatusLabel.TextColor3 = Color3.fromRGB(56, 189, 248)
                 StatusDot.BackgroundColor3 = Color3.fromRGB(56, 189, 248)
+            else
+                StatusLabel.TextColor3 = Color3.fromRGB(168, 85, 247)
+                StatusDot.BackgroundColor3 = Color3.fromRGB(168, 85, 247)
             end
 
             local baseText = State.PlotFound and "Sua Base: OK" or "Buscando Base..."

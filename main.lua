@@ -2579,6 +2579,100 @@ local function collectAllSecretWeapons()
     addLog("ARMAS", string.format("Coleta concluida! %d armas acionadas. Verifique o Backpack.", collectedCount))
     return true
 end
+local function movePlayerSafe(targetPos, speed, onStep)
+    local hrp = getHRP()
+    local char = LocalPlayer.Character
+    if not hrp or not char then return false end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return false end
+
+    pcall(function()
+        _G.BF_IsBusy = true
+        _G.BF_LastActionTick = os.clock()
+        if getgenv then
+            getgenv().BF_IsBusy = true
+            getgenv().BF_LastActionTick = os.clock()
+        end
+    end)
+
+    local oldWalkSpeed = humanoid.WalkSpeed
+    local requestedSpeed = math.clamp(tonumber(speed) or Config.MoveSpeed or 30, 16, 36)
+    humanoid.WalkSpeed = requestedSpeed
+
+    local function cleanup()
+        pcall(function()
+            if humanoid and humanoid.Parent and humanoid.Health > 0 then
+                humanoid:Move(Vector3.zero, false)
+                humanoid.WalkSpeed = oldWalkSpeed
+            end
+        end)
+    end
+
+    local function walkTo(point, timeout)
+        humanoid:MoveTo(point)
+        local started = os.clock()
+        local lastDist = (hrp.Position - point).Magnitude
+        local lastProgress = started
+
+        while (os.clock() - started) < timeout do
+            if State.IsUnloaded or not char.Parent or humanoid.Health <= 0 then return false end
+            local distance = (hrp.Position - point).Magnitude
+            if distance <= 4 then return true end
+            if distance < (lastDist - 0.75) then
+                lastDist = distance
+                lastProgress = os.clock()
+            elseif (os.clock() - lastProgress) > 3.0 then
+                return false
+            end
+            Services.RunService.Heartbeat:Wait()
+        end
+        return false
+    end
+
+    local reached = false
+    local dist = (hrp.Position - targetPos).Magnitude
+    if dist <= 5 then
+        reached = true
+    else
+        local path = Services.PathfindingService:CreatePath({
+            AgentRadius = 2,
+            AgentHeight = 5,
+            AgentCanJump = true
+        })
+        local computed = pcall(function()
+            path:ComputeAsync(hrp.Position, targetPos)
+        end)
+        if computed and path.Status == Enum.PathStatus.Success then
+            local waypoints = path:GetWaypoints()
+            local okRoute = true
+            for idx = 2, #waypoints do
+                local wp = waypoints[idx]
+                if wp.Action == Enum.PathWaypointAction.Jump then humanoid.Jump = true end
+                if not walkTo(wp.Position, 8) then
+                    okRoute = false
+                    break
+                end
+            end
+            if okRoute and (hrp.Position - targetPos).Magnitude <= 7 then
+                reached = true
+            end
+        else
+            reached = walkTo(targetPos, math.max(5, dist / humanoid.WalkSpeed + 3))
+        end
+    end
+
+    cleanup()
+    return reached
+end
+
+local function movePlayerDirect(targetPos, speed, onStep)
+    return movePlayerSafe(targetPos, speed, onStep)
+end
+
+local function movePlayerOverhead(targetPos, speed, onStep)
+    return movePlayerSafe(targetPos, speed, onStep)
+end
+
 executeDirectSteal = function(target)
     if not target or not target.Position then return false end
     local myHrp = getHRP()
@@ -2731,6 +2825,16 @@ local function setStealState(newState)
     local oldState = StealSM.Current
     StealSM.Current = newState
     StealSM.StateStart = os.clock()
+
+    pcall(function()
+        local isBusy = (newState ~= "IDLE")
+        _G.BF_IsBusy = isBusy
+        _G.BF_LastActionTick = os.clock()
+        if getgenv then
+            getgenv().BF_IsBusy = isBusy
+            getgenv().BF_LastActionTick = os.clock()
+        end
+    end)
 
     if newState == "IDLE" then
         StealSM.Target = nil
